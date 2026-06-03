@@ -19,6 +19,16 @@ async function waitForDatabase(retries = 8, intervalMs = 2000) {
   }
 }
 
+function normalizeImage(image) {
+  // v1 images are { url, alt } objects. Tolerate legacy bare strings from
+  // any un-reseeded dev DB by coercing them into the object shape so the
+  // contract surface is always { url, alt }.
+  if (typeof image === 'string') {
+    return { url: image, alt: '' };
+  }
+  return { url: image.url, alt: image.alt || '' };
+}
+
 function normalizeProductRow(row) {
   return {
     id: row.id,
@@ -27,7 +37,7 @@ function normalizeProductRow(row) {
     description: row.description,
     published: row.published,
     categories: row.categories || [],
-    images: row.images || [],
+    images: (row.images || []).map(normalizeImage),
     metadata: row.metadata || {},
     created_at: row.created_at,
     updated_at: row.updated_at
@@ -96,34 +106,87 @@ async function seedInitialData() {
     return;
   }
 
-  await pool.query(
-    `INSERT INTO products (id, slug, name, description, published, categories, images, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb)`,
-    [
-      'prod-001',
-      'brick-builder-set',
-      'Brick Builder Set',
-      'A premium starter set for creative builders.',
-      true,
-      JSON.stringify(['starter', 'creative']),
-      JSON.stringify(['/images/brick-builder.jpg']),
-      JSON.stringify({ weight: '1.5kg', brand: 'ImagiBricks' })
-    ]
-  );
+  const seedProducts = [
+    {
+      id: 'prod-001',
+      slug: 'brick-builder-set',
+      name: 'Brick Builder Set',
+      description: 'A premium starter set for creative builders.',
+      published: true,
+      categories: ['starter', 'creative'],
+      images: [
+        { url: '/images/brick-builder.jpg', alt: 'Brick Builder Set in its retail box' }
+      ],
+      metadata: { weight: '1.5kg', brand: 'ImagiBricks' }
+    },
+    {
+      id: 'prod-002',
+      slug: 'castle-mega-pack',
+      name: 'Castle Mega Pack',
+      description: 'An advanced medieval castle build with movable parts.',
+      published: true,
+      categories: ['advanced', 'creative'],
+      images: [
+        { url: '/images/castle-mega.jpg', alt: 'Assembled medieval castle with towers' },
+        { url: '/images/castle-mega-parts.jpg', alt: 'Castle Mega Pack loose pieces laid out' }
+      ],
+      metadata: { weight: '3.2kg', brand: 'ImagiBricks' }
+    }
+  ];
 
-  await pool.query(
-    `INSERT INTO variants (id, product_id, sku, price, currency, inventory_item_id, attributes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-    [
-      'sku-001',
-      'prod-001',
-      'IB-SET-001',
-      '39.99',
-      'USD',
-      'inv-001',
-      JSON.stringify({ color: 'multicolor' })
-    ]
-  );
+  for (const product of seedProducts) {
+    await pool.query(
+      `INSERT INTO products (id, slug, name, description, published, categories, images, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb)`,
+      [
+        product.id,
+        product.slug,
+        product.name,
+        product.description,
+        product.published,
+        JSON.stringify(product.categories),
+        JSON.stringify(product.images),
+        JSON.stringify(product.metadata)
+      ]
+    );
+  }
+
+  const seedVariants = [
+    {
+      id: 'sku-001',
+      product_id: 'prod-001',
+      sku: 'IB-SET-001',
+      price: '39.99',
+      currency: 'USD',
+      inventory_item_id: 'inv-001',
+      attributes: { color: 'multicolor' }
+    },
+    {
+      id: 'sku-002',
+      product_id: 'prod-002',
+      sku: 'IB-CASTLE-001',
+      price: '89.99',
+      currency: 'USD',
+      inventory_item_id: 'inv-002',
+      attributes: { color: 'grey' }
+    }
+  ];
+
+  for (const variant of seedVariants) {
+    await pool.query(
+      `INSERT INTO variants (id, product_id, sku, price, currency, inventory_item_id, attributes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+      [
+        variant.id,
+        variant.product_id,
+        variant.sku,
+        variant.price,
+        variant.currency,
+        variant.inventory_item_id,
+        JSON.stringify(variant.attributes)
+      ]
+    );
+  }
 }
 
 async function init() {
@@ -136,6 +199,7 @@ module.exports = {
   pool,
   query: (text, params) => pool.query(text, params),
   init,
+  normalizeImage,
   normalizeProductRow,
   normalizeVariantRow
 };
