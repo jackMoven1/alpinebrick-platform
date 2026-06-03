@@ -1,6 +1,6 @@
 # ADR-0001 — Catalog API Contract
 
-**Status:** PROPOSED — decisions ruled by the Engineering Lead and recorded below; pending implementation conformance and re-sign by both engineers before the status flips to ACCEPTED.
+**Status:** ACCEPTED — both engineers signed off and sign-off conditions 1–6 are met (2026-06-03). Image-CDN and relevance-search remain carved out as future ADRs / Jack spend decisions.
 **Owners:** `catalog-engineer` (primary), `storefront-engineer` (primary), `engineering-lead` (approver).
 **Date opened:** 2026-06-03.
 
@@ -131,6 +131,9 @@ These decisions were ruled by the Engineering Lead on 2026-06-03 after the Store
 ## Approval history
 - **2026-06-03 — Storefront Engineer:** REQUEST-CHANGES. Five blockers (base-path drift, no pagination envelope, undocumented query syntax, bare image strings, no error contract) plus non-blocking recommendations.
 - **2026-06-03 — Engineering Lead:** NOT-YET-APPROVED → returned for one focused revision pass with the rulings above. Status set to PROPOSED. Final ACCEPTED is withheld until the sign-off checklist is met.
+- **2026-06-03 — Catalog Engineer:** conformed `contracts/openapi/catalog.yaml` and the catalog service to the rulings (base path, pagination envelope, frozen filters + sort, snake_case, `{url,alt}` images, `{code,message,fields}` errors, `available_quantity: integer|null`). Real jest suite added (14 passing). Conditions 1–3 met.
+- **2026-06-03 — Storefront Engineer:** re-sign **APPROVE**. All five original blockers resolved; BFF proxy → `/api/v1/catalog`, client consumes the `{items,total,page,limit}` envelope (client-side slicing removed), images render `{url,alt}`, error codes distinguish empty-state vs retry. Storefront builds clean. Condition 4 met.
+- **2026-06-03 — Engineering Lead:** **ACCEPTED.** Conditions 1–6 satisfied; both engineers' verdicts are APPROVE. CDN and relevance-search remain explicitly out of v1 scope (future ADRs / Jack decisions), per condition 5.
 
 ### Conditions for final sign-off (flips Status → ACCEPTED)
 1. This Decision section is reflected in `contracts/openapi/catalog.yaml` as the single, internally consistent source of truth.

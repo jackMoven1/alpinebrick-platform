@@ -16,7 +16,7 @@ app.use('/catalog', createProxyMiddleware({
   target: catalogBaseUrl,
   changeOrigin: true,
   pathRewrite: {
-    '^/catalog': '/catalog'
+    '^/catalog': '/api/v1/catalog'
   },
   logLevel: 'info'
 }))

@@ -4,7 +4,12 @@ export default function ProductCard({ product }) {
   const mainVariant = product.variants?.[0]
   const price = mainVariant?.price ?? 0
   const currency = mainVariant?.currency ?? 'USD'
-  const imageUrl = product.images?.[0] || '/placeholder.png'
+
+  // Images are { url, alt } objects per ADR-0001; first element is primary.
+  const primaryImage = product.images?.[0]
+  const imageUrl = primaryImage?.url || '/placeholder.png'
+  // Prefer the authored alt; fall back to product name only when absent.
+  const imageAlt = primaryImage?.alt || product.name || ''
 
   return (
     <div className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow overflow-hidden">
@@ -12,7 +17,7 @@ export default function ProductCard({ product }) {
       <div className="aspect-square bg-gray-200 overflow-hidden">
         <img
           src={imageUrl}
-          alt={product.name}
+          alt={imageAlt}
           className="w-full h-full object-cover hover:scale-105 transition-transform"
           onError={(e) => {
             e.target.src = '/placeholder.png'

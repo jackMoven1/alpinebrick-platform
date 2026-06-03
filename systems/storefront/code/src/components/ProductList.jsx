@@ -1,75 +1,93 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import catalogService from '../services/catalogService'
 import ProductCard from './ProductCard'
 import SearchBar from './SearchBar'
 
-const ITEMS_PER_PAGE = 20
+const ITEMS_PER_PAGE = 24
 
 export default function ProductList() {
   const [products, setProducts] = useState([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [errorCode, setErrorCode] = useState(null)
   const [search, setSearch] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('')
+  const [sort, setSort] = useState('name_asc')
   const [currentPage, setCurrentPage] = useState(1)
 
-  // Get unique categories from products
-  const categories = useMemo(() => {
-    const cats = new Set()
-    products.forEach(product => {
-      if (product.categories && Array.isArray(product.categories)) {
-        product.categories.forEach(cat => cats.add(cat))
-      }
-    })
-    return Array.from(cats).sort()
-  }, [products])
+  // Category options are not yet served by a facet endpoint (deferred to a
+  // later ADR). Accumulate categories observed across loaded pages as a
+  // best-effort filter list for v1, so the set never shrinks when paging.
+  const knownCategoriesRef = useRef(new Set())
+  const [categories, setCategories] = useState([])
 
-  // Filter products based on search and category
-  const filteredProducts = useMemo(() => {
-    return products.filter(product => {
-      const matchesSearch = !search || 
-        product.name.toLowerCase().includes(search.toLowerCase()) ||
-        product.description.toLowerCase().includes(search.toLowerCase())
-      
-      const matchesCategory = !selectedCategory || 
-        (product.categories && product.categories.includes(selectedCategory))
-      
-      return matchesSearch && matchesCategory
-    })
-  }, [products, search, selectedCategory])
+  const totalPages = ITEMS_PER_PAGE > 0 ? Math.ceil(total / ITEMS_PER_PAGE) : 0
 
-  // Paginate filtered products
-  const totalPages = Math.ceil(filteredProducts.length / ITEMS_PER_PAGE)
-  const paginatedProducts = useMemo(() => {
-    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
-    const endIndex = startIndex + ITEMS_PER_PAGE
-    return filteredProducts.slice(startIndex, endIndex)
-  }, [filteredProducts, currentPage])
-
-  // Load products on mount
+  // Reset to page 1 whenever a filter/search/sort changes.
   useEffect(() => {
+    setCurrentPage(1)
+  }, [search, selectedCategory, sort])
+
+  // Server is the source of truth: refetch on any param change. No client-side
+  // re-filtering or slicing.
+  useEffect(() => {
+    let cancelled = false
+
     async function load() {
       try {
         setLoading(true)
         setError(null)
-        const response = await catalogService.getProducts()
-        setProducts(response.products || [])
-        setCurrentPage(1)
+        setErrorCode(null)
+        const response = await catalogService.getProducts({
+          search: search || undefined,
+          category: selectedCategory || undefined,
+          sort,
+          page: currentPage,
+          limit: ITEMS_PER_PAGE,
+        })
+        if (cancelled) return
+
+        setProducts(response.products)
+        setTotal(response.total)
+
+        // Merge any newly-seen categories into the filter list.
+        let changed = false
+        response.products.forEach(product => {
+          if (Array.isArray(product.categories)) {
+            product.categories.forEach(cat => {
+              if (!knownCategoriesRef.current.has(cat)) {
+                knownCategoriesRef.current.add(cat)
+                changed = true
+              }
+            })
+          }
+        })
+        if (changed) {
+          setCategories(Array.from(knownCategoriesRef.current).sort())
+        }
       } catch (err) {
-        setError(err.message || 'Failed to load products')
-        setProducts([])
+        if (cancelled) return
+        // NOT_FOUND is an empty result, not a hard failure: show empty state.
+        if (err.code === 'NOT_FOUND') {
+          setProducts([])
+          setTotal(0)
+        } else {
+          setError(err.message || 'Failed to load products')
+          setErrorCode(err.code || 'INTERNAL')
+          setProducts([])
+          setTotal(0)
+        }
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
 
     load()
-  }, [])
-
-  // Reset to page 1 when filters change
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [search, selectedCategory])
+    return () => {
+      cancelled = true
+    }
+  }, [search, selectedCategory, sort, currentPage])
 
   if (loading) {
     return (
@@ -88,7 +106,7 @@ export default function ProductList() {
         <h3 className="text-lg font-semibold text-red-800 mb-2">Error Loading Products</h3>
         <p className="text-red-700">{error}</p>
         <button
-          onClick={() => window.location.reload()}
+          onClick={() => setCurrentPage(p => p)}
           className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
         >
           Retry
@@ -97,32 +115,36 @@ export default function ProductList() {
     )
   }
 
+  const showingCount = products.length
+
   return (
     <div>
       <h2 className="text-2xl font-bold text-gray-900 mb-8">Our Products</h2>
-      
+
       {/* Search and Filter Section */}
       <div className="bg-white rounded-lg shadow p-6 mb-8">
-        <SearchBar 
+        <SearchBar
           search={search}
           onSearchChange={setSearch}
           selectedCategory={selectedCategory}
           onCategoryChange={setSelectedCategory}
           categories={categories}
+          sort={sort}
+          onSortChange={setSort}
         />
-        
-        {filteredProducts.length > 0 && (
+
+        {total > 0 && (
           <p className="text-sm text-gray-600 mt-4">
-            Showing {paginatedProducts.length} of {filteredProducts.length} products
+            Showing {showingCount} of {total} products
           </p>
         )}
       </div>
 
       {/* Products Grid */}
-      {paginatedProducts.length > 0 ? (
+      {products.length > 0 ? (
         <div className="mb-8">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {paginatedProducts.map(product => (
+            {products.map(product => (
               <ProductCard key={product.id} product={product} />
             ))}
           </div>
@@ -165,9 +187,9 @@ export default function ProductList() {
       ) : (
         <div className="bg-gray-50 border border-gray-200 rounded-lg p-12 text-center">
           <p className="text-gray-600 text-lg">
-            {products.length === 0 
-              ? 'No products available yet.' 
-              : 'No products match your search criteria.'}
+            {search || selectedCategory
+              ? 'No products match your search criteria.'
+              : 'No products available yet.'}
           </p>
         </div>
       )}
