@@ -33,7 +33,7 @@ app.use('/inventory', createProxyMiddleware({
   target: inventoryBaseUrl,
   changeOrigin: true,
   pathRewrite: {
-    '^/inventory': '/api/inventory'
+    '^/inventory': '/inventory'
   }
 }))
 
@@ -41,7 +41,7 @@ app.use('/affiliates', createProxyMiddleware({
   target: affiliateBaseUrl,
   changeOrigin: true,
   pathRewrite: {
-    '^/affiliates': '/api/affiliates'
+    '^/affiliates': '/affiliate'
   }
 }))
 

@@ -9,6 +9,13 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo Running repo tests...
+npm test
+if errorlevel 1 (
+  echo Tests failed. Deployment aborted.
+  exit /b 1
+)
+
 echo Stopping existing containers...
 docker compose down --remove-orphans
 if errorlevel 1 (
