@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://imagibricks.local/contracts/events/order.events.json",
+  "title": "Order Events",
+  "type": "object",
+  "properties": {
+    "eventType": {
+      "type": "string",
+      "enum": ["order.created", "order.paid", "order.canceled", "order.refunded"]
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "order_id": { "type": "string" },
+        "customer_id": { "type": "string" },
+        "status": { "type": "string" },
+        "total_amount": { "type": "number" },
+        "currency": { "type": "string" },
+        "affiliate_id": { "type": ["string", "null"] },
+        "referral_code": { "type": ["string", "null"] },
+        "commission_rate": { "type": ["number", "null"] },
+        "commission_amount": { "type": ["number", "null"] },
+        "line_items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sku_id": { "type": "string" },
+              "quantity": { "type": "integer" },
+              "unit_price": { "type": "number" },
+              "line_total": { "type": "number" }
+            },
+            "required": ["sku_id", "quantity", "unit_price", "line_total"]
+          }
+        }
+      },
+      "required": ["order_id", "customer_id", "status", "total_amount", "currency", "line_items"]
+    }
+  },
+  "required": ["eventType", "payload"]
+}

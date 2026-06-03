@@ -1,0 +1,56 @@
+version: '3.9'
+services:
+  storefront:
+    build: ./systems/storefront/code
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=development
+      - CATALOG_SERVICE_URL=http://catalog-service:4001
+      - ORDER_SERVICE_URL=http://order-service:4002
+  catalog-admin:
+    build: ./systems/catalog-admin/code
+    ports:
+      - '3001:3001'
+    environment:
+      - NODE_ENV=development
+  catalog-service:
+    build: ./systems/catalog-service/code
+    ports:
+      - '4001:4001'
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://postgres:postgres@catalog-db:5432/imagibricks_catalog
+    depends_on:
+      - catalog-db
+  catalog-db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=imagibricks_catalog
+    ports:
+      - '5432:5432'
+    volumes:
+      - catalog-db-data:/var/lib/postgresql/data
+  order-service:
+    build: ./systems/order-service/code
+    ports:
+      - '4002:4002'
+    environment:
+      - NODE_ENV=development
+  inventory-service:
+    build: ./systems/inventory-service/code
+    ports:
+      - '4003:4003'
+    environment:
+      - NODE_ENV=development
+  affiliate-service:
+    build: ./systems/affiliate-service/code
+    ports:
+      - '4004:4004'
+    environment:
+      - NODE_ENV=development
+
+volumes:
+  catalog-db-data:

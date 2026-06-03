@@ -1,0 +1,15 @@
+{
+  "name": "inventory-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Inventory management service for ImagiBricks.",
+  "scripts": {
+    "dev": "node src/index.js",
+    "build": "echo 'Build inventory service'",
+    "test": "echo 'Run inventory service tests'"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "@imagibricks/contracts": "file:../contracts"
+  }
+}

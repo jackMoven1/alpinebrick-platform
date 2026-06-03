@@ -1,0 +1,15 @@
+{
+  "name": "order-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Order and checkout service for ImagiBricks.",
+  "scripts": {
+    "dev": "node src/index.js",
+    "build": "echo 'Build order service'",
+    "test": "echo 'Run order service tests'"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "@imagibricks/contracts": "file:../contracts"
+  }
+}

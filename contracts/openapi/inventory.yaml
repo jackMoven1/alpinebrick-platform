@@ -1,0 +1,89 @@
+openapi: 3.1.0
+info:
+  title: ImagiBricks Inventory API
+  version: 1.0.0
+  description: API contract for inventory status, reservations, and stock adjustments.
+paths:
+  /inventory/sku/{skuId}:
+    get:
+      summary: Get inventory status for SKU
+      parameters:
+        - name: skuId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Inventory item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryItem'
+  /inventory/sku/{skuId}/reserve:
+    post:
+      summary: Reserve inventory for an SKU
+      parameters:
+        - name: skuId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                quantity:
+                  type: integer
+      responses:
+        '200':
+          description: Reservation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryItem'
+  /inventory/sku/{skuId}/release:
+    post:
+      summary: Release previously reserved inventory
+      parameters:
+        - name: skuId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                quantity:
+                  type: integer
+      responses:
+        '200':
+          description: Release result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryItem'
+components:
+  schemas:
+    InventoryItem:
+      type: object
+      properties:
+        id:
+          type: string
+        sku_id:
+          type: string
+        available_quantity:
+          type: integer
+        reserved_quantity:
+          type: integer
+        status:
+          type: string
+        location:
+          type: string

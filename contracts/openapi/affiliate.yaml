@@ -1,0 +1,117 @@
+openapi: 3.1.0
+info:
+  title: ImagiBricks Affiliate API
+  version: 1.0.0
+  description: API contract for affiliate referral capture and commission data.
+paths:
+  /affiliate/referral:
+    post:
+      summary: Record a referral session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReferralSessionRequest'
+      responses:
+        '201':
+          description: Referral session recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReferralSession'
+  /affiliate/partners/{partnerId}:
+    get:
+      summary: Get affiliate partner details
+      parameters:
+        - name: partnerId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Affiliate partner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AffiliatePartner'
+  /affiliate/commissions/{orderId}:
+    post:
+      summary: Create commission record for an order
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Commission created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommissionRecord'
+components:
+  schemas:
+    ReferralSessionRequest:
+      type: object
+      properties:
+        affiliate_id:
+          type: string
+        referral_code:
+          type: string
+        source:
+          type: string
+        landing_url:
+          type: string
+      required:
+        - affiliate_id
+        - referral_code
+    ReferralSession:
+      type: object
+      properties:
+        id:
+          type: string
+        affiliate_id:
+          type: string
+        referral_code:
+          type: string
+        source:
+          type: string
+        landing_url:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    AffiliatePartner:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        code:
+          type: string
+        commission_rate:
+          type: number
+          format: float
+        status:
+          type: string
+    CommissionRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        order_id:
+          type: string
+        affiliate_id:
+          type: string
+        commission_rate:
+          type: number
+          format: float
+        commission_amount:
+          type: number
+          format: float
+        status:
+          type: string

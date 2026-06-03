@@ -1,0 +1,130 @@
+openapi: 3.1.0
+info:
+  title: ImagiBricks Order API
+  version: 1.0.0
+  description: API contract for order creation, retrieval, and lifecycle actions.
+paths:
+  /orders:
+    post:
+      summary: Create a new order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreateRequest'
+      responses:
+        '201':
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+  /orders/{orderId}:
+    get:
+      summary: Get an order by ID
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Order detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+  /orders/{orderId}/cancel:
+    post:
+      summary: Cancel an order
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Order canceled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+components:
+  schemas:
+    OrderCreateRequest:
+      type: object
+      properties:
+        customer_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderLineItemRequest'
+        affiliate_id:
+          type: string
+        referral_code:
+          type: string
+        payment_method:
+          type: string
+      required:
+        - customer_id
+        - items
+        - payment_method
+    OrderLineItemRequest:
+      type: object
+      properties:
+        sku_id:
+          type: string
+        quantity:
+          type: integer
+      required:
+        - sku_id
+        - quantity
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+        customer_id:
+          type: string
+        status:
+          type: string
+        total_amount:
+          type: number
+          format: float
+        currency:
+          type: string
+        payment_status:
+          type: string
+        affiliate_id:
+          type: string
+        referral_code:
+          type: string
+        commission_rate:
+          type: number
+          format: float
+        commission_amount:
+          type: number
+          format: float
+        line_items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderLineItem'
+    OrderLineItem:
+      type: object
+      properties:
+        id:
+          type: string
+        sku_id:
+          type: string
+        quantity:
+          type: integer
+        unit_price:
+          type: number
+          format: float
+        line_total:
+          type: number
+          format: float

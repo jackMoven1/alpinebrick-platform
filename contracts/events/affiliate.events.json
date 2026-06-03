@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://imagibricks.local/contracts/events/affiliate.events.json",
+  "title": "Affiliate Events",
+  "type": "object",
+  "properties": {
+    "eventType": {
+      "type": "string",
+      "enum": ["affiliate.referral.created", "affiliate.commission.created", "affiliate.commission.paid"]
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "referral_id": { "type": "string" },
+        "affiliate_id": { "type": "string" },
+        "referral_code": { "type": "string" },
+        "order_id": { "type": ["string", "null"] },
+        "commission_rate": { "type": ["number", "null"] },
+        "commission_amount": { "type": ["number", "null"] },
+        "status": { "type": ["string", "null"] }
+      },
+      "required": ["referral_id", "affiliate_id", "referral_code"]
+    }
+  },
+  "required": ["eventType", "payload"]
+}

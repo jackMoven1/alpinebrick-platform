@@ -1,0 +1,15 @@
+{
+  "name": "affiliate-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Affiliate marketing service for ImagiBricks.",
+  "scripts": {
+    "dev": "node src/index.js",
+    "build": "echo 'Build affiliate service'",
+    "test": "echo 'Run affiliate service tests'"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "@imagibricks/contracts": "file:../contracts"
+  }
+}

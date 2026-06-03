@@ -1,0 +1,113 @@
+openapi: 3.1.0
+info:
+  title: ImagiBricks Catalog API
+  version: 1.0.0
+  description: API contract for product catalog and metadata services.
+paths:
+  /catalog/products:
+    get:
+      summary: List products
+      responses:
+        '200':
+          description: Product list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Product'
+  /catalog/products/{productId}:
+    get:
+      summary: Get product by ID
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Product detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+  /catalog/products/{productId}/availability:
+    get:
+      summary: Get SKU availability for a product
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Availability data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductAvailability'
+components:
+  schemas:
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        published:
+          type: boolean
+        categories:
+          type: array
+          items:
+            type: string
+        images:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductVariant'
+    ProductVariant:
+      type: object
+      properties:
+        id:
+          type: string
+        sku:
+          type: string
+        price:
+          type: number
+          format: float
+        currency:
+          type: string
+        inventory_item_id:
+          type: string
+        attributes:
+          type: object
+          additionalProperties: true
+    ProductAvailability:
+      type: object
+      properties:
+        productId:
+          type: string
+        available:
+          type: boolean
+        variants:
+          type: array
+          items:
+            type: object
+            properties:
+              sku_id:
+                type: string
+              available_quantity:
+                type: integer

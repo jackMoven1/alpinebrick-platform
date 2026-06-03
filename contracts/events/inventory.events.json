@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://imagibricks.local/contracts/events/inventory.events.json",
+  "title": "Inventory Events",
+  "type": "object",
+  "properties": {
+    "eventType": {
+      "type": "string",
+      "enum": ["inventory.reserved", "inventory.released", "inventory.adjusted", "inventory.out_of_stock"]
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "sku_id": { "type": "string" },
+        "quantity": { "type": "integer" },
+        "available_quantity": { "type": "integer" },
+        "reserved_quantity": { "type": "integer" },
+        "source_event_id": { "type": "string" }
+      },
+      "required": ["sku_id", "quantity", "available_quantity", "source_event_id"]
+    }
+  },
+  "required": ["eventType", "payload"]
+}

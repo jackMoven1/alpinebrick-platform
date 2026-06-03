@@ -1,0 +1,8 @@
+packages:
+  - 'contracts'
+  - 'systems/catalog-service/code'
+  - 'systems/inventory-service/code'
+  - 'systems/order-service/code'
+  - 'systems/affiliate-service/code'
+  - 'systems/storefront/code'
+  - 'systems/catalog-admin/code'

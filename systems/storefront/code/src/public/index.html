@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ImagiBricks Storefront</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .product { border: 1px solid #ddd; padding: 16px; margin-bottom: 16px; border-radius: 8px; }
+    .product h2 { margin-top: 0; }
+  </style>
+</head>
+<body>
+  <h1>ImagiBricks Storefront</h1>
+  <div>
+    <label for="referralCode">Referral code:</label>
+    <input id="referralCode" type="text" placeholder="LAUNCH10" />
+    <p>Select a product below to checkout.</p>
+  </div>
+  <div id="products">Loading products...</div>
+  <div id="orderStatus"></div>
+
+  <script>
+    let products = [];
+
+    function formatPrice(price, currency) {
+      return `${currency} ${price.toFixed(2)}`;
+    }
+
+    function renderProducts() {
+      const container = document.getElementById('products');
+      if (!products.length) {
+        container.textContent = 'No products available.';
+        return;
+      }
+
+      container.innerHTML = products.map(product => {
+        const variant = product.variants[0];
+        return `
+          <div class="product">
+            <h2>${product.name}</h2>
+            <p>${product.description}</p>
+            <p><strong>Price:</strong> ${formatPrice(variant.price, variant.currency)}</p>
+            <p><strong>SKU:</strong> ${variant.sku}</p>
+            <label>
+              Quantity:
+              <input type="number" id="qty-${product.id}" min="1" value="1" style="width: 60px; margin-left: 8px;" />
+            </label>
+            <button data-product-id="${product.id}" data-sku-id="${variant.id}">
+              Checkout this product
+            </button>
+          </div>
+        `;
+      }).join('');
+
+      container.querySelectorAll('button[data-product-id]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const productId = button.dataset.productId;
+          const skuId = button.dataset.skuId;
+          const quantity = parseInt(document.getElementById(`qty-${productId}`).value, 10) || 1;
+          checkout(productId, skuId, quantity);
+        });
+      });
+    }
+
+    async function loadProducts() {
+      const response = await fetch('/api/products');
+      if (!response.ok) {
+        throw new Error('Failed to load products');
+      }
+      products = await response.json();
+      renderProducts();
+    }
+
+    async function checkout(productId, skuId, quantity) {
+      const referralCode = document.getElementById('referralCode').value.trim();
+      const body = {
+        customer_id: 'cust-001',
+        payment_method: 'card',
+        items: [
+          {
+            product_id: productId,
+            sku_id: skuId,
+            quantity
+          }
+        ]
+      };
+      if (referralCode) {
+        body.referral_code = referralCode;
+      }
+
+      const response = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      const result = await response.json();
+      document.getElementById('orderStatus').textContent = response.ok
+        ? `Order created: ${result.id}`
+        : `Checkout failed: ${result.error || JSON.stringify(result)}`;
+    }
+
+    loadProducts().catch(err => {
+      document.getElementById('products').textContent = 'Failed to load products.';
+      console.error(err);
+    });
+  </script>
+</body>
+</html>
