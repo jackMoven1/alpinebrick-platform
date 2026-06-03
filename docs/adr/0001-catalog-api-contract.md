@@ -125,8 +125,8 @@ These decisions were ruled by the Engineering Lead on 2026-06-03 after the Store
 - Durable `metadata` key schema — `metadata` stays free-form; consumers must treat unknown keys as optional.
 
 ### Escalated to Jack (paid-infra commitments — NOT decided in this ADR)
-- **Image CDN / transform service.** The `{ url, alt }` shape stays CDN-agnostic so this can be chosen later without a contract break.
-- **Relevance search engine.** v1 search is substring-match. A relevance backend is a future ADR and a separate Jack spend decision.
+- **Image CDN / transform service** — logged as [ADR-0002](0002-image-cdn-asset-delivery.md) (DRAFT, deferred). The `{ url, alt }` shape stays CDN-agnostic so this can be chosen later without a contract break.
+- **Relevance search engine** — logged as [ADR-0003](0003-catalog-search-backend.md) (DRAFT, deferred). v1 search is substring-match; a relevance backend is a future Jack spend decision.
 
 ## Approval history
 - **2026-06-03 — Storefront Engineer:** REQUEST-CHANGES. Five blockers (base-path drift, no pagination envelope, undocumented query syntax, bare image strings, no error contract) plus non-blocking recommendations.
