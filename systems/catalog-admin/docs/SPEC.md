@@ -490,7 +490,41 @@ CREATE INDEX IF NOT EXISTS idx_versions_entity ON versions(entity_type, entity_i
 
 ---
 
-## 4. IMPLEMENTATION CHECKLIST
+## 4. IMPLEMENTATION BREAKDOWN & REVIEW
+
+### 4.1 Sprint 1 Deliverables
+- Finalize the catalog-admin API contract with the Storefront Engineer before implementation begins.
+- Build the backend scaffold and database migrations first, then the matching frontend scaffold in parallel.
+- Deliver the first working end-to-end flow: product create → variant add → image upload → publish.
+- Ensure the storefront review covers response shapes, filtering/pagination semantics, image URL conventions, and published state behavior.
+
+### 4.2 Storefront Review Checklist
+The Storefront Engineer must review and agree to the following design details before this work is declared final:
+- Product list response shape (`/api/admin/products`): list items, pagination envelope, published state, variant count, category tags.
+- Product detail payload (`/api/admin/products/:id`): variants, images, metadata, prices, inventory linkage data, product state.
+- Variant data contract: SKU, price, inventory_item_id, attributes JSON, availability semantics.
+- Image contract: URL format, display_order, alt_text, static file path conventions, reorder API payload.
+- Publish/unpublish flow: endpoint names, response state, `published_at` semantics, storefront visibility rules.
+- Query syntax for filters/search: query params, default sort/page size, published/draft category handling.
+- Error contract: consistent `{error, code, status}` shape for frontend handling.
+
+### 4.3 Final Agreement Process
+1. Catalog Engineer publishes this SPEC and the ADR draft to the shared repo.
+2. Storefront Engineer reviews the API contract and the implementation task list.
+3. Storefront feedback is incorporated into this spec and the ADR until both engineers agree on the final contract.
+4. Engineering Lead reviews the final SPEC and ADR, then signs off by updating status to `ACCEPTED` in `docs/adr/0001-catalog-api-contract.md` and noting approval in this spec.
+5. Implementation begins after approval; PRs reference the spec and ADR, and changes are not merged without Engineering Lead review.
+
+### 4.4 Acceptance Criteria for Review
+The implementation is ready to proceed when:
+- The Storefront Engineer has confirmed the contract covers required browse + detail data.
+- The API shapes are documented and versioned in the ADR.
+- The Engineering Lead has approved the final contract and the MVP task plan.
+- The work is scoped to Phase 1: admin UI, backend CRUD, image handling, publish workflow, audit trail.
+
+---
+
+## 5. IMPLEMENTATION CHECKLIST
 
 ### Phase 1 MVP (4–6 weeks)
 

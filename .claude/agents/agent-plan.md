@@ -1,39 +1,36 @@
-# ImagiBricks Agent Plan
+# ImagiBricks Engineering — Agent Plan
+
+*Owned by the Engineering Lead. Last updated 2026-06-03.*
 
 ## Purpose
-This file defines the agent planning strategy for the ImagiBricks engineering workspace. It documents the agent roles, sequencing, and the first steps for hiring and creating the specialist engineer agents that will execute the platform build.
+Defines the specialist engineer agents in the ImagiBricks engineering workspace — who's hired, who's planned, and the order we bring them on.
 
 ## Current state
-- Existing agent: `engineering-lead`
-- Workspace context: engineering planning, architecture, and repo structure decisions for the ImagiBricks platform.
-- No specialist engineer agents are present yet.
+- **Active agents:**
+  - `engineering-lead` — me.
+  - `storefront-engineer` — owns the customer-facing UI (catalog browse, product-detail, search/filter, cart, checkout, accounts, site shell). Consumes catalog APIs.
+  - `catalog-engineer` — owns the catalog backend (data model, services, read + write/admin APIs, search infrastructure, image-handling backend).
+- **Seam between Catalog and Storefront:** the catalog API contract, captured as `docs/adr/0001-catalog-api-contract.md`. Both engineers co-author; I approve.
 
-## Agent roles to create
-1. `storefront-engineer`
-   - Build the retail website, product catalog, cart, accounts, checkout UI, and Stripe payment integration.
-2. `oms-engineer`
-   - Build the order management system, inventory control, fulfillment workflow, and back-office order processing.
-3. `affiliate-engineer`
-   - Build affiliate partner accounts, referral code tracking, flat-% commission engine, Stripe Connect payout support.
-4. `tracking-engineer`
-   - Build interaction tracking, analytics, event capture, and order-level affiliate attribution.
-5. `mcp-integration-engineer`
-   - Build the MCP connector, exposing orders, inventory, customers, affiliates, and referrals to back-office agents.
+## Specialist roles (full roster)
+1. ~~`storefront-engineer`~~ — **HIRED 2026-06-03**. UI only.
+2. ~~`catalog-engineer`~~ — **HIRED 2026-06-03**. Backend only.
+3. `oms-engineer` — Order management, inventory writes, fulfillment workflow. Plugs into the catalog data model and writes order/inventory state.
+4. `tracking-engineer` — Interaction tracking, event capture, **order-level affiliate attribution**.
+5. `affiliate-engineer` — Affiliate partner accounts, referral codes, flat-% commission engine, Stripe Connect payout support.
+6. `mcp-integration-engineer` — The ImagiBricks MCP connector exposing orders/inventory/customers/affiliates/referrals to back-office agents.
 
-## Recommended first agent sequence
-1. `storefront-engineer` — MVP website and Stripe checkout.
-2. `oms-engineer` — order lifecycle and inventory foundation.
-3. `tracking-engineer` — capture attribution and analytics before launch.
-4. `affiliate-engineer` — affiliate referral logic and payout data.
-5. `mcp-integration-engineer` — expose data to back-office MCP agents once the core models are stable.
+## Recommended hire sequence going forward
+1. `oms-engineer` — order lifecycle and inventory foundation; needs the catalog data model in place (which the Catalog Engineer is delivering first).
+2. `tracking-engineer` — capture attribution and analytics **before launch**; must precede the affiliate engine so it has clean data to consume.
+3. `affiliate-engineer` — affiliate referral logic and payout data; consumes tracking attribution.
+4. `mcp-integration-engineer` — expose data to back-office MCP agents once the core models are stable.
 
-## Planning steps
-1. Confirm the engineering scope with Jack, especially the launch MVP and whether the first agent should be storefront or foundation/DevOps.
-2. Decide the repo structure (monorepo vs. multi-repo) and the stack. Document this as the first architecture decision.
-3. Create new agent manifests in `.claude/agents/` for the selected specialist roles.
-4. Keep the `engineering-lead` agent as the architecture owner; use it to coordinate the specialist agents and review their outputs.
-5. Document decisions in ADR-style files so future agents and engineers can follow the approved architecture.
+## Architectural conventions
+- Code lives in branches; reviewed before merge.
+- Architecture decisions live in `docs/adr/` (numbered, status-tagged).
+- Locked engineering constraints from `CLAUDE.md`: custom web app, Stripe payments, flat-% affiliate model, order-level attribution, no secrets in code.
+- New specialist hires get a charter in `.claude/agents/`, get pointed at the parent-workspace plan and org docs, and inherit the company-wide draft-for-approval default.
 
 ## Notes
-- The platform must preserve the locked engineering constraints from `CLAUDE.md`: custom web app, Stripe payments, flat-% affiliate model, order-level attribution, no secrets in code, and branch + review workflow.
-- The agent plan should stay aligned with future back-office plans in the parent workspace.
+- I update this file as the engineering org evolves. HR updates the parent-workspace Agent Registry to match.

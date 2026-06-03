@@ -117,5 +117,14 @@ Phase 1 is complete when:
 
 ---
 
+## ✅ Review & Approval Workflow
+
+- **Storefront Engineer** must review and agree to the catalog-admin API shape and published-state behavior before implementation begins.
+- **Engineering Lead** must approve the final API contract and Phase 1 implementation plan.
+- All PRs should reference `systems/catalog-admin/docs/SPEC.md` and `docs/adr/0001-catalog-api-contract.md`.
+- Implementation begins only after the contract is signed off by both engineers and the Engineering Lead.
+
+---
+
 **Last Updated**: June 3, 2026  
 **Maintained By**: Engineering Lead
