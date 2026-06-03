@@ -45,4 +45,4 @@ From the repo root, run:
 ```powershell
 .\deploy.bat
 ```
-This installs dependencies, stops any existing containers, and brings all services up via Docker Compose.
+This installs dependencies, runs repo tests, stops any existing containers, and brings all services up via Docker Compose.

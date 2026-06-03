@@ -6,10 +6,13 @@
   "scripts": {
     "dev": "node src/index.js",
     "build": "echo 'Build order service'",
-    "test": "echo 'Run order service tests'"
+    "test": "jest --runInBand"
   },
   "dependencies": {
     "express": "^4.18.2",
     "@imagibricks/contracts": "file:../contracts"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
   }
 }

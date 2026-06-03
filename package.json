@@ -4,17 +4,17 @@
   "private": true,
   "workspaces": [
     "contracts",
-    "catalog-service",
-    "inventory-service",
-    "order-service",
-    "affiliate-service",
-    "storefront",
-    "catalog-admin"
+    "systems/catalog-service/code",
+    "systems/inventory-service/code",
+    "systems/order-service/code",
+    "systems/affiliate-service/code",
+    "systems/storefront/code",
+    "systems/catalog-admin/code"
   ],
   "scripts": {
     "bootstrap": "npm install",
-    "deploy": "docker compose up --build -d",
+    "deploy": "npm test && docker compose up --build -d",
     "lint": "echo 'Add repo-level linting here'",
-    "test": "echo 'Run repo-level tests here'"
+    "test": "npm run test --workspaces --if-present"
   }
 }
