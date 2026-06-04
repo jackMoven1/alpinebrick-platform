@@ -19,7 +19,7 @@ export default function BulkVariantForm({ onCreate }) {
       {preview.length > 0 && (
         <p className="mt-2 text-xs text-gray-500">Will create: {preview.map((v) => v.sku).join(', ')}</p>
       )}
-      <Button variant="brand" className="mt-3" disabled={preview.length === 0}
+      <Button variant="brand" className="mt-3" disabled={preview.length === 0 || !tpl.sku_prefix.trim()}
         onClick={() => onCreate({ ...tpl, price: Number(tpl.price) || 0, values: tpl.values.split(',') })}>
         Create {preview.length} variant(s)
       </Button>

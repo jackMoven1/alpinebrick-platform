@@ -56,7 +56,7 @@ export default function ProductList() {
           <option value="published">Published</option>
           <option value="archived">Archived</option>
         </select>
-        <select value={sort} onChange={(e) => setSort(e.target.value)}
+        <select value={sort} onChange={(e) => { setSort(e.target.value); setPage(1) }}
           className="rounded-pill border border-gray-200 px-4 py-2 text-sm">
           <option value="name_asc">Name A–Z</option>
           <option value="name_desc">Name Z–A</option>

@@ -26,3 +26,6 @@ Surfaced during code review; recorded here so they survive into the Phase B back
 - `useAutoSave` uses one shared debounce across InfoTab fields; rapid edits across fields can drop the last keystroke of an earlier field until the next save cycle.
 - `ImagesTab` never calls `URL.revokeObjectURL` (object-URL retained until unload); add revocation when real upload replaces the mock in Phase B.
 - Test note: `catalog.test.jsx` uses `getAllByPlaceholderText('Price')[0]` because the single-add and bulk forms both render a "Price" input (plan's exact `getByPlaceholderText` would match two).
+- `useAutoSave` has no try/catch around the debounced `saveFn`; a thrown save (e.g. Phase B network error) leaves the "Saving…" indicator stuck. Add error handling in Phase B.
+- `ProductList.bulkPublish` and the tabs' post-mutation `refresh()` calls are not awaited / not wrapped in try/catch; Phase B network errors would fail silently. Add error handling + await before Phase B.
+- `ImagesTab` reorder/alt/delete handlers call `refresh()` without await; rapid clicks can read stale `product.images`. Await refresh in Phase B.
