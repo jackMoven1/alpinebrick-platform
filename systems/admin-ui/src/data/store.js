@@ -16,7 +16,7 @@ export function createStore() {
   }
 
   return {
-    listAll: () => products.map((p) => ({ ...p })),
+    listAll: () => products.map((p) => JSON.parse(JSON.stringify(p))),
     get: (id) => {
       const p = require(id)
       return JSON.parse(JSON.stringify(p))
