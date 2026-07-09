@@ -31,7 +31,7 @@ export async function listProducts(opts: {
 
 export async function getProduct(idOrSlug: string): Promise<ProductDto | null> {
   const p = await prisma.product.findFirst({
-    where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
+    where: { status: 'published', OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
     include: { variants: true },
   })
   return p ? toDto(p) : null
@@ -39,7 +39,7 @@ export async function getProduct(idOrSlug: string): Promise<ProductDto | null> {
 
 export async function getAvailability(idOrSlug: string) {
   const p = await prisma.product.findFirst({
-    where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
+    where: { status: 'published', OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
     include: { variants: { include: { inventory: true } } },
   })
   if (!p) return null

@@ -1,12 +1,18 @@
 import { Router } from 'express'
 import { listProducts, getProduct, getAvailability } from './catalog.service.js'
 
+function toPosInt(v: unknown): number | undefined {
+  if (typeof v !== 'string') return undefined
+  const n = Number(v)
+  return Number.isInteger(n) && n > 0 ? n : undefined
+}
+
 export const catalogRouter = Router()
 
 catalogRouter.get('/products', async (req, res) => {
   const result = await listProducts({
-    page: req.query.page ? Number(req.query.page) : undefined,
-    pageSize: req.query.pageSize ? Number(req.query.pageSize) : undefined,
+    page: toPosInt(req.query.page),
+    pageSize: toPosInt(req.query.pageSize),
     search: typeof req.query.search === 'string' ? req.query.search : undefined,
   })
   res.json(result)
