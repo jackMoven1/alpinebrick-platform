@@ -54,6 +54,7 @@ model Variant {
   currency   String     @default("USD")
   attributes Json       @default("{}")
   inventory  Inventory?
+  @@index([productId])
   @@map("variants")
 }
 
@@ -84,5 +85,7 @@ model AuditLog {
   before    Json?
   after     Json?
   createdAt DateTime @default(now()) @map("created_at")
+  @@index([actorId])
+  @@index([action])
   @@map("audit_log")
 }
