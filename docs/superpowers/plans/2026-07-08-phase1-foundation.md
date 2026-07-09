@@ -6,6 +6,8 @@
 
 **Architecture:** A new modular-monolith core at `systems/core`. Postgres via Prisma (typed schema + migrations). Express HTTP layer with a thin service layer per module. Cross-cutting `Actor`/`AuditLog` substrate is created here so later plans can record every mutation. This plan is deliberately read-only on the catalog; write paths arrive in later plans.
 
+> **Deferred to the storefront-cutover plan (Plan 5)** — decided 2026-07-08. `systems/core` is intentionally NOT yet added to the monorepo root `package.json` workspaces / `pnpm-workspace.yaml` / `docker-compose.yaml`, so root `npm test --workspaces` skips it (run `cd systems/core && npm test` in the interim). Wiring it into root tooling requires a root `npm install` that would churn the root lockfile and could ripple into the old services this redesign retires, so it belongs with the cutover when those services are removed. **Cutover plan must:** add `systems/core` to root workspaces + `pnpm-workspace.yaml`, add a `core`/`core-db` docker-compose service, then reinstall.
+
 **Tech Stack:** TypeScript, Node 20+, Express 4, Prisma 5 (PostgreSQL), Vitest + supertest.
 
 ## Global Constraints
