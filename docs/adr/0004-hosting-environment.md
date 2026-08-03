@@ -1,8 +1,8 @@
 # ADR-0004: Hosting Environment for the ImagiBricks Platform
 
-**Status:** Proposed — awaiting Jack's approval. *This involves recurring
-external spend, which requires Jack + partner sign-off before any account is
-created or card attached.*
+**Status:** **Accepted** — approved by Jack 2026-08-03 (architecture/infra
+and recurring-spend sign-off given via Jack, who coordinates partner
+approval).
 **Date:** 2026-08-03
 **Author:** Engineering Lead
 **Numbering note:** follows `docs/adr/0001`–`0003` (catalog ADRs) and the
@@ -245,5 +245,5 @@ minimum tiers (~$20).
 
 ## Approval
 
-- [ ] Jack — architecture/infra approval
-- [ ] Jack + partner — external recurring spend sign-off
+- [x] Jack — architecture/infra approval (2026-08-03)
+- [x] Jack + partner — external recurring spend sign-off (2026-08-03, via Jack)
