@@ -26,7 +26,8 @@ concrete dispositions below.
 | 6 | **Price mgmt** — Price API | Plan Task 9: push + per-listing override | ✅ exact match |
 | 7 | **Promotions API** | Out of scope (spec: no repricing) | ✅ accepted non-goal |
 | 8 | **Inventory** — Inventory API, per SKU + ship node | Plan Task 7: ATS push w/ safety buffer + hourly reconcile; single default ship node | ✅ exact match |
-| 9 | **Fulfillment lag time** — item attribute; ship ≤ 2 operational days unless exemption | Attribute settable in feed; **business model question** (made-to-order vs stocked) | 🟠 **G4 business** |
+| 9 | **Fulfillment lag time** — item attribute; ship ≤ 2 operational days unless exemption | Prebuilt/used ready-to-ship stock (Jack, 2026-08-03); honest lag time in feed | ✅ **G4 resolved** |
+| 9b | **Item condition** — used items need Pre-Owned program approval + condition attributes | New items unaffected; used SKUs gated on program acceptance | 🟠 **G9 business** |
 | 10 | **Order retrieval** — Orders API | Plan Task 6: webhook + 15-min poller, idempotent ingest | ✅ exact match |
 | 11 | **Acknowledge before ship** (required step) | Plan Task 5/10: auto-ack job on ingest | ✅ exact match |
 | 12 | **Ship w/ tracking** (VTR ≥ 99%) | Plan Task 10: `recordChannelShipment` → ship push w/ tracking | ✅ exact match |
@@ -80,15 +81,31 @@ orders, diff Walmart's line statuses; on `Cancelled`, call the existing
 `ChannelEvent(externalId, 'order_cancelled_inbound')`. ~½ task of work,
 reuses existing transitions.
 
-### 🟠 G4 — 2-operational-day ship SLA vs. our production model (business decision)
-Walmart requires shipping within **2 operational days** (item-level lag time,
-exemption possible but approval-gated). If custom sets are
-assembled-to-order, we either hold pick-ready inventory for Walmart-listed
-SKUs, set honest lag-time attributes, or don't list made-to-order items.
-**Disposition:** Jack + partner decide which SKUs are Walmart-eligible and
-the stocking policy; engineering adds `fulfillmentLagTime` to the feed
-attributes (part of G2 work). The safety-buffer inventory design already
-protects against overselling stocked units.
+### ✅ G4 — 2-operational-day ship SLA — RESOLVED (2026-08-03, Jack)
+Jack confirmed: for Walmart (and ecommerce generally), ImagiBricks sells
+**prebuilt or used items ready for sale** — ready-to-ship stock. Standard
+lag time applies; no exemptions needed; the safety-buffer inventory design
+protects the stocked units. Engineering still sets `fulfillmentLagTime`
+honestly in the feed attributes (part of G2 work).
+**Roadmap note (explicitly out of current scope):** a future *custom build
+competition* feature will introduce pre-sales — orders built to the
+competition winner's design and delivered later. That is a
+storefront-first preorder/build-to-order flow to be specced when it's
+scheduled; it does not change the Walmart v1 design (Walmart does have a
+preorder mechanism if the channel ever wants it).
+
+### 🟠 G9 — Used items require the Walmart Pre-Owned program (new finding)
+Walmart Marketplace items are new-condition by default. Selling **used**
+sets requires acceptance into the **Walmart Pre-Owned program** (open
+application, gated on Seller Performance Standards; items must be
+inspected/cleaned; condition sub-types apply). The invite-only Resold/
+Restored tier is for professional refurbishers and not our path.
+**Disposition (business — Jack):** apply to the Pre-Owned program in Seller
+Center once performance history exists (or at onboarding if eligible);
+decide which used SKUs are Walmart-eligible. New/prebuilt items are
+unaffected and can launch first.
+**Disposition (engineering):** condition attribute in the item feed for
+Pre-Owned SKUs — folds into the G2 attribute work; no new architecture.
 
 ### 🟡 G5 — Retire item flow
 **Disposition:** amend plan Task 8: when a product is archived/unlisted, a
@@ -125,8 +142,11 @@ No architecture change; the anti-corruption layer contains all of it.
 
 Business actions (Jack + partner, before listing work is scheduled):
 1. License GS1 UPCs (external spend — longest lead item).
-2. Decide Walmart-eligible SKUs + stocking policy vs. the 2-day ship SLA.
-3. Compliance/brand review of listing content (already flagged in spec).
+2. ~~Stocking policy vs. 2-day SLA~~ — resolved: prebuilt/used ready-to-ship
+   stock (see G4).
+3. Apply to the Walmart Pre-Owned program before listing any **used** SKUs
+   (new items can launch first without it — see G9).
+4. Compliance/brand review of listing content (already flagged in spec).
 
 ## Sources
 
