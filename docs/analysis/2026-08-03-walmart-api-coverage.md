@@ -12,6 +12,13 @@ There are **2 critical gaps** (both product-data, not process), 3 moderate
 gaps, and 4 minor/accepted ones. None invalidate the architecture; all have
 concrete dispositions below.
 
+> **Business-status update (2026-08-03, stated by Jack — not independently
+> verifiable in repo):** ImagiBricks is **already approved as the sole
+> vendor of LEGO collectibles** on Walmart, holds **LEGO branding
+> approval**, and Walmart's **GTIN exemption approval is underway**. This
+> resolves G9 and the brand-compliance flag outright, and re-scopes G1 —
+> see the updated dispositions inline.
+
 ---
 
 ## Coverage matrix
@@ -57,13 +64,22 @@ every variant it lists.
 splits by product type (the `ProductType` enum already distinguishes them):
 - **`resale` items (previously-retail collectible sets)** — they already
   carry the **manufacturer's UPC/GTIN**; we record it on the variant and
-  list by catalog match. **No GS1 licensing needed** for these, which
-  removes the blocker from the likely launch inventory.
-- **`own_designed` sets** — still need GS1-licensed UPCs before they can
-  list. **Disposition (business — Jack + partner):** license a GS1 company
-  prefix (order-of-hundreds of dollars initial + annual renewal, scales by
-  SKU count); external spend → partner sign-off. Only gates own-designed
-  SKUs, so it can run in parallel with the resale launch.
+  list by catalog match. **No GS1 licensing needed** for these.
+- **`own_designed` sets** — would need GS1 UPCs *unless* covered by a GTIN
+  exemption (below).
+
+**Second refinement (same day, per Jack):** a **Walmart GTIN exemption
+approval is underway**. Once granted, exempted items list with a
+**SKU-type product identifier instead of a UPC** — which is exactly what
+the plan's mapper drafts today. Engineering disposition becomes: support
+**both** identifier paths — `productIdType: 'GTIN'` when the variant has a
+recorded manufacturer UPC (resale match), `productIdType: 'SKU'` for
+exempted items — selected per listing. `gtin` stays a nullable Variant
+field. GS1 licensing drops off the critical path entirely; revisit only if
+the exemption is denied or scoped narrower than expected.
+**Remaining action:** confirm the exemption's scope (which
+categories/brands it covers) when Walmart grants it, before the first
+own-designed listing.
 
 ### 🟠 G2 — Required item attributes (brand, manufacturer, dimensions, weight, Toys category fields)
 Spec 5.x rejects feeds missing category-required attributes; Toys also
@@ -121,14 +137,16 @@ previously-sold items are the core inventory. Walmart's reality, verified:
 - **Collector Shop supports preorders** — a natural future home for the
   competition pre-sale roadmap item on this channel.
 
-**Disposition (business — Jack + partner):** start the collectibles-program
-conversation with Walmart **early** (invitation-only means lead time is
-uncontrollable); launch the channel with sealed/new-condition collectible
-stock in the meantime.
-**Disposition (engineering):** condition + authenticity attributes fold into
-the G2 attribute work; set-up-by-match for manufacturer-UPC items is the
-same MP_ITEM feed with the existing product identifier — no new
-architecture.
+**RESOLVED (2026-08-03, per Jack):** ImagiBricks is **already approved as
+the sole vendor of LEGO collectibles** on Walmart and holds **LEGO branding
+approval** — the invitation gate and the brand-compliance flag (spec's open
+item) are both cleared. The collector-program perks (return-policy options,
+0% commission categories) should be confirmed and configured during Seller
+Center onboarding.
+**Disposition (engineering, unchanged):** condition + authenticity
+attributes fold into the G2 attribute work; set-up-by-match for
+manufacturer-UPC items is the same MP_ITEM feed with the existing product
+identifier — no new architecture.
 
 ### 🟡 G5 — Retire item flow
 **Disposition:** amend plan Task 8: when a product is archived/unlisted, a
@@ -163,16 +181,19 @@ Task 8 (+require GTIN, +retire job, +variant-group note), Task 13
 (+subscription bootstrap, +fully-attributed feed in the E2E gate).
 No architecture change; the anti-corruption layer contains all of it.
 
-Business actions (Jack + partner, before listing work is scheduled):
-1. License GS1 UPCs — **own-designed SKUs only**; resale collectibles use
-   manufacturer UPCs (see G1 refinement). External spend, partner sign-off.
+Business actions (updated 2026-08-03 — most gates now cleared per Jack):
+1. ~~License GS1 UPCs~~ — off the critical path: resale items use
+   manufacturer UPCs; **Walmart GTIN exemption underway** covers the rest.
+   Remaining: confirm exemption scope when granted (see G1).
 2. ~~Stocking policy vs. 2-day SLA~~ — resolved: prebuilt/used ready-to-ship
    stock (see G4).
-3. **Start the Walmart Collectibles / Resold conversation early**
-   (`collectibles@walmart.com`) — invitation-only, uncontrollable lead time;
-   opened/used SKUs are gated on it. Sealed/new-condition collectible stock
-   launches through the standard path meanwhile (see G9).
-4. Compliance/brand review of listing content (already flagged in spec).
+3. ~~Collectibles program invitation~~ — resolved: **approved as sole vendor
+   of LEGO collectibles**; confirm collector return-policy options + 0%
+   commission categories at Seller Center onboarding (see G9).
+4. ~~Brand review~~ — resolved: **LEGO branding approval received**.
+
+Remaining pre-listing items are now all engineering: the five plan
+amendments above, plus the sandbox E2E gate.
 
 ## Sources
 
