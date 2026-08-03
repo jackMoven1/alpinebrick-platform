@@ -179,6 +179,36 @@ if we prefer the more conservative vendor — the deploy artifacts (Dockerfile,
 env vars, standard Postgres) are identical either way, so switching between
 them is a day's work, not a rewrite.
 
+## Security infrastructure (added 2026-08-03, in response to Jack's question)
+
+- **Edge / gateway layer 1 (native):** Render terminates TLS at a managed
+  edge (free auto-renewed certificates, HTTPS redirect, load balancing) with
+  Cloudflare-backed DDoS protection included for every service at no cost.
+  The worker and Postgres are not publicly exposed (private network); only
+  the API and storefront get public URLs.
+- **Gateway layer 2 — WAF (not native, cheap to add):** Render has **no
+  user-configurable WAF** today (it is an open feature request). The standard
+  pattern is putting **Cloudflare in front** (free tier) as the second
+  gateway layer: WAF managed rules, rate limiting, bot filtering, and
+  full-site CDN. This works identically in front of Render or DigitalOcean,
+  so it does not change the vendor choice.
+- **CDN (native for the storefront):** Render static sites are served from
+  its global CDN. Product images will live in object storage (S3/R2) behind
+  a CDN — that is an app-architecture item independent of host. Cloudflare
+  in front adds full-site CDN if wanted.
+- **OAuth / identity (app-layer everywhere, by design):** no PaaS provides
+  end-user OAuth for your application — identity is application
+  infrastructure. Our architecture already specifies JWT + sessions and
+  OAuth for admin/partner access; that runs unchanged on Render. If we later
+  want managed identity (Clerk/Auth0 class), it plugs in at the app layer
+  regardless of host. Render itself supports SSO/2FA for our team accounts.
+- **Compliance posture:** Render publishes SOC 2 Type 2 / ISO 27001 / GDPR
+  compliance. Card data never touches our servers — Stripe-hosted payment
+  elements keep us in the minimal PCI SAQ-A scope on any host.
+
+Net: Render + free Cloudflare front = the required 1–2 layer gateway, CDN,
+and DDoS posture. Recommendation unchanged.
+
 ## Decision (proposed)
 
 **Render** (vendor analysis above; DigitalOcean App Platform is the named
