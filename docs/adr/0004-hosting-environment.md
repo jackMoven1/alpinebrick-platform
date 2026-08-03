@@ -104,10 +104,85 @@ backups).
 - **Risks:** a missed backup or unpatched box is an existential data risk for
   the price difference of roughly one dinner a month.
 
+## Vendor analysis (added 2026-08-03, web-verified pricing)
+
+Within the PaaS class (Option A, chosen above), four vendors can run our exact
+footprint — Docker API + long-lived worker + managed Postgres + static
+storefront, in staging + production. Prices are from published pricing pages /
+current third-party surveys as of 2026-08; still approximate, not quotes.
+Note our scheduler is **in-process** in the worker (Walmart plan Task 13), so
+platform-native cron is not a hard requirement anywhere below.
+
+### Render
+
+| Dimension | Assessment |
+|-----------|------------|
+| Complexity | Low — repo-connected deploys, per-env secret groups, preview environments |
+| Cost (our footprint) | Prod: API $7–25 + worker $7 + Postgres $6–19 + static $0. Staging: ~$20. **≈ $45–75/mo** |
+| Postgres story | Managed, daily backups; point-in-time recovery on paid instances; standard Postgres (clean `pg_dump` exit) |
+| Billing model | Fixed per-service tiers — predictable |
+| Team familiarity / boring factor | High — closest to "connect repo, get URL" |
+
+**Pros:** best developer experience of the four; every requirement covered
+first-class (workers, cron, static sites free, env groups, previews);
+predictable bill. **Cons:** private company (platform risk higher than DO);
+compute is pricier than raw VPS at scale.
+
+### DigitalOcean App Platform
+
+| Dimension | Assessment |
+|-----------|------------|
+| Complexity | Low-medium — same repo-connected model, slightly clunkier DX |
+| Cost (our footprint) | Prod: API $5–12 + worker $5 + Managed PG $15 + static $0 (3 free). Staging: ~$15–17 w/ dev-tier DB. **≈ $40–50/mo** |
+| Postgres story | Mature managed Postgres ($15/mo, daily backups + PITR, no I/O fees); easy exit to plain Droplets |
+| Billing model | Fixed tiers — predictable |
+| Team familiarity / boring factor | Highest "boring" score — public company, decade-old managed PG product |
+
+**Pros:** cheapest credible managed-Postgres setup; most conservative vendor
+(public company); fixed pricing. **Cons:** weaker preview-environment story;
+DX friction slightly higher than Render.
+
+### Railway
+
+| Dimension | Assessment |
+|-----------|------------|
+| Complexity | Low |
+| Cost (our footprint) | $5–20 plan + usage; comparable stacks survey at **~$35–80/mo**, variable |
+| Postgres story | Postgres as a usage-billed service on volumes; backup/PITR story weaker than Render/DO |
+| Billing model | **Usage-based** — least predictable of the four |
+| Team familiarity / boring factor | Medium |
+
+**Ruled out:** usage-based billing variance and the thinner managed-Postgres
+backup story are the wrong trade for a system of record holding orders.
+
+### Fly.io
+
+| Dimension | Assessment |
+|-----------|------------|
+| Complexity | Medium — flyctl-driven, more knobs (regions, volumes, machines) |
+| Cost (our footprint) | Machines are cheap ($2–3 each) but **Managed Postgres starts at ~$38/mo** → **≈ $55–90/mo** with staging |
+| Postgres story | Managed PG is newer and priced above our needs; self-managed PG on volumes puts backups back on us |
+| Billing model | Usage-based |
+| Team familiarity / boring factor | Lower — optimized for edge/multi-region apps, which we are not |
+
+**Ruled out:** the $38/mo Postgres floor erases its cheap-compute advantage at
+our scale, and its strengths (multi-region edge) solve problems we don't have.
+
+### Vendor trade-off summary
+
+Render and DO App Platform both fit comfortably. Render wins on developer
+experience and preview environments (which directly speed our PR-based
+workflow); DO wins on vendor conservatism and a slightly lower bill. The gap
+is ~$5–25/month and a modest DX difference — either is defensible. **Render is
+the primary recommendation; DigitalOcean App Platform is the named fallback**
+if we prefer the more conservative vendor — the deploy artifacts (Dockerfile,
+env vars, standard Postgres) are identical either way, so switching between
+them is a day's work, not a rewrite.
+
 ## Decision (proposed)
 
-**Option A — Render** (Railway acceptable if we prefer usage-based billing;
-same architecture either way):
+**Render** (vendor analysis above; DigitalOcean App Platform is the named
+runner-up, Railway/Fly.io ruled out):
 
 - Production: `core` API (web service), one background worker, managed
   Postgres, storefront as a static site.
@@ -118,8 +193,11 @@ same architecture either way):
   keys per environment; production keys are connected only with Jack's
   explicit approval per our standing rule.
 
-**Estimated total: ~$40–75/month at launch scale (approximate).** Fits the
-<$100 target with headroom.
+**Estimated total: ~$45–75/month at launch scale (approximate, 2026-08
+pricing survey).** Fits the <$100 target with headroom. Concrete launch
+footprint: prod API Starter ($7, upgrade to Standard $25 if needed) + worker
+($7) + Postgres basic tier ($6–19) + static storefront ($0); staging at
+minimum tiers (~$20).
 
 ## Consequences
 
