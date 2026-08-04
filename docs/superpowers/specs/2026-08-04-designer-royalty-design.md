@@ -1,8 +1,9 @@
 # Designer Attribution & Per-Sale Royalty — Design
 
 **Date:** 2026-08-04
-**Status:** Proposed — awaiting Engineering Lead review and Jack's sign-off on the
-open questions in §9.
+**Status:** **Accepted** — all commercial questions approved by Jack 2026-08-04
+(§9). Awaiting Engineering Lead review of the technical design. Implementation is
+blocked only on Plan 2 delivering the `Order`/`OrderLine` spine.
 **Author:** Claude (with Jack)
 **Depends on:** Plan 2 — Orders + Inventory + Tax
 (`../plans/2026-07-08-phase2-orders-inventory-tax.md`). The `Order` /
@@ -69,6 +70,17 @@ Settled by Jack, 2026-08-04:
 3. **Royalties are clawed back automatically** when an order is refunded or
    returned.
 
+And the five commercial questions, all approved as recommended:
+
+4. **A designer's rate is their own share**, not a product-level pool that is
+   then divided. §5.3.
+5. **Royalty basis is line revenue net of line-level discounts, excluding
+   shipping and tax.** §7.
+6. **No designer portal at launch** — internal reporting only.
+7. **Payouts via Stripe Connect**, same rail as affiliate partners. §8.
+8. **Clawback after payout is netted against the designer's next payout**, not
+   invoiced. §6.
+
 ---
 
 ## 4. The critical modelling point
@@ -134,13 +146,20 @@ effectiveRateBps = ProductDesigner.rateOverrideBps ?? Designer.defaultRateBps
 Resolved **per designer per product**, so a collaboration can mix an overridden
 rate for one designer with the default for another.
 
-> **Interpretation to confirm (§9.1):** this design treats `effectiveRateBps` as
-> the rate for *that designer's own share*, and `splitBps` as how a
-> multi-designer product divides the royalty pool. With one designer at 5% and
-> `splitBps = 10000`, the product pays 5%. The alternative reading — a single
-> product-level rate that splits between designers — is modelled by giving each
-> designer the same `rateOverrideBps`. Worth stating explicitly in the designer
-> contracts so the number in the contract matches the number in the database.
+> **Semantics — decided (Jack, 2026-08-04).** `effectiveRateBps` is the rate for
+> **that designer's own share**. A designer contracted at 5% earns 5% of the
+> basis, whether they worked alone or alongside others.
+>
+> `splitBps` therefore governs how a **shared** royalty is apportioned when
+> designers are paid from one pool; with a single designer it is always 10000.
+> For a straightforward collaboration where each designer earns their own
+> contracted rate independently, give each `splitBps = 10000` on their own
+> record — the split only divides where a pooled arrangement is intended.
+>
+> **Contract dependency:** the percentage written in a designer's contract must
+> be the number stored in `defaultRateBps` / `rateOverrideBps`. If a contract
+> says "5% of the royalty pool" rather than "5% of net sales", the database will
+> overpay. Worth a one-line check when each designer is onboarded.
 
 ### 5.4 New: `RoyaltyRecord`
 
@@ -205,10 +224,23 @@ the line is fully reversed. Net payable is always
 ## 7. Computing the amount
 
 ```
-basisCents  = order line revenue (see the open question in §9.2)
+basisCents  = orderLine.subtotalCents - orderLine.discountCents
+              (excludes shipping and tax entirely)
 poolCents   = round(basisCents * effectiveRateBps / 10000)
 amountCents = largest_remainder_split(poolCents, [splitBps...])
 ```
+
+**Basis — decided (Jack, 2026-08-04): line revenue net of line-level discounts,
+excluding shipping and tax.** Designers do not earn on sales tax, which we merely
+collect and remit to the state, nor on shipping, which is not product revenue.
+Discounts reduce the basis because a discounted sale genuinely produced less
+revenue.
+
+> **Implementation note:** this requires the order line to carry a **line-level**
+> discount amount. If Plan 2 lands discounts only at the order level, the
+> allocation of an order-level discount down to lines must be settled before
+> royalties are computed — otherwise the basis is wrong on every discounted
+> mixed cart. Flag to the Engineering Lead when Plan 2 is implemented.
 
 **Rounding rule — largest remainder.** Splitting an integer-cent pool by
 percentages produces fractional cents. Naive per-designer rounding makes the
@@ -235,28 +267,35 @@ percentages and basis amounts.
   products keep accruing. Inactive is not a kill switch on earned revenue.
 - **Payout** → batches `accrued` records per designer via Stripe Connect, reusing
   the `Payout` model specced for affiliate partners. Net of any outstanding
-  `clawed_back` balance.
+  `clawed_back` balance. A designer without a completed Connect account
+  (`payoutAccountRef` null) still **accrues** normally — royalties are earned at
+  sale, not at payout — but cannot be batched until KYC completes. Accrual must
+  never be gated on payout readiness.
 
 ---
 
-## 9. Open questions — need Jack before implementation
+## 9. Commercial decisions — approved by Jack 2026-08-04
 
-1. **Rate semantics.** Is a designer's rate their *own* share, or the
-   *product's* total royalty which is then split? §5.3 assumes the former.
-   Whichever is chosen must match the wording in the designer contracts.
-2. **Royalty basis.** Gross line revenue, or net of discounts, shipping, and tax?
-   Recommendation: **net of line-level discounts, excluding shipping and tax** —
-   designers should not earn on sales tax we merely collect and remit, and
-   shipping is not product revenue. Needs confirming as a commercial term.
-3. **Designer portal.** Self-serve dashboard, or internal reporting only?
-   Recommendation: internal only for launch; a portal is a Phase 4-style
-   addition and is not on the critical path to selling.
-4. **Payout rail.** Stripe Connect, same as affiliate partners, or manual for a
-   small number of designers at launch? Connect is already a locked decision for
-   partners, so reusing it is cheap — but it means designer onboarding includes
-   Connect KYC.
-5. **Clawback after payout.** Net against the next payout (assumed here), or
-   invoice the designer? Netting is standard; it needs saying in the contract.
+All five were approved as recommended. Recorded here with their consequences.
+
+| # | Decision | Consequence |
+|---|---|---|
+| 1 | **A designer's rate is their own share**, not a product pool that is divided | The contract percentage must equal the stored rate — see the contract dependency in §5.3 |
+| 2 | **Basis = line revenue net of line-level discounts, excluding shipping and tax** | Requires **line-level** discount amounts. If Plan 2 only models order-level discounts, allocation to lines must be settled first (§7) |
+| 3 | **No designer portal at launch** — internal reporting only | Designers cannot self-serve. Someone has to answer "what did I earn?" manually; budget for that operationally |
+| 4 | **Payouts via Stripe Connect**, same rail as affiliate partners | **Designer onboarding now includes Connect KYC.** A designer cannot be paid until they complete it — start onboarding before the first sale, not after |
+| 5 | **Clawback after payout nets against the next payout** | A designer with no subsequent sales carries an unrecovered balance indefinitely. Acceptable at low volume; revisit if it becomes material |
+
+### Two follow-ups these decisions create
+
+- **Designer contracts must use the same basis wording as §7** — "% of net sales
+  excluding shipping and tax", not "% of revenue". A mismatch between contract
+  language and the computation is a dispute waiting to happen, and it is cheaper
+  to fix in the contract template than in the ledger.
+- **Connect KYC is a lead time, not a step.** Treat designer onboarding as
+  beginning at contract signature, not at first payout.
+
+Nothing in this section blocks implementation.
 
 ---
 
