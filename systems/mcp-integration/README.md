@@ -8,7 +8,7 @@
 
 ## Overview
 
-The **MCP Integration** system exposes ImagiBricks platform data to back-office AI agents:
+The **MCP Integration** system exposes AlpineBrick platform data to back-office AI agents:
 - Orders, customers, products, inventory via MCP tools
 - Back-office agents can query platform data
 - Affiliate data exposure (commissions, payouts)

@@ -1,6 +1,6 @@
 # Shared Documentation
 
-**Cross-cutting docs for the ImagiBricks platform**
+**Cross-cutting docs for the AlpineBrick platform**
 
 ---
 

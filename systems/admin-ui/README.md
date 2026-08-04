@@ -1,4 +1,4 @@
-# ImagiBricks Admin Console (admin-ui)
+# AlpineBrick Admin Console (admin-ui)
 
 Internal staff admin console. **Separate from the storefront** (different package, different domain — never co-bundled). Catalog management is module 1.
 

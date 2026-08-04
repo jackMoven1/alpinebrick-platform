@@ -8,7 +8,7 @@
 
 ## 1. PROJECT OVERVIEW
 
-Build a **Catalog Management System** (catalog-admin service) that allows ImagiBricks employees to:
+Build a **Catalog Management System** (catalog-admin service) that allows AlpineBrick employees to:
 - Create and manage products and variants (SKUs)
 - Upload and organize product images
 - Publish/unpublish products to the storefront
@@ -17,7 +17,7 @@ Build a **Catalog Management System** (catalog-admin service) that allows ImagiB
 - Link products to inventory items
 - Track who changed what, when (full audit trail)
 
-**Target User**: ImagiBricks internal staff (warehouse, marketing, operations teams)  
+**Target User**: AlpineBrick internal staff (warehouse, marketing, operations teams)  
 **Tech Stack**: React (TypeScript) + Express.js (Node.js) + PostgreSQL  
 **Deployment**: Docker Compose (local dev) → Kubernetes-ready (future)
 
@@ -575,7 +575,7 @@ catalog-admin:
     - '3001:3001'
   environment:
     - NODE_ENV=development
-    - DATABASE_URL=postgresql://postgres:postgres@catalog-db:5432/imagibricks_catalog
+    - DATABASE_URL=postgresql://postgres:postgres@catalog-db:5432/alpinebrick_catalog
     - CATALOG_SERVICE_URL=http://catalog-service:4001
     - INVENTORY_SERVICE_URL=http://inventory-service:4003
   volumes:
@@ -593,7 +593,7 @@ volumes:
 ```
 NODE_ENV=development
 PORT=3001
-DATABASE_URL=postgresql://postgres:postgres@catalog-db:5432/imagibricks_catalog
+DATABASE_URL=postgresql://postgres:postgres@catalog-db:5432/alpinebrick_catalog
 CATALOG_SERVICE_URL=http://catalog-service:4001
 INVENTORY_SERVICE_URL=http://inventory-service:4003
 IMAGE_STORAGE_PATH=/data/images
@@ -628,13 +628,13 @@ IMAGE_STORAGE_PATH=/data/images
 ## 7. DEVELOPER HANDOFF NOTES
 
 - **Tech stack is locked**: React, Express, pg, Tailwind
-- **Monorepo**: catalog-admin is a service inside the ImagiBricks engineering repo
+- **Monorepo**: catalog-admin is a service inside the AlpineBrick engineering repo
 - **Shared DB**: catalog-admin uses same PostgreSQL database as catalog-service
 - **Local dev**: `docker-compose up` starts all services
 - **API contract**: Catalog-service already exposes `/api/products` endpoints; catalog-admin builds on top
 - **No external services Phase 1**: Local file storage only; no S3/Auth0/third-party deps
 - **User model Phase 1**: Mock auth (single "admin" user); real auth in Phase 2
-- **Code review**: All PRs require review before merge to `main` (per ImagiBricks conventions)
+- **Code review**: All PRs require review before merge to `main` (per AlpineBrick conventions)
 
 ---
 

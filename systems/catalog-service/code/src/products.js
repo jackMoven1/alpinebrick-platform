@@ -9,7 +9,7 @@ const products = [
     images: ['/images/brick-builder.jpg'],
     metadata: {
       weight: '1.5kg',
-      brand: 'ImagiBricks'
+      brand: 'Alpine Brick Exchange'
     },
     variants: [
       {

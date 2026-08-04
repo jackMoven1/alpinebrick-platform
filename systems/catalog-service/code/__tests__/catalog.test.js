@@ -15,7 +15,7 @@ jest.mock('../src/db', () => {
       published: true,
       categories: ['starter', 'creative'],
       images: [{ url: '/images/brick-builder.jpg', alt: 'Brick Builder Set box' }],
-      metadata: { brand: 'ImagiBricks' },
+      metadata: { brand: 'Alpine Brick Exchange' },
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-01T00:00:00Z',
       min_price: 39.99
@@ -28,7 +28,7 @@ jest.mock('../src/db', () => {
       published: true,
       categories: ['advanced', 'creative'],
       images: [{ url: '/images/castle.jpg', alt: 'Assembled castle' }],
-      metadata: { brand: 'ImagiBricks' },
+      metadata: { brand: 'Alpine Brick Exchange' },
       created_at: '2026-02-01T00:00:00Z',
       updated_at: '2026-02-01T00:00:00Z',
       min_price: 89.99

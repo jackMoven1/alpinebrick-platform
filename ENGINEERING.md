@@ -1,4 +1,4 @@
-# ImagiBricks Engineering – Directory Structure
+# AlpineBrick Engineering – Directory Structure
 
 **Date**: June 3, 2026  
 **Status**: Active reorganization for clarity and scale

@@ -1,7 +1,7 @@
-# ImagiBricks Platform Architecture
+# AlpineBrick Platform Architecture
 
 ## Overview
-This document describes the application infrastructure for ImagiBricks, supporting a retail eCommerce platform with the following systems:
+This document describes the application infrastructure for AlpineBrick, supporting a retail eCommerce platform with the following systems:
 
 1. Web storefront
 2. Inventory management

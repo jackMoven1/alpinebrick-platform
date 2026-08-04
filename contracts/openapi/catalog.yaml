@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: ImagiBricks Catalog API
+  title: AlpineBrick Catalog API
   version: 1.0.0
   description: >-
-    API contract for the ImagiBricks product catalog (read + availability).
+    API contract for the AlpineBrick product catalog (read + availability).
     v1 surface is frozen per ADR-0001. All response fields are snake_case.
     Search is case-insensitive substring matching (not relevance-ranked);
     a relevance engine is a future ADR. Slug lookup, faceted navigation,

@@ -1,6 +1,6 @@
-# ImagiBricks Engineering Workspace
+# AlpineBrick Engineering Workspace
 
-This repository contains independent service projects for the ImagiBricks platform.
+This repository contains independent service projects for the AlpineBrick platform.
 
 ## Projects
 - `contracts/` — shared API and event contract definitions

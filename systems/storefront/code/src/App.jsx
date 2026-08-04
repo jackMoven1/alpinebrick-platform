@@ -7,7 +7,7 @@ function App() {
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white shadow">
         <nav className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
-          <h1 className="text-3xl font-bold text-gray-900">ImagiBricks</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Alpine Brick Exchange</h1>
           <p className="text-gray-600">Premium Construction Sets & Toys</p>
         </nav>
       </header>
@@ -18,7 +18,7 @@ function App() {
       
       <footer className="bg-gray-800 text-white py-8 mt-12">
         <div className="max-w-7xl mx-auto px-4 text-center">
-          <p>&copy; 2026 ImagiBricks. All rights reserved.</p>
+          <p>&copy; 2026 Alpine Brick Exchange. All rights reserved.</p>
         </div>
       </footer>
     </div>

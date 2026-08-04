@@ -1,4 +1,4 @@
-# ImagiBricks Repository Layout Proposal
+# AlpineBrick Repository Layout Proposal
 
 ## Goal
 Support independent project ownership for each system while keeping integration contracts and shared tooling centralized.

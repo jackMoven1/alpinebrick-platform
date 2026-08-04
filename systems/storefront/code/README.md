@@ -1,6 +1,6 @@
-# ImagiBricks Storefront
+# AlpineBrick Storefront
 
-Customer-facing React web application for ImagiBricks eCommerce platform.
+Customer-facing React web application for AlpineBrick eCommerce platform.
 
 ## Tech Stack
 

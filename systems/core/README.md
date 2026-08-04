@@ -1,4 +1,4 @@
-# ImagiBrick Core
+# AlpineBrick Core
 
 Modular-monolith core (TypeScript + Express + Prisma/Postgres). Phase 1 substrate:
 canonical schema (catalog + audit slice), seed, and the read-only catalog API at

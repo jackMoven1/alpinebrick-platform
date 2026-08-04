@@ -1,6 +1,6 @@
-# ImagiBricks — Engineering Workspace
+# AlpineBrick — Engineering Workspace
 
-This is the Claude Code workspace for ImagiBricks' platform build. It's the engineering counterpart to the Cowork "boardroom" in the parent folder. The two are deliberately separate: this directory is where the IT/Engineering org lives and codes; the parent folder holds the company plan, org structure, back-office agents, and shared knowledge.
+This is the Claude Code workspace for AlpineBrick' platform build. It's the engineering counterpart to the Cowork "boardroom" in the parent folder. The two are deliberately separate: this directory is where the IT/Engineering org lives and codes; the parent folder holds the company plan, org structure, back-office agents, and shared knowledge.
 
 ## What's being built here
 Four systems plus the cross-cutting concerns that tie them together:
@@ -12,7 +12,7 @@ Four systems plus the cross-cutting concerns that tie them together:
 
 Cross-cutting:
 - **Interaction tracking & analytics** — events, customer journeys, and **affiliate attribution captured at the order level** (non-negotiable).
-- **ImagiBricks MCP connector** — exposes orders/inventory/customers/affiliates/referrals as MCP tools so the back-office agents in the parent folder can read this platform's data.
+- **AlpineBrick MCP connector** — exposes orders/inventory/customers/affiliates/referrals as MCP tools so the back-office agents in the parent folder can read this platform's data.
 
 ## Locked decisions to respect
 - Custom web app (not Shopify). **Stripe** for payments. **Stripe Connect** is the likely mechanism for affiliate payouts.
@@ -27,8 +27,8 @@ Cross-cutting:
 - Repo structure (monorepo vs. multi-repo, packages, etc.) is the Engineering Lead's first decision with Jack. Nothing committed to that shape yet.
 
 ## Where to find the back-office context
-- `../../docs/ImagiBricks-Agent-Plan.md` — the agent roster and roadmap
-- `../../docs/ImagiBricks-Org-Structure.md` — the company org & charters
+- `../../docs/alpinebrick-agent-plan.md` — the agent roster and roadmap
+- `../../docs/alpinebrick-org-structure.md` — the company org & charters
 - `../agents/IT-Org-Hiring-Plan.md` — the IT org and engineer roles
 - `../agents/Agent-Registry.md` — every agent's status and permissions
 - `../Session-Handoff-2026-05-22.md` — the most recent state-of-play

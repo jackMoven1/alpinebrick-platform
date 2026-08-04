@@ -2,7 +2,7 @@
 
 ## 📋 What Was Built
 
-A complete Product Listing page for ImagiBricks storefront with:
+A complete Product Listing page for AlpineBrick storefront with:
 - Product grid display (responsive: 1/2/3 columns)
 - Real-time search by product name/description
 - Category filtering (dynamically built from product data)
@@ -172,7 +172,7 @@ Before creating Pull Request:
 
 When you visit **http://localhost:5173** (dev) or **http://localhost:3000** (prod):
 
-1. **Page loads** → See ImagiBricks header, ProductList component
+1. **Page loads** → See AlpineBrick header, ProductList component
 2. **Products appear** → Grid of product cards (should see "Brick Builder Set")
 3. **Search works** → Type in search → products filter in real-time
 4. **Categories work** → Select category dropdown → filters products
