@@ -1,0 +1,19 @@
+// Production build only.
+//
+// tsconfig.json includes src, prisma and tests so the IDE and `tsc --noEmit`
+// type-check everything. That config has rootDir ".", which makes tsc emit
+// dist/src/server.js and dist/tests/** — so `npm start` (node dist/server.js)
+// could never find its entrypoint, and test code shipped in the image.
+//
+// This config narrows the build to src alone, so the emitted layout is
+// dist/server.js as package.json and the deployment architecture both assume.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "sourceMap": true
+  },
+  "include": ["src"],
+  "exclude": ["tests", "prisma", "node_modules", "dist"]
+}

@@ -1,0 +1,132 @@
+# AlpineBrick platform — Render Blueprint
+#
+# Implements docs/architecture/2026-08-03-deployment-architecture.md.
+# Hosting choice is ADR-0004 (Accepted, Jack 2026-08-03).
+#
+# Two Blueprint instances are created from this one file: production synced to
+# `main`, staging synced to `staging`. See the bootstrap notes at the bottom —
+# a few steps are necessarily dashboard-side and cannot live in this file.
+#
+# NOTE: creating these resources incurs recurring spend. Per the standing rule,
+# Jack creates the account and approves the plans; nothing here provisions
+# anything on its own.
+
+previews:
+  generation: automatic # PR preview environments (API + storefront)
+
+services:
+  # ---------------------------------------------------------------- core-api
+  - type: web
+    name: core-api
+    runtime: docker
+    rootDir: systems/core
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    # Runs inside the built image before traffic shifts, so a deploy carrying a
+    # failing migration never goes live. Requires the prisma CLI to be a
+    # production dependency — it is.
+    preDeployCommand: npx prisma migrate deploy
+    autoDeploy: true # pair with "wait for CI checks" in the dashboard
+    envVars:
+      - fromGroup: core-env
+      - key: DATABASE_URL
+        fromDatabase:
+          name: core-db
+          property: connectionString
+
+  # ------------------------------------------------------------- storefront
+  - type: web
+    name: storefront
+    runtime: static
+    rootDir: systems/storefront/code
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://api.alpinebrickexchange.com
+
+  # ------------------------------------------------------------ core-worker
+  # DELIBERATELY COMMENTED OUT.
+  #
+  # The deployment architecture specifies a background worker running
+  # `node dist/worker.js` for the Walmart outbox processor and pollers
+  # (Walmart plan, Task 13). That code does not exist yet — there is no
+  # src/worker.ts in systems/core.
+  #
+  # Enabling this now would provision a paid service that starts, finds no
+  # entrypoint, and crash-loops. Uncomment as part of the Walmart integration
+  # plan, once src/worker.ts is real.
+  #
+  # - type: worker
+  #   name: core-worker
+  #   runtime: docker
+  #   rootDir: systems/core
+  #   dockerfilePath: ./Dockerfile
+  #   dockerCommand: node dist/worker.js
+  #   plan: starter
+  #   autoDeploy: true
+  #   envVars:
+  #     - fromGroup: core-env
+  #     - key: DATABASE_URL
+  #       fromDatabase:
+  #         name: core-db
+  #         property: connectionString
+
+databases:
+  - name: core-db
+    plan: basic-1gb
+    ipAllowList: [] # private network only — never publicly reachable
+
+envVarGroups:
+  - name: core-env
+    envVars:
+      - key: WALMART_API_BASE
+        value: https://marketplace.walmartapis.com
+      - key: WALMART_SYNC_ENABLED
+        value: "false" # flipped to true only at Walmart go-live
+      # Secrets are NEVER declared here. Set these in the Render dashboard,
+      # per environment, entered by Jack:
+      #   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
+      #   WALMART_CLIENT_ID, WALMART_CLIENT_SECRET, WALMART_WEBHOOK_SECRET
+      # Staging uses Stripe test mode and the Walmart sandbox base URL.
+# ---------------------------------------------------------------------------
+# Bootstrap — dashboard steps this file cannot express
+#
+# 1. Create the Render account and connect the GitHub repo
+#    (jackMoven1/alpinebrick-platform). Account creation and payment details
+#    are Jack's; they are outside what an agent may do.
+#
+# 2. Create the `staging` branch from `main` before creating the staging
+#    Blueprint instance — it does not exist yet.
+#
+# 3. Create two Blueprint instances from this file:
+#      production -> tracks `main`
+#      staging    -> tracks `staging`
+#    Render appends its own suffixes; confirm the resulting resource names.
+#    The architecture doc flags this as a one-time dashboard task to verify.
+#
+# 4. `envVarGroups` is named `core-env` (not `core-prod`) precisely because the
+#    same file builds both environments. If Render does not scope the group per
+#    instance in practice, create `core-prod` / `core-staging` by hand and
+#    change `fromGroup` per instance. VERIFY THIS DURING BOOTSTRAP — it is the
+#    one part of this Blueprint that could not be checked without an account.
+#
+# 5. Point Cloudflare DNS at the Render services once they are up:
+#      www.alpinebrickexchange.com        -> storefront (production)
+#      api.alpinebrickexchange.com        -> core-api   (production)
+#      staging.alpinebrickexchange.com    -> storefront (staging)
+#      api-staging.alpinebrickexchange.com-> core-api   (staging)
+#    TLS mode Full (strict). The staging hostnames are still unconfirmed —
+#    see the amendment note in the deployment architecture doc.
+#
+#    The apex and www currently resolve to the live Shopify store. Do NOT
+#    repoint them until the Phase 5 cutover; bring staging up first.
+#
+# 6. Enable "wait for CI checks" on both instances so autoDeploy cannot ship a
+#    red build.
+# ---------------------------------------------------------------------------

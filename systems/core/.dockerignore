@@ -1,0 +1,14 @@
+# Build context is systems/core. Keep it small and never ship secrets.
+.env
+.env.*
+!.env.example
+
+node_modules
+dist
+coverage
+
+tests
+vitest.config.ts
+
+*.log
+.DS_Store
