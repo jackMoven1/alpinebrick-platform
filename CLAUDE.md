@@ -41,4 +41,4 @@ Cross-cutting:
 
 ## Who reports where
 - **Engineering Lead** → reports to the **CEO** (in the parent workspace).
-- **Specialist engineers** (Storefront, OMS, Affiliate, Interaction Tracking, MCP Integration) → report to the Engineering Lead. None hired yet.
+- **Specialist engineers** (Storefront, OMS, Affiliate, Interaction Tracking, MCP Integration) → report to the Engineering Lead. Storefront and catalog engineers have already been hired.
