@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: ImagiBricks Inventory API
+  title: AlpineBrick Inventory API
   version: 1.0.0
   description: API contract for inventory status, reservations, and stock adjustments.
 paths:

@@ -8,7 +8,7 @@
 
 ## Overview
 
-The **Catalog Admin** system is the internal product management interface for ImagiBricks. It allows warehouse, marketing, and operations teams to:
+The **Catalog Admin** system is the internal product management interface for AlpineBrick. It allows warehouse, marketing, and operations teams to:
 - Create and manage products, variants (SKUs), pricing
 - Upload and organize product images
 - Publish products to the storefront

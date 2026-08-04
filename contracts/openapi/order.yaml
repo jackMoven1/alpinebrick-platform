@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: ImagiBricks Order API
+  title: AlpineBrick Order API
   version: 1.0.0
   description: API contract for order creation, retrieval, and lifecycle actions.
 paths:

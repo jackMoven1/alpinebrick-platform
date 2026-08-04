@@ -9,7 +9,7 @@
 
 ## 🎯 Your Mission (Next 3 Weeks)
 
-Build the **customer-facing storefront** for ImagiBricks. Start with:
+Build the **customer-facing storefront** for AlpineBrick. Start with:
 1. **Product Listing Page** – Browse catalog, search, filter by category
 2. **Product Detail Page** – View product, variants, images, add to cart
 3. **Integration** – Pull live data from catalog-service API

@@ -1,7 +1,7 @@
 # Job Posting: Catalog Management System Developer
 
 **Position Title**: Catalog Developer (Full-Stack)  
-**Team**: ImagiBricks Engineering  
+**Team**: AlpineBrick Engineering  
 **Reports To**: Engineering Lead  
 **Location**: Remote (or flexible)  
 **Duration**: Full-time, ongoing  
@@ -12,7 +12,7 @@
 
 ## Role Summary
 
-Build the **Catalog Management System** for ImagiBricks—a full-stack web application that empowers internal teams (warehouse, marketing, operations) to create, manage, and publish products to our e-commerce storefront.
+Build the **Catalog Management System** for AlpineBrick—a full-stack web application that empowers internal teams (warehouse, marketing, operations) to create, manage, and publish products to our e-commerce storefront.
 
 You'll own the end-to-end implementation of the catalog-admin service, including:
 - **Frontend**: Interactive React UI for product/variant/image management
@@ -132,7 +132,7 @@ By end of Phase 1, the developer will have:
 ## Work Environment & Expectations
 
 - **Autonomy**: Once spec is approved, you make design decisions within the tech stack
-- **Code Review**: All PRs require review before merge to `main` (ImagiBricks engineering standard)
+- **Code Review**: All PRs require review before merge to `main` (AlpineBrick engineering standard)
 - **Collaboration**: Daily standup with Engineering Lead; pair programming as needed
 - **Deliverables**: Weekly progress updates; checklist-driven implementation (42 concrete tasks)
 - **Documentation**: Code comments, README, and developer handoff notes
@@ -141,7 +141,7 @@ By end of Phase 1, the developer will have:
 
 ## Getting Started
 
-1. Clone the ImagiBricks engineering repo
+1. Clone the AlpineBrick engineering repo
 2. Review [CATALOG-ADMIN-SPEC.md](./CATALOG-ADMIN-SPEC.md) – this is your detailed technical specification
 3. Set up local dev: `docker-compose up` (all services + PostgreSQL)
 4. Follow the implementation checklist (~42 tasks)

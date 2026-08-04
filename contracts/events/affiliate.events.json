@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://imagibricks.local/contracts/events/affiliate.events.json",
+  "$id": "https://alpinebrick.local/contracts/events/affiliate.events.json",
   "title": "Affiliate Events",
   "type": "object",
   "properties": {

@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: ImagiBricks Affiliate API
+  title: AlpineBrick Affiliate API
   version: 1.0.0
   description: API contract for affiliate referral capture and commission data.
 paths:

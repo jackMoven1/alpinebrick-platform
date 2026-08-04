@@ -1,6 +1,6 @@
-# ImagiBricks Contracts
+# AlpineBrick Contracts
 
-This directory contains the shared integration contracts for the ImagiBricks platform.
+This directory contains the shared integration contracts for the AlpineBrick platform.
 
 Use this package to:
 - define API schemas for each independent service

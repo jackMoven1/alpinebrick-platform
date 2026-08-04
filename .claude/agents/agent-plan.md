@@ -1,9 +1,9 @@
-# ImagiBricks Engineering — Agent Plan
+# AlpineBrick Engineering — Agent Plan
 
 *Owned by the Engineering Lead. Last updated 2026-06-03.*
 
 ## Purpose
-Defines the specialist engineer agents in the ImagiBricks engineering workspace — who's hired, who's planned, and the order we bring them on.
+Defines the specialist engineer agents in the AlpineBrick engineering workspace — who's hired, who's planned, and the order we bring them on.
 
 ## Current state
 - **Active agents:**
@@ -18,7 +18,7 @@ Defines the specialist engineer agents in the ImagiBricks engineering workspace 
 3. `oms-engineer` — Order management, inventory writes, fulfillment workflow. Plugs into the catalog data model and writes order/inventory state.
 4. `tracking-engineer` — Interaction tracking, event capture, **order-level affiliate attribution**.
 5. `affiliate-engineer` — Affiliate partner accounts, referral codes, flat-% commission engine, Stripe Connect payout support.
-6. `mcp-integration-engineer` — The ImagiBricks MCP connector exposing orders/inventory/customers/affiliates/referrals to back-office agents.
+6. `mcp-integration-engineer` — The AlpineBrick MCP connector exposing orders/inventory/customers/affiliates/referrals to back-office agents.
 
 ## Recommended hire sequence going forward
 1. `oms-engineer` — order lifecycle and inventory foundation; needs the catalog data model in place (which the Catalog Engineer is delivering first).

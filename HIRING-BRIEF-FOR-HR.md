@@ -19,7 +19,7 @@ The role is well-scoped with a detailed specification. The developer has clear s
 
 ## Business Context
 
-ImagiBricks is building an e-commerce platform. The **catalog-admin service** enables internal teams (warehouse, marketing, ops) to manage products, variants, pricing, and images without touching code.
+AlpineBrick is building an e-commerce platform. The **catalog-admin service** enables internal teams (warehouse, marketing, ops) to manage products, variants, pricing, and images without touching code.
 
 **Why this matters**: Without this system, product management requires manual database edits. With it, non-technical staff can launch products in minutes.
 
@@ -142,7 +142,7 @@ ImagiBricks is building an e-commerce platform. The **catalog-admin service** en
 Once candidate is hired:
 
 1. **Repository Access**
-   - Git access to ImagiBricks engineering repo
+   - Git access to AlpineBrick engineering repo
    - Read-only access to parent folder (business context)
 
 2. **Local Dev Setup**
@@ -187,7 +187,7 @@ By end of Phase 1 (4–6 weeks), the developer will have delivered:
 
 Recommended approach:
 - Market rate for mid-level full-stack (3–5 years): $120k–$160k
-- ImagiBricks stage/runway/burn: [CEO/CFO to advise]
+- AlpineBrick stage/runway/burn: [CEO/CFO to advise]
 - Consider: remote work flexibility, equity/options, learning budget
 
 ---

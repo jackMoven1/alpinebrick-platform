@@ -2,7 +2,7 @@
 
 **Date**: June 3, 2026  
 **Engineer**: Storefront Engineer (First Day)  
-**Project**: ImagiBricks Storefront - Product Listing Page  
+**Project**: AlpineBrick Storefront - Product Listing Page  
 **Status**: 🟢 **READY FOR ENGINEERING LEAD REVIEW**
 
 ---

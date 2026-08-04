@@ -8,7 +8,7 @@
 
 ## Overview
 
-The **Storefront** is the customer-facing website for ImagiBricks e-commerce platform. It includes:
+The **Storefront** is the customer-facing website for AlpineBrick e-commerce platform. It includes:
 - Product catalog browsing with search & filters
 - Product detail pages with variants & pricing
 - Shopping cart management

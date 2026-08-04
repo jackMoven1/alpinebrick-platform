@@ -2,7 +2,7 @@
   "name": "inventory-service",
   "version": "0.1.0",
   "private": true,
-  "description": "Inventory management service for ImagiBricks.",
+  "description": "Inventory management service for AlpineBrick.",
   "scripts": {
     "dev": "node src/index.js",
     "build": "echo 'Build inventory service'",
@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "express": "^4.18.2",
-    "@imagibricks/contracts": "file:../contracts"
+    "@alpinebrick/contracts": "file:../contracts"
   },
   "devDependencies": {
     "jest": "^29.7.0"

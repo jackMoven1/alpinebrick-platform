@@ -161,7 +161,7 @@ per core convention.
 - **Mappers:** unit tests against recorded real payloads (item spec 5.x
   feeds, order JSON, return JSON).
 - **Ingestion + order creation:** vitest integration tests against real
-  Postgres (existing core convention: container `imagibrick-core-db`,
+  Postgres (existing core convention: container `alpinebrick-core-db`,
   `fileParallelism:false`), Walmart client stubbed.
 - **Sandbox E2E:** full listing → order → ship → return cycle against
   Walmart's sandbox before any production listing.

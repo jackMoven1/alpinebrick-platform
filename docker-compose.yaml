@@ -20,7 +20,7 @@ services:
       - '4001:4001'
     environment:
       - NODE_ENV=development
-      - DATABASE_URL=postgresql://postgres:postgres@catalog-db:5432/imagibricks_catalog
+      - DATABASE_URL=postgresql://postgres:postgres@catalog-db:5432/alpinebrick_catalog
     depends_on:
       - catalog-db
   catalog-db:
@@ -28,7 +28,7 @@ services:
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=imagibricks_catalog
+      - POSTGRES_DB=alpinebrick_catalog
     ports:
       - '5432:5432'
     volumes:

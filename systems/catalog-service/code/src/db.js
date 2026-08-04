@@ -1,6 +1,6 @@
 const { Pool } = require('pg');
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/imagibricks_catalog';
+const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/alpinebrick_catalog';
 const pool = new Pool({ connectionString });
 
 async function waitForDatabase(retries = 8, intervalMs = 2000) {
@@ -117,7 +117,7 @@ async function seedInitialData() {
       images: [
         { url: '/images/brick-builder.jpg', alt: 'Brick Builder Set in its retail box' }
       ],
-      metadata: { weight: '1.5kg', brand: 'ImagiBricks' }
+      metadata: { weight: '1.5kg', brand: 'Alpine Brick Exchange' }
     },
     {
       id: 'prod-002',
@@ -130,7 +130,7 @@ async function seedInitialData() {
         { url: '/images/castle-mega.jpg', alt: 'Assembled medieval castle with towers' },
         { url: '/images/castle-mega-parts.jpg', alt: 'Castle Mega Pack loose pieces laid out' }
       ],
-      metadata: { weight: '3.2kg', brand: 'ImagiBricks' }
+      metadata: { weight: '3.2kg', brand: 'Alpine Brick Exchange' }
     }
   ];
 

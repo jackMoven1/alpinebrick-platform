@@ -1,7 +1,7 @@
-# ImagiBricks Integration Contracts
+# AlpineBrick Integration Contracts
 
 ## Purpose
-This document defines the shared integration contracts and API/event schema guidance for the independent ImagiBricks system projects.
+This document defines the shared integration contracts and API/event schema guidance for the independent AlpineBrick system projects.
 
 The contracts are the source of truth for how the following systems communicate:
 - `storefront`
