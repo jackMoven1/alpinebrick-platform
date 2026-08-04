@@ -2,7 +2,7 @@
   "name": "catalog-service",
   "version": "0.1.0",
   "private": true,
-  "description": "Product catalog service for ImagiBricks.",
+  "description": "Product catalog service for AlpineBrick.",
   "scripts": {
     "dev": "node src/index.js",
     "start": "node src/index.js",
@@ -12,7 +12,7 @@
   "dependencies": {
     "express": "^4.18.2",
     "pg": "^8.11.0",
-    "@imagibricks/contracts": "file:../contracts"
+    "@alpinebrick/contracts": "file:../contracts"
   },
   "devDependencies": {
     "jest": "^29.7.0"

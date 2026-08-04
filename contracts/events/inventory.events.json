@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://imagibricks.local/contracts/events/inventory.events.json",
+  "$id": "https://alpinebrick.local/contracts/events/inventory.events.json",
   "title": "Inventory Events",
   "type": "object",
   "properties": {

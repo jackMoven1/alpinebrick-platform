@@ -2,7 +2,7 @@
   "name": "affiliate-service",
   "version": "0.1.0",
   "private": true,
-  "description": "Affiliate marketing service for ImagiBricks.",
+  "description": "Affiliate marketing service for AlpineBrick.",
   "scripts": {
     "dev": "node src/index.js",
     "build": "echo 'Build affiliate service'",
@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "express": "^4.18.2",
-    "@imagibricks/contracts": "file:../contracts"
+    "@alpinebrick/contracts": "file:../contracts"
   },
   "devDependencies": {
     "jest": "^29.7.0"

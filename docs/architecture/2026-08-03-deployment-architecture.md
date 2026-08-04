@@ -9,6 +9,21 @@ created.
 [Engineering Status 2026-08-03](../status/2026-08-03-engineering-status.md),
 [Walmart plan](../superpowers/plans/2026-08-03-walmart-marketplace-integration.md).
 
+> **Amendment 2026-08-04 — domains resolved; ImagiBricks renamed to AlpineBrick.**
+> The `*.imagibricks.com` placeholders in this document have been replaced with
+> the real domain, decided by Jack on 2026-08-04:
+>
+> | Role | Production | Staging |
+> |---|---|---|
+> | Storefront | `www.alpinebrickexchange.com` | `staging.alpinebrickexchange.com` |
+> | API + webhooks | `api.alpinebrickexchange.com` | `api-staging.alpinebrickexchange.com` |
+>
+> Jack specified `www` for ecommerce and `api` for APIs/webhooks. **The two
+> staging hostnames are inferred** by applying the same pattern — confirm before
+> DNS is configured. Everything else in this document is as written on 2026-08-03.
+> Note that `alpinebrickexchange.com` currently points at the live Shopify store;
+> the apex/`www` cutover is Phase 5 of the consolidation plan, not a day-one change.
+
 ---
 
 ## 1. Topology
@@ -52,8 +67,8 @@ Two environments, same shape:
 
 | | Production | Staging |
 |---|---|---|
-| Storefront | `www.imagibricks.com`* | `staging.imagibricks.com`* |
-| API | `api.imagibricks.com`* | `api-staging.imagibricks.com`* |
+| Storefront | `www.alpinebrickexchange.com`* | `staging.alpinebrickexchange.com`* |
+| API | `api.alpinebrickexchange.com`* | `api-staging.alpinebrickexchange.com`* |
 | Branch tracked | `main` | `staging` |
 | Stripe | live mode (Jack-approved keys) | test mode |
 | Walmart | production API | sandbox API |
@@ -184,7 +199,7 @@ services:
         destination: /index.html
     envVars:
       - key: VITE_API_BASE_URL
-        value: https://api.imagibricks.com   # placeholder domain
+        value: https://api.alpinebrickexchange.com   # placeholder domain
 
 databases:
   - name: core-db
@@ -283,7 +298,7 @@ jobs:
 
 - **Customer browses:** Cloudflare serves hashed assets from edge cache;
   HTML fetched from Render static origin on short TTL; storefront JS calls
-  `api.imagibricks.com` (cache-bypassed, WAF-inspected) → `core-api` →
+  `api.alpinebrickexchange.com` (cache-bypassed, WAF-inspected) → `core-api` →
   Postgres.
 - **Checkout:** storefront → `core-api` → Stripe (Stripe-hosted payment
   element keeps card data off our stack entirely → PCI SAQ-A).

@@ -2,13 +2,13 @@
   "name": "catalog-admin",
   "version": "0.1.0",
   "private": true,
-  "description": "Catalog administration UI for ImagiBricks.",
+  "description": "Catalog administration UI for AlpineBrick.",
   "scripts": {
     "dev": "echo 'Run catalog admin locally'",
     "build": "echo 'Build catalog admin'",
     "test": "echo 'Run catalog admin tests'"
   },
   "dependencies": {
-    "@imagibricks/contracts": "file:../contracts"
+    "@alpinebrick/contracts": "file:../contracts"
   }
 }

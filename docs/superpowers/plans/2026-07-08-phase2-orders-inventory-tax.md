@@ -30,7 +30,7 @@ tax rates are **integer basis points** (6% = `600` bps). No floats in persisted 
 - **ESM import specifiers end in `.js`** even for `.ts` files (e.g. `import { prisma } from '../prisma.js'`).
 - **Published-only:** an order line may only reference a variant whose product `status = 'published'`.
 - **Every state transition writes an audit row** via `recordAudit` (actor defaults to the seeded `'system'` actor).
-- **Tests run against real Postgres**, not mocks. Container `imagibrick-core-db` on port 5433; `DATABASE_URL` points at it. `vitest.config.ts` already sets `fileParallelism:false`.
+- **Tests run against real Postgres**, not mocks. Container `alpinebrick-core-db` on port 5433; `DATABASE_URL` points at it. `vitest.config.ts` already sets `fileParallelism:false`.
 - **New models must be added to `tests/helpers/db.ts` `resetDb()`** in child-before-parent delete order, or every other test's `beforeEach` breaks.
 - **Commit format:** conventional (`feat(core):`, `fix(core):`, `test(core):`). Frequent commits — one per task minimum.
 
@@ -889,7 +889,7 @@ isolation, patch export, review-and-apply between rounds):
 - **Round C:** Task 4 + Task 5 in parallel (both need Task 3; disjoint files — Task 4 edits `orders.service.ts`, Task 5 creates `orders.routes.ts` + edits `app.ts`). Apply, review, run full `npm test`.
 
 **Open execution-infra items to resolve when building the manifests (not blockers to the plan):**
-- Each worktree worker needs `node_modules` (fresh worktrees omit gitignored dirs), a generated Prisma client, and a reachable Postgres. The check must provision these — install deps, `prisma generate`, and point `DATABASE_URL` at an **isolated database per task** (separate DB name or container) so parallel Round-A/Round-C workers don't collide on one shared `imagibrick-core-db`.
+- Each worktree worker needs `node_modules` (fresh worktrees omit gitignored dirs), a generated Prisma client, and a reachable Postgres. The check must provision these — install deps, `prisma generate`, and point `DATABASE_URL` at an **isolated database per task** (separate DB name or container) so parallel Round-A/Round-C workers don't collide on one shared `alpinebrick-core-db`.
 - Migrations: the Task 2 worker runs `prisma migrate dev`; downstream rounds run `prisma migrate deploy` against their isolated DB before tests.
 
 ## Self-Review

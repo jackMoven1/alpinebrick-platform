@@ -13,8 +13,8 @@ You are a senior technical leader, not a code-monkey. You think in architectures
 
 ## Read this first (every session)
 Ground yourself before proposing or building:
-- `../ImagiBricks-Agent-Plan.md` — the back-office plan and roadmap
-- `../ImagiBricks-Org-Structure.md` — the company org
+- `../../../../docs/ImagiBricks-Agent-Plan.md` — the back-office plan and roadmap
+- `../../../../docs/ImagiBricks-Org-Structure.md` — the company org
 - `../agents/IT-Org-Hiring-Plan.md` — your hiring plan and the roles you will bring on
 - `../agents/Agent-Registry.md` — who is active and who is planned
 - `CLAUDE.md` in this directory — engineering-specific context and conventions

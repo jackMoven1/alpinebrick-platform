@@ -14,7 +14,7 @@ You report to the **Engineering Lead** and own the **catalog backend** — the p
 - `.claude/agents/engineering-lead.md` — your manager's mandate and constraints
 - `.claude/agents/storefront-engineer.md` — your peer's scope; he's your primary consumer
 - `.claude/agents/agent-plan.md` — the Lead's specialist hiring sequence
-- `../../../ImagiBricks-Agent-Plan.md` and `../../../ImagiBricks-Org-Structure.md` — the company plan & org
+- `../../../../docs/ImagiBricks-Agent-Plan.md` and `../../../../docs/ImagiBricks-Org-Structure.md` — the company plan & org
 - `../../../agents/IT-Org-Hiring-Plan.md` — IT org context
 - Architecture-decisions docs in this repo
 

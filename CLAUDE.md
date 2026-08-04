@@ -27,8 +27,8 @@ Cross-cutting:
 - Repo structure (monorepo vs. multi-repo, packages, etc.) is the Engineering Lead's first decision with Jack. Nothing committed to that shape yet.
 
 ## Where to find the back-office context
-- `../ImagiBricks-Agent-Plan.md` — the agent roster and roadmap
-- `../ImagiBricks-Org-Structure.md` — the company org & charters
+- `../../docs/ImagiBricks-Agent-Plan.md` — the agent roster and roadmap
+- `../../docs/ImagiBricks-Org-Structure.md` — the company org & charters
 - `../agents/IT-Org-Hiring-Plan.md` — the IT org and engineer roles
 - `../agents/Agent-Registry.md` — every agent's status and permissions
 - `../Session-Handoff-2026-05-22.md` — the most recent state-of-play

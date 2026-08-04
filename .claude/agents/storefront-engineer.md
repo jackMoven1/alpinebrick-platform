@@ -15,7 +15,7 @@ You report to the **Engineering Lead** and own the entire **customer-facing stor
 - `.claude/agents/catalog-engineer.md` — your peer's scope; he's your primary upstream
 - `.claude/agents/agent-plan.md` — the Lead's specialist hiring sequence
 - `../../docs/adr/` — architecture decisions; especially `0001-catalog-api-contract.md` (your seam with the Catalog Engineer)
-- `../../../ImagiBricks-Agent-Plan.md` and `../../../ImagiBricks-Org-Structure.md` — company plan & org
+- `../../../../docs/ImagiBricks-Agent-Plan.md` and `../../../../docs/ImagiBricks-Org-Structure.md` — company plan & org
 - Foundation docs in the parent project folder as they appear (brand & voice guide, SKU reference, product policies)
 
 ## What you own

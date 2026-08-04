@@ -5,7 +5,7 @@ canonical schema (catalog + audit slice), seed, and the read-only catalog API at
 `/api/v1/catalog`.
 
 ## Dev
-1. `docker run -d --name imagibrick-core-db -e POSTGRES_PASSWORD=postgres -p 5433:5432 postgres:15`
+1. `docker run -d --name alpinebrick-core-db -e POSTGRES_PASSWORD=postgres -p 5433:5432 postgres:15`
 2. `cp .env.example .env`
 3. `npm install && npx prisma migrate dev && npm run seed`
 4. `npm run dev` → http://localhost:4000/health

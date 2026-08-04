@@ -20,7 +20,7 @@
 - **ESM import specifiers end in `.js`** even for `.ts` files.
 - **Item spec 5.x only** for item feeds (4.x sunset 2026-01-31).
 - **Every order state transition writes an audit row** via `recordAudit` (existing `src/audit.ts`).
-- **Tests run against real Postgres** (container `imagibrick-core-db`, port 5433; `vitest.config.ts` already sets `fileParallelism:false`). Walmart HTTP is always stubbed in tests via an injected `fetchFn`/`WalmartClient` — tests never call Walmart.
+- **Tests run against real Postgres** (container `alpinebrick-core-db`, port 5433; `vitest.config.ts` already sets `fileParallelism:false`). Walmart HTTP is always stubbed in tests via an injected `fetchFn`/`WalmartClient` — tests never call Walmart.
 - **New models must be added to `tests/helpers/db.ts` `resetDb()`** in child-before-parent delete order.
 - **Credentials only from env:** `WALMART_CLIENT_ID`, `WALMART_CLIENT_SECRET`, `WALMART_API_BASE` (default `https://sandbox.walmartapis.com`), `WALMART_WEBHOOK_SECRET`, `WALMART_SYNC_ENABLED`. Never in source.
 - **Inbound ingestion is idempotent:** uniqueness on `ChannelEvent(externalId, eventType)`; re-delivery is a no-op.

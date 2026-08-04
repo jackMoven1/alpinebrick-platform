@@ -2,7 +2,7 @@
   "name": "storefront",
   "version": "0.1.0",
   "private": true,
-  "description": "Storefront web app for ImagiBricks.",
+  "description": "Storefront web app for AlpineBrick.",
   "scripts": {
     "dev": "vite",
     "dev:server": "node src/server.js",
@@ -18,7 +18,7 @@
     "axios": "^1.6.0",
     "express": "^4.18.2",
     "http-proxy-middleware": "^2.0.6",
-    "@imagibricks/contracts": "file:../contracts"
+    "@alpinebrick/contracts": "file:../contracts"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.0",
