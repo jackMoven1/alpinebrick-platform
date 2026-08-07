@@ -64,6 +64,11 @@ model Inventory {
   variant   Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
   onHand    Int     @default(0) @map("on_hand")
   reserved  Int     @default(0)
+  // Units on a placed-but-not-yet-received purchase order. Without this,
+  // reorder logic re-triggers on a variant that already has stock in flight
+  // and we order the same thing twice — cash committed twice, storage twice.
+  // See docs/2026-08-07-cogs-and-margin-model.md (business repo) §2.
+  onOrder   Int     @default(0) @map("on_order")
   @@map("inventory")
 }
 
