@@ -24,7 +24,7 @@ These mirror the catalog-service DB + catalog-admin SPEC so Phase B is a drop-in
   slug: 'classic-brick-set',
   description: 'A timeless building set.',
   categories: ['sets', 'classic'],
-  metadata: { brand: 'ImagiBricks', weight: '1.2kg' },
+  metadata: { brand: 'Alpine Brick Exchange', weight: '1.2kg' },
   status: 'draft',            // 'draft' | 'published' | 'archived'
   published_at: null,         // ISO string | null
   archived_at: null,          // ISO string | null
@@ -143,7 +143,7 @@ systems/admin-ui/
   "name": "admin-ui",
   "version": "0.1.0",
   "private": true,
-  "description": "ImagiBricks internal admin console (Catalog module 1). Separate from the storefront.",
+  "description": "AlpineBrick internal admin console (Catalog module 1). Separate from the storefront.",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -237,7 +237,7 @@ body { @apply bg-canvas text-ink antialiased; }
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ImagiBricks Admin</title>
+    <title>AlpineBrick Admin</title>
   </head>
   <body>
     <div id="root"></div>
@@ -282,7 +282,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 `src/App.jsx` (placeholder; replaced in Task 6):
 ```jsx
 export default function App() {
-  return <div className="p-8 text-2xl font-bold">ImagiBricks Admin — booting…</div>
+  return <div className="p-8 text-2xl font-bold">AlpineBrick Admin — booting…</div>
 }
 ```
 
@@ -290,7 +290,7 @@ export default function App() {
 
 Run: `npm install` (in `systems/admin-ui/`)
 Run: `npm run dev`
-Expected: Vite serves on `http://localhost:5174` showing "ImagiBricks Admin — booting…". Stop the server (Ctrl-C).
+Expected: Vite serves on `http://localhost:5174` showing "AlpineBrick Admin — booting…". Stop the server (Ctrl-C).
 
 - [ ] **Step 11: Commit**
 
@@ -554,7 +554,7 @@ export function makeSeed() {
     {
       id: 'prod-001', name: 'Classic Brick Set', slug: 'classic-brick-set',
       description: 'A timeless 500-piece building set.', categories: ['sets', 'classic'],
-      metadata: { brand: 'ImagiBricks', weight: '1.2kg' },
+      metadata: { brand: 'Alpine Brick Exchange', weight: '1.2kg' },
       status: 'published', published_at: '2026-05-20T12:00:00.000Z', archived_at: null,
       created_at: '2026-05-01T10:00:00.000Z', updated_at: '2026-05-20T12:00:00.000Z',
       created_by: 'admin-1', updated_by: 'admin-1',
@@ -568,7 +568,7 @@ export function makeSeed() {
     {
       id: 'prod-002', name: 'Space Rover Kit', slug: 'space-rover-kit',
       description: '', categories: ['vehicles'],
-      metadata: { brand: 'ImagiBricks' },
+      metadata: { brand: 'Alpine Brick Exchange' },
       status: 'draft', published_at: null, archived_at: null,
       created_at: '2026-05-28T09:00:00.000Z', updated_at: '2026-05-28T09:00:00.000Z',
       created_by: 'admin-1', updated_by: 'admin-1',
@@ -1785,7 +1785,7 @@ git commit -m "feat(admin-ui): product detail with Info/Variants/Images/Publish 
 - [ ] **Step 1: Write `systems/admin-ui/README.md`**
 
 ```markdown
-# ImagiBricks Admin Console (admin-ui)
+# AlpineBrick Admin Console (admin-ui)
 
 Internal staff admin console. **Separate from the storefront** (different package, different domain — never co-bundled). Catalog management is module 1.
 

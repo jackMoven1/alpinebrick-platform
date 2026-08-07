@@ -291,7 +291,17 @@ git commit -m "feat(core): walmart channel schema — order channel, listings, f
   - `function createWalmartClient(cfg?: { clientId?: string; clientSecret?: string; baseUrl?: string; fetchFn?: typeof fetch }): WalmartClient` — cfg fields default to env `WALMART_CLIENT_ID` / `WALMART_CLIENT_SECRET` / `WALMART_API_BASE` (default sandbox URL) and global `fetch`.
   - `function getWalmartClient(): WalmartClient` — lazy module singleton used by handlers in later tasks.
 
-Behavior: `POST {base}/v3/token` (basic auth, `grant_type=client_credentials`) with token cached until 60s before expiry; every request sends `WM_SEC.ACCESS_TOKEN`, `WM_QOS.CORRELATION_ID` (random UUID), `WM_SVC.NAME: ImagiBricks`, `Accept: application/json`; on 401 refresh token once; on 429/5xx retry up to 3 attempts with backoff `attempt * 500ms` (honor numeric `Retry-After` seconds if present); non-OK after retries throws `WalmartApiError`.
+Behavior: `POST {base}/v3/token` (basic auth, `grant_type=client_credentials`) with token cached until 60s before expiry; every request sends `WM_SEC.ACCESS_TOKEN`, `WM_QOS.CORRELATION_ID` (random UUID), `WM_SVC.NAME: AlpineBricks`, `Accept: application/json`; on 401 refresh token once; on 429/5xx retry up to 3 attempts with backoff `attempt * 500ms` (honor numeric `Retry-After` seconds if present); non-OK after retries throws `WalmartApiError`.
+
+> **`WM_SVC.NAME` is `AlpineBricks` — plural, and deliberately not our internal
+> `AlpineBrick` convention (Jack, 2026-08-07).** This header identifies us to
+> Walmart on every API call, so it must match the name the **sole-vendor
+> approval was granted under**, which Jack confirms is `AlpineBricks`. It is a
+> registered identifier, not prose. Do not "fix" the trailing `s` to match
+> `CLAUDE.md`'s internal-naming rule, and do not change it to the customer-facing
+> trading name "Alpine Brick Exchange". If Seller Center onboarding shows a
+> different registered string, that string wins over this one — confirm at
+> onboarding.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -329,7 +339,7 @@ describe('walmart client', () => {
     expect(calls[1].url).toBe('https://sandbox.test/v3/orders?limit=10')
     const h = calls[1].init.headers as Record<string, string>
     expect(h['WM_SEC.ACCESS_TOKEN']).toBe('tok-1')
-    expect(h['WM_SVC.NAME']).toBe('ImagiBricks')
+    expect(h['WM_SVC.NAME']).toBe('AlpineBricks')
     expect(h['WM_QOS.CORRELATION_ID']).toBeTruthy()
     expect(calls.length).toBe(3) // token reused for second call
   })
@@ -397,7 +407,7 @@ export function createWalmartClient(cfg: { clientId?: string; clientSecret?: str
         'Content-Type': 'application/x-www-form-urlencoded',
         Accept: 'application/json',
         'WM_QOS.CORRELATION_ID': randomUUID(),
-        'WM_SVC.NAME': 'ImagiBricks',
+        'WM_SVC.NAME': 'AlpineBricks',
       },
       body: 'grant_type=client_credentials',
     })
@@ -416,7 +426,7 @@ export function createWalmartClient(cfg: { clientId?: string; clientSecret?: str
         headers: {
           'WM_SEC.ACCESS_TOKEN': await getToken(),
           'WM_QOS.CORRELATION_ID': randomUUID(),
-          'WM_SVC.NAME': 'ImagiBricks',
+          'WM_SVC.NAME': 'AlpineBricks',
           Accept: 'application/json',
           ...(opts.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         },

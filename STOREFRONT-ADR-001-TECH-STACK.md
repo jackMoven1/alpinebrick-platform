@@ -6,7 +6,7 @@
 
 ## Context
 
-The storefront requires a modern, performant React application to serve the customer-facing website for ImagiBricks. We need to:
+The storefront requires a modern, performant React application to serve the customer-facing website for Alpine Brick Exchange. We need to:
 - Browse and search products from catalog-service
 - Display products in a responsive grid
 - Filter by category and search terms
