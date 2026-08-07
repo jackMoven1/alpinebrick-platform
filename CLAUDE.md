@@ -35,6 +35,19 @@ Cross-cutting:
 
 ## Conventions (to be expanded by the Engineering Lead)
 - Branch + PR for every change; no direct commits to main.
+- **Every agent branches off `main` for its own work — never commit onto a branch
+  you did not create.** Start with `git checkout -b <type>/<slug> main`, even when
+  another branch is already checked out. Committing onto someone else's branch is
+  how work gets stranded: on 2026-08-07 a `feat(core)` schema commit landed on an
+  already-pushed `chore/` branch, the PR merged the commits that were on the
+  remote, the branch was deleted, and the migration survived only because
+  `git branch -d` refused. Recovered as PR #11. **A merge looking complete is not
+  evidence that it is** — if `-d` refuses, stop and read the commits before
+  reaching for `-D`.
+- **Say who you are in the commit.** Every commit here authors as the same human
+  identity, so the author line cannot tell one agent from another. Put the agent
+  in a `Co-Authored-By:` trailer, and make the subject name the system you touched
+  (`feat(core):`, `feat(storefront):`) so a stray commit is legible at a glance.
 - No secrets in code or in dev environments.
 - Document architecture decisions in this repo (ADR style) so future engineers and the MCP integration stay coherent.
 - Pragmatic, well-supported stack — favor boring technology where it works.
