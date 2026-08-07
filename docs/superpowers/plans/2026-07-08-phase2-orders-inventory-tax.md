@@ -136,7 +136,7 @@ export interface TaxPort {
 import type { TaxInput, TaxPort, TaxResult } from './tax.port.js'
 
 // Nexus states and their sales-tax rate in integer basis points (600 = 6.00%).
-// Michigan is ImagiBrick's only nexus state at Phase 1.
+// Michigan is AlpineBrick's only nexus state at Phase 1.
 export const NEXUS_RATES_BPS: Record<string, number> = { MI: 600 }
 
 export function createFlatRateTaxPort(rates: Record<string, number> = NEXUS_RATES_BPS): TaxPort {
