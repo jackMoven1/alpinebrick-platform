@@ -343,7 +343,7 @@ The revenue-loop core. Depends on Task 1 (tax port) and Task 2 (schema). Reserva
   - `interface OrderDto { id; orderNumber; status; email; shipToState; subtotalCents; taxCents; totalCents; taxRateBps; taxJurisdiction; lines: { variantId; sku; quantity; unitPriceCents; lineSubtotalCents }[] }`
   - `function placeOrder(input: { email: string; shipToState: string; lines: { variantId: string; quantity: number }[]; actorId?: string }, taxPort?: TaxPort): Promise<OrderDto>`
   - `function getOrder(id: string): Promise<OrderDto | null>`
-  - `function orderNumber(n: number): string` → `"IB-000001"`
+  - `function orderNumber(n: number): string` → `"ABE-000001"`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -369,7 +369,7 @@ describe('placeOrder', () => {
     const order = await placeOrder({ email: 'buyer@example.com', shipToState: 'MI', lines: [{ variantId: vid, quantity: 2 }] })
 
     expect(order.status).toBe('pending')
-    expect(order.orderNumber).toMatch(/^IB-\d{6}$/)
+    expect(order.orderNumber).toMatch(/^ABE-\d{6}$/)
     expect(order.subtotalCents).toBe(9998)
     expect(order.taxCents).toBe(600)          // 9998 * 6% = 599.88 -> 600
     expect(order.totalCents).toBe(10598)
@@ -476,7 +476,7 @@ export interface PlaceOrderInput {
 const defaultTaxPort = createFlatRateTaxPort()
 
 export function orderNumber(n: number): string {
-  return `IB-${String(n).padStart(6, '0')}`
+  return `ABE-${String(n).padStart(6, '0')}`
 }
 
 function toDto(o: any): OrderDto {
