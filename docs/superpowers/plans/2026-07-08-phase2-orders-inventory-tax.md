@@ -25,8 +25,8 @@ tax rates are **integer basis points** (6% = `600` bps). No floats in persisted 
 
 ## Global Constraints
 
-- **Money = integer cents.** Never store or compute money as a float. `totalCents = subtotalCents + taxCents` — an identity that holds **only while `discountCents` is 0**, which is true of every order this plan creates. See the discount block in Task 2, including the open tax-base question.
-- **Tax rate = integer basis points.** `taxCents = Math.round(subtotalCents * rateBps / 10000)`.
+- **Money = integer cents.** Never store or compute money as a float. The identity is `totalCents = subtotalCents - discountCents + taxCents`. Every order this plan creates has `discountCents = 0`, so it reduces to `subtotalCents + taxCents` in practice — write it the full way anyway, so the plan that introduces discounts changes values rather than hunting an identity that silently went wrong.
+- **Tax rate = integer basis points, applied to the *discounted* subtotal.** `taxCents = Math.round((subtotalCents - discountCents) * rateBps / 10000)` — decided by Jack, 2026-08-11; see the discount block in Task 2. Unchanged arithmetic while `discountCents` is 0.
 - **Discounts are persisted here, not applied here.** `Order.discountCents` and `OrderLine.discountCents` exist from the first migration and stay `0` throughout this plan; `placeOrder` takes no discount input. The columns must exist **before** designer-royalty accrual is built: without them the royalty basis silently falls back to gross line revenue and overpays every designer on every discounted line, with no error raised. Required by `docs/superpowers/specs/2026-08-07-designer-royalty-single-creator-amendment.md` §3.1.1; the underlying commercial decision is Jack's, 2026-08-07, recorded in the business-repo `CLAUDE.md`.
 - **ESM import specifiers end in `.js`** even for `.ts` files (e.g. `import { prisma } from '../prisma.js'`).
 - **Published-only:** an order line may only reference a variant whose product `status = 'published'`.
@@ -251,8 +251,10 @@ describe('order schema', () => {
     const discounted = await prisma.order.create({
       data: {
         email: 'disc@example.com', shipToState: 'MI',
+        // Tax on the discounted base: round((5000 - 501) * 600 / 10000) = 270.
+        // Total: 5000 - 501 + 270 = 4769.
         subtotalCents: 5000, discountCents: 501,
-        taxCents: 300, totalCents: 5300, taxRateBps: 600, taxJurisdiction: 'MI',
+        taxCents: 270, totalCents: 4769, taxRateBps: 600, taxJurisdiction: 'MI',
         lines: { create: [
           { variantId: variant.id, sku: variant.sku, quantity: 1, unitPriceCents: 3000, lineSubtotalCents: 3000, discountCents: 301 },
           { variantId: variant.id, sku: variant.sku, quantity: 1, unitPriceCents: 2000, lineSubtotalCents: 2000, discountCents: 200 },
@@ -401,15 +403,34 @@ basis as `orderLine.lineSubtotalCents - orderLine.discountCents`). The
 `Order.subtotalCents` / `OrderLine.lineSubtotalCents` asymmetry is deliberate —
 renaming buys a migration and a diff for nothing.
 
-> **OPEN — tax base, owned by the Engineering Lead and ultimately Jack. Not a
-> blocker for this plan.** This plan computes `taxCents` from `subtotalCents`, and
-> `totalCents = subtotalCents + taxCents`. Once an order can carry a discount the
-> tax base is arguably the **discounted** subtotal, making `totalCents =
-> subtotalCents - discountCents + taxCents`. Nothing here breaks while
-> `discountCents` is 0, and royalty excludes tax either way, so the answer changes
-> nothing in this plan. It is recorded at the moment the column lands because that
-> is when it would otherwise be got wrong by omission. **Answer it before the plan
-> that first applies a discount, not after.**
+**DECIDED (Jack, 2026-08-11) — a discount reduces the taxable base.** Tax is
+computed on the **discounted** subtotal, so:
+
+```
+taxCents   = round((subtotalCents - discountCents) * rateBps / 10000)
+totalCents = subtotalCents - discountCents + taxCents
+```
+
+Every order this plan creates has `discountCents = 0`, so nothing about the
+arithmetic changes today. Both formulas are written the full way throughout the
+plan so the change, when it comes, is to values and not to structure. Raised and
+answered at the moment the column lands, because that is when it would otherwise
+be got wrong by omission.
+
+> **Narrower case this decision does not reach — for whoever builds discounts.**
+> The ruling covers **seller-funded** discounts, which is what an order-level
+> promotion on our own storefront is: we reduce the price, we receive less, the
+> taxable sale is smaller. A **third-party-funded** discount behaves differently
+> in most US states — where someone else reimburses us, we are made whole, and the
+> tax base generally does **not** drop. This will matter if a Walmart-funded
+> promotion ever reaches an order we compute tax on. It mostly does not today:
+> Walmart is the marketplace facilitator, collects tax itself, and its orders enter
+> with `taxRateBps = 0` / `taxJurisdiction = 'walmart_facilitator'`, never touching
+> `TaxPort`. **Do not generalise this decision to funded promotions without asking.**
+>
+> Worth confirming with whoever files the Michigan returns before the first
+> discounted order is taken — getting the base wrong under-collects sales tax, and
+> the difference is owed regardless of what was charged at checkout.
 
 - [ ] **Step 5: Generate the migration and client**
 
@@ -632,9 +653,16 @@ export async function placeOrder(input: PlaceOrderInput, taxPort: TaxPort = defa
     }
 
     // 3. Compute money from the snapshot; tax comes from the port.
+    //    Tax base is the DISCOUNTED subtotal (Jack, 2026-08-11 — see Task 2), so
+    //    each amountCents passed to the port must be net of that line's discount.
+    //    This plan has no discount input, so every discount is 0 and the
+    //    arithmetic is identical; the shape is written the correct way so the plan
+    //    that introduces discounts changes values, not structure.
     const subtotalCents = resolved.reduce((s, l) => s + l.unitPriceCents * l.quantity, 0)
+    const discountCents = 0
     const tax = await taxPort.computeTax({
       shipToState: input.shipToState,
+      // When discounts exist, subtract that line's discountCents here.
       lineItems: resolved.map((l) => ({ amountCents: l.unitPriceCents * l.quantity })),
     })
 
@@ -644,8 +672,9 @@ export async function placeOrder(input: PlaceOrderInput, taxPort: TaxPort = defa
         shipToState: input.shipToState.trim().toUpperCase(),
         status: 'pending',
         subtotalCents,
+        discountCents,
         taxCents: tax.taxCents,
-        totalCents: subtotalCents + tax.taxCents,
+        totalCents: subtotalCents - discountCents + tax.taxCents,
         taxRateBps: tax.rateBps,
         taxJurisdiction: tax.jurisdiction,
         lines: {
@@ -1005,5 +1034,5 @@ isolation, patch export, review-and-apply between rounds):
 - **Placeholders:** none — every step carries real code and exact commands.
 - **Type consistency:** `TaxPort.computeTax` signature identical across T1/T3; `OrderDto`/`OrderError`/`orderNumber` defined in T3 and reused unchanged in T4/T5; Prisma field names (`number`, `reserved`, `onHand`, `shipToState`) consistent between schema (T2) and consumers (T3–T5).
 - **Deferred by design (not gaps):** payment provider + `order.paid` HTTP route → Plan 3; operator fulfillment queue + fulfill/cancel routes → Plan 6; customer identity on orders (currently `email` + `system` actor) → Plan 4; **discount *application*** — the columns, the allocation rule and the invariants land here, but nothing sets a non-zero discount until the plan that introduces them (Task 2 discount block).
-- **Open question carried, not answered:** whether the tax base becomes the discounted subtotal. Recorded in Task 2; harmless while `discountCents` is 0; must be answered before the plan that first applies a discount.
+- **Tax base decided (Jack, 2026-08-11):** a discount reduces the taxable base — `taxCents` is computed on `subtotalCents - discountCents`, and `totalCents = subtotalCents - discountCents + taxCents`. Both written the full way throughout; identical arithmetic while `discountCents` is 0. The narrower third-party-funded-discount case is flagged in Task 2 and deliberately left open.
 ```
