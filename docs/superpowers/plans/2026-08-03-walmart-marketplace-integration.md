@@ -100,8 +100,8 @@ describe('walmart channel schema', () => {
 
   it('enforces ChannelEvent idempotency key and creates channel tables', async () => {
     const p = await prisma.product.create({ data: { slug: 'p1', name: 'P1', productType: 'own_designed', status: 'published' } })
-    const v = await prisma.variant.create({ data: { productId: p.id, sku: 'IB-1', priceCents: 4999 } })
-    await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'IB-1-W' } })
+    const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-1', priceCents: 4999 } })
+    await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-1-W' } })
     await prisma.channelJob.create({ data: { type: 'walmart_push_inventory', payload: { variantId: v.id } } })
     await prisma.channelFeed.create({ data: { feedId: 'F1', type: 'item', status: 'submitted' } })
     await prisma.channelSettlement.create({ data: { reportDate: new Date(), externalOrderId: 'PO-1', amountCents: 100, feeCents: 15, raw: {} } })
@@ -510,7 +510,7 @@ export const walmartOrderFixture = {
     orderLine: [
       {
         lineNumber: '1',
-        item: { sku: 'IB-SET-001-W', productName: 'Castle Set' },
+        item: { sku: 'ABE-SET-001-W', productName: 'Castle Set' },
         orderLineQuantity: { unitOfMeasurement: 'EACH', amount: '2' },
         charges: {
           charge: [
@@ -539,7 +539,7 @@ describe('walmart mappers', () => {
       externalOrderId: 'PO-1001',
       email: 'mgr@relay.walmart.com',
       shipToState: 'MI',
-      lines: [{ walmartSku: 'IB-SET-001-W', quantity: 2, unitPriceCents: 4999, lineTaxCents: 600 }],
+      lines: [{ walmartSku: 'ABE-SET-001-W', quantity: 2, unitPriceCents: 4999, lineTaxCents: 600 }],
     })
   })
 
@@ -550,16 +550,16 @@ describe('walmart mappers', () => {
   })
 
   it('builds an item spec 5.x feed', () => {
-    const feed = toItemFeed([{ walmartSku: 'IB-1-W', name: 'Set', description: 'Bricks', priceCents: 4999, imageUrls: ['https://img/1.jpg'] }]) as any
+    const feed = toItemFeed([{ walmartSku: 'ABE-1-W', name: 'Set', description: 'Bricks', priceCents: 4999, imageUrls: ['https://img/1.jpg'] }]) as any
     expect(feed.MPItemFeedHeader.version).toBe('5.0')
     expect(feed.MPItem).toHaveLength(1)
-    expect(feed.MPItem[0].Orderable.sku).toBe('IB-1-W')
+    expect(feed.MPItem[0].Orderable.sku).toBe('ABE-1-W')
     expect(feed.MPItem[0].Orderable.price).toBe(49.99)
   })
 
   it('builds inventory, price, and ship payloads', () => {
-    expect(toInventoryPayload('IB-1-W', 7)).toEqual({ sku: 'IB-1-W', quantity: { unit: 'EACH', amount: 7 } })
-    const price = toPricePayload('IB-1-W', 4999) as any
+    expect(toInventoryPayload('ABE-1-W', 7)).toEqual({ sku: 'ABE-1-W', quantity: { unit: 'EACH', amount: 7 } })
+    const price = toPricePayload('ABE-1-W', 4999) as any
     expect(price.pricing[0].currentPrice.amount).toBe(49.99)
     const ship = toShipPayload({ lineNumbers: ['1'], quantityByLine: { '1': 2 }, carrier: 'USPS', trackingNumber: 'T123', shipDateIso: '2026-08-03T12:00:00Z' }) as any
     expect(ship.orderShipment.orderLines.orderLine[0].orderLineStatuses.orderLineStatus[0].trackingInfo.trackingNumber).toBe('T123')
@@ -879,9 +879,9 @@ import { walmartOrderFixture } from './walmart-mappers.test.js'
 
 async function seedListing(qty: number) {
   const p = await prisma.product.create({ data: { slug: 'castle', name: 'Castle', productType: 'own_designed', status: 'published' } })
-  const v = await prisma.variant.create({ data: { productId: p.id, sku: 'IB-SET-001', priceCents: 4999 } })
+  const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-SET-001', priceCents: 4999 } })
   await prisma.inventory.create({ data: { variantId: v.id, onHand: qty } })
-  await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'IB-SET-001-W', status: 'live' } })
+  await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-SET-001-W', status: 'live' } })
   return v
 }
 
@@ -901,7 +901,7 @@ describe('ingestWalmartOrder', () => {
       subtotalCents: 9998, taxCents: 600, totalCents: 10598,
       taxRateBps: 0, taxJurisdiction: 'walmart_facilitator',
     })
-    expect(order.lines[0]).toMatchObject({ sku: 'IB-SET-001', quantity: 2, unitPriceCents: 4999, lineSubtotalCents: 9998 })
+    expect(order.lines[0]).toMatchObject({ sku: 'ABE-SET-001', quantity: 2, unitPriceCents: 4999, lineSubtotalCents: 9998 })
     const inv = await prisma.inventory.findUniqueOrThrow({ where: { variantId: v.id } })
     expect(inv.reserved).toBe(2)
     expect(await prisma.channelEvent.count({ where: { externalId: 'PO-1001', eventType: 'order_created' } })).toBe(1)
@@ -1093,9 +1093,9 @@ process.env.WALMART_WEBHOOK_SECRET = 'test-secret'
 
 async function seedListing() {
   const p = await prisma.product.create({ data: { slug: 'castle', name: 'Castle', productType: 'own_designed', status: 'published' } })
-  const v = await prisma.variant.create({ data: { productId: p.id, sku: 'IB-SET-001', priceCents: 4999 } })
+  const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-SET-001', priceCents: 4999 } })
   await prisma.inventory.create({ data: { variantId: v.id, onHand: 10 } })
-  await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'IB-SET-001-W', status: 'live' } })
+  await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-SET-001-W', status: 'live' } })
 }
 
 describe('walmart webhook endpoint', () => {
@@ -1252,9 +1252,9 @@ function recordingClient() {
 
 async function seed(onHand: number, reserved: number, bufferPct?: number) {
   const p = await prisma.product.create({ data: { slug: 's', name: 'S', productType: 'own_designed', status: 'published' } })
-  const v = await prisma.variant.create({ data: { productId: p.id, sku: 'IB-9', priceCents: 1000 } })
+  const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-9', priceCents: 1000 } })
   await prisma.inventory.create({ data: { variantId: v.id, onHand, reserved } })
-  await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'IB-9-W', status: 'live', bufferPct } })
+  await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-9-W', status: 'live', bufferPct } })
   return v
 }
 
@@ -1281,7 +1281,7 @@ describe('inventory push', () => {
     const v = await seed(10, 2)
     const { client, calls } = recordingClient()
     await pushInventoryForVariant(v.id, client)
-    expect(calls).toEqual([{ method: 'PUT', path: '/v3/inventory', opts: { query: { sku: 'IB-9-W' }, body: { sku: 'IB-9-W', quantity: { unit: 'EACH', amount: 7 } } } }])
+    expect(calls).toEqual([{ method: 'PUT', path: '/v3/inventory', opts: { query: { sku: 'ABE-9-W' }, body: { sku: 'ABE-9-W', quantity: { unit: 'EACH', amount: 7 } } } }])
     const listing = await prisma.channelListing.findFirstOrThrow()
     expect(listing.lastPushedQty).toBe(7)
     expect(listing.lastSyncedAt).not.toBeNull()
@@ -1289,7 +1289,7 @@ describe('inventory push', () => {
 
   it('is a no-op without a pushable listing', async () => {
     const p = await prisma.product.create({ data: { slug: 'x', name: 'X', productType: 'own_designed' } })
-    const v = await prisma.variant.create({ data: { productId: p.id, sku: 'IB-X', priceCents: 100 } })
+    const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-X', priceCents: 100 } })
     const { client, calls } = recordingClient()
     await pushInventoryForVariant(v.id, client)
     expect(calls).toEqual([])
@@ -1422,7 +1422,7 @@ import type { WalmartClient } from '../src/channels/walmart/client.js'
 
 async function seedVariant(status: 'draft' | 'published' = 'published') {
   const p = await prisma.product.create({ data: { slug: 's' + status, name: 'Castle', description: 'A castle set', status, productType: 'own_designed', images: [{ url: 'https://img/1.jpg' }] } })
-  return prisma.variant.create({ data: { productId: p.id, sku: 'IB-C', priceCents: 4999 } })
+  return prisma.variant.create({ data: { productId: p.id, sku: 'ABE-C', priceCents: 4999 } })
 }
 
 describe('walmart listings', () => {
@@ -1430,15 +1430,15 @@ describe('walmart listings', () => {
 
   it('creates a draft listing for a published product only', async () => {
     const v = await seedVariant()
-    const l = await createListing(v.id, 'IB-C-W')
+    const l = await createListing(v.id, 'ABE-C-W')
     expect((await prisma.channelListing.findUniqueOrThrow({ where: { id: l.id } })).status).toBe('draft')
     const vDraft = await seedVariant('draft')
-    await expect(createListing(vDraft.id, 'IB-D-W')).rejects.toMatchObject({ code: 'not_published' })
+    await expect(createListing(vDraft.id, 'ABE-D-W')).rejects.toMatchObject({ code: 'not_published' })
   })
 
   it('submits an item feed and tracks status to live', async () => {
     const v = await seedVariant()
-    const l = await createListing(v.id, 'IB-C-W')
+    const l = await createListing(v.id, 'ABE-C-W')
     const calls: any[] = []
     const client: WalmartClient = {
       request: async (method, path) => {
@@ -1457,10 +1457,10 @@ describe('walmart listings', () => {
 
   it('marks listings rejected on feed error and stores walmart errors', async () => {
     const v = await seedVariant()
-    const l = await createListing(v.id, 'IB-C-W')
+    const l = await createListing(v.id, 'ABE-C-W')
     const client: WalmartClient = {
       request: async (method, path) =>
-        method === 'POST' ? { feedId: 'FEED-2' } : { feedStatus: 'ERROR', itemDetails: { itemIngestionStatus: [{ sku: 'IB-C-W', ingestionErrors: { ingestionError: [{ description: 'missing attribute' }] } }] } },
+        method === 'POST' ? { feedId: 'FEED-2' } : { feedStatus: 'ERROR', itemDetails: { itemIngestionStatus: [{ sku: 'ABE-C-W', ingestionErrors: { ingestionError: [{ description: 'missing attribute' }] } }] } },
     }
     await submitItemFeed([l.id], client)
     expect(await checkFeedStatus('FEED-2', client)).toBe('error')
@@ -1586,8 +1586,8 @@ describe('walmart price push', () => {
 
   it('pushes the override price when set, else the catalog price', async () => {
     const p = await prisma.product.create({ data: { slug: 's', name: 'S', productType: 'own_designed', status: 'published' } })
-    const v = await prisma.variant.create({ data: { productId: p.id, sku: 'IB-1', priceCents: 4999 } })
-    const listing = await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'IB-1-W', status: 'live' } })
+    const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-1', priceCents: 4999 } })
+    const listing = await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-1-W', status: 'live' } })
     const calls: any[] = []
     const client: WalmartClient = { request: async (m, path, opts) => { calls.push({ m, path, opts }); return {} } }
 
@@ -1602,7 +1602,7 @@ describe('walmart price push', () => {
 
   it('no-ops without a pushable listing', async () => {
     const p = await prisma.product.create({ data: { slug: 'x', name: 'X', productType: 'own_designed' } })
-    const v = await prisma.variant.create({ data: { productId: p.id, sku: 'IB-2', priceCents: 100 } })
+    const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-2', priceCents: 100 } })
     const calls: any[] = []
     const client: WalmartClient = { request: async (m, path) => { calls.push(path); return {} } }
     await pushPriceForVariant(v.id, client)
@@ -1691,9 +1691,9 @@ import type { WalmartClient } from '../src/channels/walmart/client.js'
 
 async function seedAndIngest() {
   const p = await prisma.product.create({ data: { slug: 'castle', name: 'Castle', productType: 'own_designed', status: 'published' } })
-  const v = await prisma.variant.create({ data: { productId: p.id, sku: 'IB-SET-001', priceCents: 4999 } })
+  const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-SET-001', priceCents: 4999 } })
   await prisma.inventory.create({ data: { variantId: v.id, onHand: 10 } })
-  await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'IB-SET-001-W', status: 'live' } })
+  await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-SET-001-W', status: 'live' } })
   const { orderId } = await ingestWalmartOrder(walmartOrderFixture, 'poll')
   return { orderId: orderId!, variantId: v.id }
 }
@@ -1856,9 +1856,9 @@ const returnFixture = {
 
 async function seedFulfilledOrder() {
   const p = await prisma.product.create({ data: { slug: 'castle', name: 'Castle', productType: 'own_designed', status: 'published' } })
-  const v = await prisma.variant.create({ data: { productId: p.id, sku: 'IB-SET-001', priceCents: 4999 } })
+  const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-SET-001', priceCents: 4999 } })
   await prisma.inventory.create({ data: { variantId: v.id, onHand: 10 } })
-  await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'IB-SET-001-W', status: 'live' } })
+  await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-SET-001-W', status: 'live' } })
   const { orderId } = await ingestWalmartOrder(walmartOrderFixture, 'poll')
   registerShippingHandlers({ request: async () => ({}) })
   await recordChannelShipment(orderId!, { carrier: 'USPS', trackingNumber: 'T-1' })
