@@ -25,8 +25,9 @@ tax rates are **integer basis points** (6% = `600` bps). No floats in persisted 
 
 ## Global Constraints
 
-- **Money = integer cents.** Never store or compute money as a float. `totalCents = subtotalCents + taxCents`.
-- **Tax rate = integer basis points.** `taxCents = Math.round(subtotalCents * rateBps / 10000)`.
+- **Money = integer cents.** Never store or compute money as a float. The identity is `totalCents = subtotalCents - discountCents + taxCents`. Every order this plan creates has `discountCents = 0`, so it reduces to `subtotalCents + taxCents` in practice — write it the full way anyway, so the plan that introduces discounts changes values rather than hunting an identity that silently went wrong.
+- **Tax rate = integer basis points, applied to the *discounted* subtotal.** `taxCents = Math.round((subtotalCents - discountCents) * rateBps / 10000)` — decided by Jack, 2026-08-11; see the discount block in Task 2. Unchanged arithmetic while `discountCents` is 0.
+- **Discounts are persisted here, not applied here.** `Order.discountCents` and `OrderLine.discountCents` exist from the first migration and stay `0` throughout this plan; `placeOrder` takes no discount input. The columns must exist **before** designer-royalty accrual is built: without them the royalty basis silently falls back to gross line revenue and overpays every designer on every discounted line, with no error raised. Required by `docs/superpowers/specs/2026-08-07-designer-royalty-single-creator-amendment.md` §3.1.1; the underlying commercial decision is Jack's, 2026-08-07, recorded in the business-repo `CLAUDE.md`.
 - **ESM import specifiers end in `.js`** even for `.ts` files (e.g. `import { prisma } from '../prisma.js'`).
 - **Published-only:** an order line may only reference a variant whose product `status = 'published'`.
 - **Every state transition writes an audit row** via `recordAudit` (actor defaults to the seeded `'system'` actor).
@@ -179,8 +180,8 @@ Adds the persistence layer. Independent of Task 1 (different files), so the two 
 **Interfaces:**
 - Consumes: existing `Variant`, `Inventory` models.
 - Produces (Prisma models other tasks rely on):
-  - `Order { id, number(Int, unique, autoincrement), status(OrderStatus), email, shipToState, subtotalCents, taxCents, totalCents, taxRateBps, taxJurisdiction, createdAt, updatedAt, lines OrderLine[] }`
-  - `OrderLine { id, orderId, variantId, sku, quantity, unitPriceCents, lineSubtotalCents }`
+  - `Order { id, number(Int, unique, autoincrement), status(OrderStatus), email, shipToState, subtotalCents, discountCents, taxCents, totalCents, taxRateBps, taxJurisdiction, createdAt, updatedAt, lines OrderLine[] }`
+  - `OrderLine { id, orderId, variantId, sku, quantity, unitPriceCents, lineSubtotalCents, discountCents }`
   - `enum OrderStatus { pending paid fulfilled cancelled }`
 
 - [ ] **Step 1: Write the failing test**
@@ -227,6 +228,45 @@ describe('order schema', () => {
     })
     await prisma.order.delete({ where: { id: order.id } })
     expect(await prisma.orderLine.count({ where: { orderId: order.id } })).toBe(0)
+  })
+
+  it('defaults discountCents to 0, and reconciles line discounts to the order exactly', async () => {
+    const variant = await prisma.variant.findFirstOrThrow({ where: { sku: 'BBS-STD' } })
+
+    // Nothing in this plan writes a discount — the default is what every order gets.
+    const plain = await prisma.order.create({
+      data: {
+        email: 'plain@example.com', shipToState: 'MI',
+        subtotalCents: 4999, taxCents: 300, totalCents: 5299, taxRateBps: 600, taxJurisdiction: 'MI',
+        lines: { create: [{ variantId: variant.id, sku: variant.sku, quantity: 1, unitPriceCents: 4999, lineSubtotalCents: 4999 }] },
+      },
+      include: { lines: true },
+    })
+    expect(plain.discountCents).toBe(0)
+    expect(plain.lines[0].discountCents).toBe(0)
+
+    // Allocation itself belongs to the plan that introduces discounts; this pins the
+    // shape that plan must produce. 501c over 3000c + 2000c: raw 300.6 / 200.4, floors
+    // 300 + 200, residual 1c to the largest remainder -> 301 / 200.
+    const discounted = await prisma.order.create({
+      data: {
+        email: 'disc@example.com', shipToState: 'MI',
+        // Tax on the discounted base: round((5000 - 501) * 600 / 10000) = 270.
+        // Total: 5000 - 501 + 270 = 4769.
+        subtotalCents: 5000, discountCents: 501,
+        taxCents: 270, totalCents: 4769, taxRateBps: 600, taxJurisdiction: 'MI',
+        lines: { create: [
+          { variantId: variant.id, sku: variant.sku, quantity: 1, unitPriceCents: 3000, lineSubtotalCents: 3000, discountCents: 301 },
+          { variantId: variant.id, sku: variant.sku, quantity: 1, unitPriceCents: 2000, lineSubtotalCents: 2000, discountCents: 200 },
+        ] },
+      },
+      include: { lines: true },
+    })
+    expect(discounted.lines.reduce((s, l) => s + l.discountCents, 0)).toBe(discounted.discountCents)
+    for (const line of discounted.lines) {
+      expect(line.discountCents).toBeGreaterThanOrEqual(0)
+      expect(line.discountCents).toBeLessThanOrEqual(line.lineSubtotalCents)
+    }
   })
 })
 ```
@@ -283,6 +323,7 @@ model Order {
   email           String
   shipToState     String      @map("ship_to_state")
   subtotalCents   Int         @map("subtotal_cents")
+  discountCents   Int         @default(0) @map("discount_cents")
   taxCents        Int         @map("tax_cents")
   totalCents      Int         @map("total_cents")
   taxRateBps      Int         @map("tax_rate_bps")
@@ -303,11 +344,93 @@ model OrderLine {
   quantity          Int
   unitPriceCents    Int     @map("unit_price_cents")
   lineSubtotalCents Int     @map("line_subtotal_cents")
+  discountCents     Int     @default(0) @map("discount_cents")
   @@index([orderId])
   @@index([variantId])
   @@map("order_lines")
 }
 ```
+
+#### The two `discountCents` columns — why they are here and what they oblige
+
+Added per amendment §3.1.1. Both tables are **created** by this task's migration,
+so the columns cost nothing extra here — no separate migration, no backfill. They
+are cheap now and expensive later, which is the entire argument for adding them
+before there is anything to put in them.
+
+- **Type and sign.** `Int`, integer cents, consistent with every other money field.
+  Stored **positive** and **subtracted** to form a basis — a discount amount, not a
+  signed adjustment. Never a float, never a percentage.
+- **`@default(0)`** keeps the change additive: order-creation code that does not
+  apply discounts keeps working, and `basisCents = lineSubtotalCents - discountCents`
+  is correct from the first migration onward.
+- **This plan never writes a non-zero value.** `placeOrder` (Task 3) takes no
+  discount input and persists `0` on the order and on every line. The columns are
+  storage, and the invariants below are the contract for whichever plan first
+  introduces discounts.
+
+**The allocation rule, for whoever implements discounts.** It belongs in order
+creation, inside the same transaction that writes the lines:
+
+```
+For an order-level discount D across lines L1..Ln with subtotals S1..Sn:
+
+  raw_i    = D * S_i / sum(S)                    // exact rational
+  floor_i  = floor(raw_i)
+  residual = D - sum(floor_i)                    // 0 <= residual < n
+
+Distribute the `residual` cents one at a time to the lines with the largest
+fractional remainders (raw_i - floor_i). Break ties by ascending line index in
+the submitted order — deterministic, and available at creation time before ids
+are assigned.
+```
+
+Invariants, tested in this plan's own suite (Step 1 above) rather than only in
+royalty's:
+
+- `sum(OrderLine.discountCents) == Order.discountCents` **exactly**, for every
+  order. This is the whole point of largest-remainder here.
+- `0 <= OrderLine.discountCents <= OrderLine.lineSubtotalCents` on every line.
+- A discount on a mixed cart of collectibles and designer sets lands on **both**
+  kinds of line; royalty then reads only the designer lines. Do **not** "optimise"
+  by allocating discount only to designer lines — that understates what the
+  customer paid for the collectibles and overstates our own margin figures.
+
+**Field naming is settled: `OrderLine.lineSubtotalCents` stays.** The accepted
+royalty spec §7 writes `orderLine.subtotalCents`; this plan's name wins and the
+royalty spec is the document that changes (amendment §1.10 already writes the
+basis as `orderLine.lineSubtotalCents - orderLine.discountCents`). The
+`Order.subtotalCents` / `OrderLine.lineSubtotalCents` asymmetry is deliberate —
+renaming buys a migration and a diff for nothing.
+
+**DECIDED (Jack, 2026-08-11) — a discount reduces the taxable base.** Tax is
+computed on the **discounted** subtotal, so:
+
+```
+taxCents   = round((subtotalCents - discountCents) * rateBps / 10000)
+totalCents = subtotalCents - discountCents + taxCents
+```
+
+Every order this plan creates has `discountCents = 0`, so nothing about the
+arithmetic changes today. Both formulas are written the full way throughout the
+plan so the change, when it comes, is to values and not to structure. Raised and
+answered at the moment the column lands, because that is when it would otherwise
+be got wrong by omission.
+
+> **Narrower case this decision does not reach — for whoever builds discounts.**
+> The ruling covers **seller-funded** discounts, which is what an order-level
+> promotion on our own storefront is: we reduce the price, we receive less, the
+> taxable sale is smaller. A **third-party-funded** discount behaves differently
+> in most US states — where someone else reimburses us, we are made whole, and the
+> tax base generally does **not** drop. This will matter if a Walmart-funded
+> promotion ever reaches an order we compute tax on. It mostly does not today:
+> Walmart is the marketplace facilitator, collects tax itself, and its orders enter
+> with `taxRateBps = 0` / `taxJurisdiction = 'walmart_facilitator'`, never touching
+> `TaxPort`. **Do not generalise this decision to funded promotions without asking.**
+>
+> Worth confirming with whoever files the Michigan returns before the first
+> discounted order is taken — getting the base wrong under-collects sales tax, and
+> the difference is owed regardless of what was charged at checkout.
 
 - [ ] **Step 5: Generate the migration and client**
 
@@ -317,7 +440,7 @@ Expected: creates `prisma/migrations/<timestamp>_add_orders/migration.sql` with 
 - [ ] **Step 6: Run test to verify it passes**
 
 Run: `npx vitest run tests/orders-schema.test.ts`
-Expected: PASS (2 tests).
+Expected: PASS (3 tests).
 
 - [ ] **Step 7: Commit**
 
@@ -340,7 +463,8 @@ The revenue-loop core. Depends on Task 1 (tax port) and Task 2 (schema). Reserva
 - Consumes: `createFlatRateTaxPort`, `TaxPort` (Task 1); `prisma`; `recordAudit`; `Order`/`OrderLine`/`Variant`/`Inventory` (Task 2).
 - Produces:
   - `class OrderError extends Error { code: string }`
-  - `interface OrderDto { id; orderNumber; status; email; shipToState; subtotalCents; taxCents; totalCents; taxRateBps; taxJurisdiction; lines: { variantId; sku; quantity; unitPriceCents; lineSubtotalCents }[] }`
+  - `interface OrderDto { id; orderNumber; status; email; shipToState; subtotalCents; discountCents; taxCents; totalCents; taxRateBps; taxJurisdiction; lines: { variantId; sku; quantity; unitPriceCents; lineSubtotalCents; discountCents }[] }`
+  - `discountCents` is surfaced on the DTO and on every line, and `placeOrder` persists **`0`** for both — it takes no discount input in this plan. Exposing the field now means the plan that introduces discounts changes a value, not a contract. See the discount block in Task 2.
   - `function placeOrder(input: { email: string; shipToState: string; lines: { variantId: string; quantity: number }[]; actorId?: string }, taxPort?: TaxPort): Promise<OrderDto>`
   - `function getOrder(id: string): Promise<OrderDto | null>`
   - `function orderNumber(n: number): string` → `"IB-000001"`
@@ -450,6 +574,7 @@ export interface OrderLineDto {
   quantity: number
   unitPriceCents: number
   lineSubtotalCents: number
+  discountCents: number
 }
 
 export interface OrderDto {
@@ -459,6 +584,7 @@ export interface OrderDto {
   email: string
   shipToState: string
   subtotalCents: number
+  discountCents: number
   taxCents: number
   totalCents: number
   taxRateBps: number
@@ -487,6 +613,7 @@ function toDto(o: any): OrderDto {
     email: o.email,
     shipToState: o.shipToState,
     subtotalCents: o.subtotalCents,
+    discountCents: o.discountCents,
     taxCents: o.taxCents,
     totalCents: o.totalCents,
     taxRateBps: o.taxRateBps,
@@ -494,6 +621,7 @@ function toDto(o: any): OrderDto {
     lines: o.lines.map((l: any) => ({
       variantId: l.variantId, sku: l.sku, quantity: l.quantity,
       unitPriceCents: l.unitPriceCents, lineSubtotalCents: l.lineSubtotalCents,
+      discountCents: l.discountCents,
     })),
   }
 }
@@ -525,9 +653,16 @@ export async function placeOrder(input: PlaceOrderInput, taxPort: TaxPort = defa
     }
 
     // 3. Compute money from the snapshot; tax comes from the port.
+    //    Tax base is the DISCOUNTED subtotal (Jack, 2026-08-11 — see Task 2), so
+    //    each amountCents passed to the port must be net of that line's discount.
+    //    This plan has no discount input, so every discount is 0 and the
+    //    arithmetic is identical; the shape is written the correct way so the plan
+    //    that introduces discounts changes values, not structure.
     const subtotalCents = resolved.reduce((s, l) => s + l.unitPriceCents * l.quantity, 0)
+    const discountCents = 0
     const tax = await taxPort.computeTax({
       shipToState: input.shipToState,
+      // When discounts exist, subtract that line's discountCents here.
       lineItems: resolved.map((l) => ({ amountCents: l.unitPriceCents * l.quantity })),
     })
 
@@ -537,8 +672,9 @@ export async function placeOrder(input: PlaceOrderInput, taxPort: TaxPort = defa
         shipToState: input.shipToState.trim().toUpperCase(),
         status: 'pending',
         subtotalCents,
+        discountCents,
         taxCents: tax.taxCents,
-        totalCents: subtotalCents + tax.taxCents,
+        totalCents: subtotalCents - discountCents + tax.taxCents,
         taxRateBps: tax.rateBps,
         taxJurisdiction: tax.jurisdiction,
         lines: {
@@ -894,8 +1030,9 @@ isolation, patch export, review-and-apply between rounds):
 
 ## Self-Review
 
-- **Spec coverage:** Tax port + Michigan adapter (T1) ✓; Order/OrderLine persistence + reservation columns already exist, extended (T2) ✓; reserve-on-order (T3) ✓; decrement-on-fulfillment + release-on-cancel (T4) ✓; checkout HTTP entry (T5) ✓; audit on every transition (T3, T4) ✓; money in integer cents / tax in basis points (Global Constraints, all tasks) ✓; published-only order lines (T3) ✓.
+- **Spec coverage:** Tax port + Michigan adapter (T1) ✓; Order/OrderLine persistence + reservation columns already exist, extended (T2) ✓; `Order.discountCents` + `OrderLine.discountCents` per royalty amendment §3.1.1 (T2) ✓; reserve-on-order (T3) ✓; decrement-on-fulfillment + release-on-cancel (T4) ✓; checkout HTTP entry (T5) ✓; audit on every transition (T3, T4) ✓; money in integer cents / tax in basis points (Global Constraints, all tasks) ✓; published-only order lines (T3) ✓.
 - **Placeholders:** none — every step carries real code and exact commands.
 - **Type consistency:** `TaxPort.computeTax` signature identical across T1/T3; `OrderDto`/`OrderError`/`orderNumber` defined in T3 and reused unchanged in T4/T5; Prisma field names (`number`, `reserved`, `onHand`, `shipToState`) consistent between schema (T2) and consumers (T3–T5).
-- **Deferred by design (not gaps):** payment provider + `order.paid` HTTP route → Plan 3; operator fulfillment queue + fulfill/cancel routes → Plan 6; customer identity on orders (currently `email` + `system` actor) → Plan 4.
+- **Deferred by design (not gaps):** payment provider + `order.paid` HTTP route → Plan 3; operator fulfillment queue + fulfill/cancel routes → Plan 6; customer identity on orders (currently `email` + `system` actor) → Plan 4; **discount *application*** — the columns, the allocation rule and the invariants land here, but nothing sets a non-zero discount until the plan that introduces them (Task 2 discount block).
+- **Tax base decided (Jack, 2026-08-11):** a discount reduces the taxable base — `taxCents` is computed on `subtotalCents - discountCents`, and `totalCents = subtotalCents - discountCents + taxCents`. Both written the full way throughout; identical arithmetic while `discountCents` is 0. The narrower third-party-funded-discount case is flagged in Task 2 and deliberately left open.
 ```
