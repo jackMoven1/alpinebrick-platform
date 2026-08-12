@@ -34,6 +34,48 @@ enum OrderStatus {
   paid
   fulfilled
   cancelled
+  refunded
+}
+
+enum OrderChannel {
+  storefront
+  walmart
+}
+
+enum ChannelListingStatus {
+  draft
+  submitted
+  live
+  rejected
+  retired
+}
+
+enum ChannelFeedType {
+  item
+  price
+  inventory
+}
+
+enum ChannelFeedStatus {
+  submitted
+  processed
+  error
+}
+
+enum ChannelEventSource {
+  webhook
+  poll
+}
+
+enum ChannelJobStatus {
+  pending
+  done
+  dead
+}
+
+enum ChannelSettlementStatus {
+  matched
+  unmatched
 }
 
 model Product {
@@ -62,6 +104,7 @@ model Variant {
   attributes Json       @default("{}")
   inventory  Inventory?
   orderLines OrderLine[]
+  channelListing ChannelListing?
   @@index([productId])
   @@map("variants")
 }
@@ -115,10 +158,79 @@ model Order {
   totalCents      Int         @map("total_cents")
   taxRateBps      Int         @map("tax_rate_bps")
   taxJurisdiction String      @map("tax_jurisdiction")
+  channel         OrderChannel @default(storefront)
+  externalOrderId String?      @unique @map("external_order_id")
   createdAt       DateTime    @default(now()) @map("created_at")
   updatedAt       DateTime    @updatedAt @map("updated_at")
   lines           OrderLine[]
   @@map("orders")
+}
+
+model ChannelListing {
+  id                   String               @id @default(cuid())
+  variantId            String               @unique @map("variant_id")
+  variant              Variant              @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  walmartSku           String               @unique @map("walmart_sku")
+  status               ChannelListingStatus @default(draft)
+  bufferPct            Int?                 @map("buffer_pct")
+  priceOverrideCents   Int?                 @map("price_override_cents")
+  lastPushedQty        Int?                 @map("last_pushed_qty")
+  lastPushedPriceCents Int?                 @map("last_pushed_price_cents")
+  lastSyncedAt         DateTime?            @map("last_synced_at")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+  @@map("channel_listings")
+}
+
+model ChannelFeed {
+  id          String            @id @default(cuid())
+  feedId      String            @unique @map("feed_id")
+  type        ChannelFeedType
+  status      ChannelFeedStatus @default(submitted)
+  errors      Json?
+  submittedAt DateTime          @default(now()) @map("submitted_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+  @@map("channel_feeds")
+}
+
+model ChannelEvent {
+  id          String             @id @default(cuid())
+  source      ChannelEventSource
+  externalId  String             @map("external_id")
+  eventType   String             @map("event_type")
+  processedAt DateTime           @default(now()) @map("processed_at")
+  @@unique([externalId, eventType])
+  @@map("channel_events")
+}
+
+model ChannelJob {
+  id        String           @id @default(cuid())
+  type      String
+  payload   Json
+  status    ChannelJobStatus @default(pending)
+  attempts  Int              @default(0)
+  runAfter  DateTime         @default(now()) @map("run_after")
+  lastError String?          @map("last_error")
+  dedupeKey String?          @unique @map("dedupe_key")
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+  @@index([status, runAfter])
+  @@map("channel_jobs")
+}
+
+model ChannelSettlement {
+  id              String                  @id @default(cuid())
+  reportDate      DateTime                @map("report_date")
+  externalOrderId String                  @map("external_order_id")
+  amountCents     Int                     @map("amount_cents")
+  feeCents        Int                     @map("fee_cents")
+  currency        String                  @default("USD")
+  orderId         String?                 @map("order_id")
+  status          ChannelSettlementStatus @default(unmatched)
+  raw             Json
+  createdAt       DateTime                @default(now()) @map("created_at")
+  @@index([externalOrderId])
+  @@map("channel_settlements")
 }
 
 model OrderLine {
