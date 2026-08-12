@@ -141,3 +141,56 @@ export async function getOrder(id: string): Promise<OrderDto | null> {
   const o = await prisma.order.findUnique({ where: { id }, include: { lines: true } })
   return o ? toDto(o) : null
 }
+
+async function loadOrderForUpdate(tx: any, orderId: string) {
+  const order = await tx.order.findUnique({ where: { id: orderId }, include: { lines: true } })
+  if (!order) throw new OrderError('order_not_found', `no order ${orderId}`)
+  return order
+}
+
+export async function markOrderPaid(orderId: string, actorId = 'system'): Promise<OrderDto> {
+  const updated = await prisma.$transaction(async (tx) => {
+    const order = await loadOrderForUpdate(tx, orderId)
+    if (order.status !== 'pending') {
+      throw new OrderError('invalid_transition', `cannot mark ${order.status} order as paid`)
+    }
+    return tx.order.update({ where: { id: orderId }, data: { status: 'paid' }, include: { lines: true } })
+  })
+  await recordAudit({ actorId, action: 'order.paid', target: `order:${orderId}`, before: { status: 'pending' }, after: { status: 'paid' } })
+  return toDto(updated)
+}
+
+export async function fulfillOrder(orderId: string, actorId = 'system'): Promise<OrderDto> {
+  const updated = await prisma.$transaction(async (tx) => {
+    const order = await loadOrderForUpdate(tx, orderId)
+    if (order.status !== 'paid') {
+      throw new OrderError('invalid_transition', `cannot fulfill a ${order.status} order`)
+    }
+    for (const line of order.lines) {
+      const affected = await tx.$executeRaw`
+        UPDATE inventory SET on_hand = on_hand - ${line.quantity}, reserved = reserved - ${line.quantity}
+        WHERE variant_id = ${line.variantId} AND reserved >= ${line.quantity} AND on_hand >= ${line.quantity}`
+      if (affected === 0) throw new OrderError('inventory_conflict', `cannot decrement stock for variant ${line.variantId}`)
+    }
+    return tx.order.update({ where: { id: orderId }, data: { status: 'fulfilled' }, include: { lines: true } })
+  })
+  await recordAudit({ actorId, action: 'order.fulfilled', target: `order:${orderId}`, before: { status: 'paid' }, after: { status: 'fulfilled' } })
+  return toDto(updated)
+}
+
+export async function cancelOrder(orderId: string, actorId = 'system'): Promise<OrderDto> {
+  const updated = await prisma.$transaction(async (tx) => {
+    const order = await loadOrderForUpdate(tx, orderId)
+    if (order.status !== 'pending' && order.status !== 'paid') {
+      throw new OrderError('invalid_transition', `cannot cancel a ${order.status} order`)
+    }
+    for (const line of order.lines) {
+      await tx.$executeRaw`
+        UPDATE inventory SET reserved = reserved - ${line.quantity}
+        WHERE variant_id = ${line.variantId} AND reserved >= ${line.quantity}`
+    }
+    return tx.order.update({ where: { id: orderId }, data: { status: 'cancelled' }, include: { lines: true } })
+  })
+  await recordAudit({ actorId, action: 'order.cancelled', target: `order:${orderId}`, after: { status: 'cancelled' } })
+  return toDto(updated)
+}
