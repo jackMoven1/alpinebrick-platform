@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { prisma } from '../src/prisma.js'
 import { resetDb } from './helpers/db.js'
 import { seed } from '../prisma/seed.js'
-import { placeOrder, markOrderPaid, fulfillOrder, cancelOrder } from '../src/orders/orders.service.js'
+import { placeOrder, getOrder, markOrderPaid, fulfillOrder, cancelOrder } from '../src/orders/orders.service.js'
 
 beforeEach(async () => { await resetDb(); await seed() })
 afterAll(() => prisma.$disconnect())
@@ -42,6 +42,26 @@ describe('order transitions', () => {
     await markOrderPaid(order.id)
     await fulfillOrder(order.id)
     await expect(cancelOrder(order.id)).rejects.toMatchObject({ code: 'invalid_transition' })
+  })
+
+  it('refuses to cancel when the reservation has drifted below the line quantity', async () => {
+    const order = await place('BBS-STD', 3) // reserved 3
+    const inv0 = await prisma.inventory.findFirstOrThrow({ where: { variant: { sku: 'BBS-STD' } } })
+
+    // Simulate a drifted hold: reserved is now less than this order's line quantity.
+    // Nothing in the service can produce this — the status guard makes double-cancel
+    // impossible — so it stands in for external corruption (a manual edit, a
+    // partially-applied earlier failure). The point is that the release must not
+    // silently no-op and strand the remaining hold forever.
+    await prisma.inventory.update({ where: { id: inv0.id }, data: { reserved: 1 } })
+
+    await expect(cancelOrder(order.id)).rejects.toMatchObject({ code: 'inventory_conflict' })
+
+    // The whole transition rolls back: the order stays cancellable rather than
+    // becoming cancelled with its hold stranded.
+    expect((await getOrder(order.id))?.status).toBe('pending')
+    const inv = await prisma.inventory.findFirstOrThrow({ where: { variant: { sku: 'BBS-STD' } } })
+    expect(inv.reserved).toBe(1) // untouched, and never driven negative
   })
 
   it('writes audit rows for each transition', async () => {
