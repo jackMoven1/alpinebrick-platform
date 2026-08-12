@@ -29,6 +29,13 @@ enum ActorType {
   agent
 }
 
+enum OrderStatus {
+  pending
+  paid
+  fulfilled
+  cancelled
+}
+
 model Product {
   id          String        @id @default(cuid())
   slug        String        @unique
@@ -54,6 +61,7 @@ model Variant {
   currency   String     @default("USD")
   attributes Json       @default("{}")
   inventory  Inventory?
+  orderLines OrderLine[]
   @@index([productId])
   @@map("variants")
 }
@@ -93,4 +101,38 @@ model AuditLog {
   @@index([actorId])
   @@index([action])
   @@map("audit_log")
+}
+
+model Order {
+  id              String      @id @default(cuid())
+  number          Int         @unique @default(autoincrement())
+  status          OrderStatus @default(pending)
+  email           String
+  shipToState     String      @map("ship_to_state")
+  subtotalCents   Int         @map("subtotal_cents")
+  discountCents   Int         @default(0) @map("discount_cents")
+  taxCents        Int         @map("tax_cents")
+  totalCents      Int         @map("total_cents")
+  taxRateBps      Int         @map("tax_rate_bps")
+  taxJurisdiction String      @map("tax_jurisdiction")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+  lines           OrderLine[]
+  @@map("orders")
+}
+
+model OrderLine {
+  id                String  @id @default(cuid())
+  orderId           String  @map("order_id")
+  order             Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variantId         String  @map("variant_id")
+  variant           Variant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  sku               String
+  quantity          Int
+  unitPriceCents    Int     @map("unit_price_cents")
+  lineSubtotalCents Int     @map("line_subtotal_cents")
+  discountCents     Int     @default(0) @map("discount_cents")
+  @@index([orderId])
+  @@index([variantId])
+  @@map("order_lines")
 }

@@ -1,0 +1,3 @@
+# core.autocrlf=true would otherwise check shell scripts out with CRLF, which
+# breaks the shebang line ("bad interpreter: /usr/bin/env bash^M").
+*.sh text eol=lf
