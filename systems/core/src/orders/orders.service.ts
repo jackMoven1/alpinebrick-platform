@@ -185,9 +185,15 @@ export async function cancelOrder(orderId: string, actorId = 'system'): Promise<
       throw new OrderError('invalid_transition', `cannot cancel a ${order.status} order`)
     }
     for (const line of order.lines) {
-      await tx.$executeRaw`
+      // Guarded exactly as fulfillOrder is. Without the affected-row check the
+      // UPDATE silently matches nothing when reserved has drifted below the line
+      // quantity, the order still becomes cancelled, and the remaining hold is
+      // stranded forever — stock that can never be sold again, with no error
+      // raised. Failing loudly here is recoverable; the silent version is not.
+      const affected = await tx.$executeRaw`
         UPDATE inventory SET reserved = reserved - ${line.quantity}
         WHERE variant_id = ${line.variantId} AND reserved >= ${line.quantity}`
+      if (affected === 0) throw new OrderError('inventory_conflict', `cannot release reservation for variant ${line.variantId}`)
     }
     return tx.order.update({ where: { id: orderId }, data: { status: 'cancelled' }, include: { lines: true } })
   })
