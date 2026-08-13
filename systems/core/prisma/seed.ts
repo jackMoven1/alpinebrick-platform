@@ -16,7 +16,7 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['architecture'],
-    imagesJson: [
+    imageSeeds: [
       { url: '/img/placeholder/skyline-1.svg', alt: 'Placeholder image for Millennium City Skyline' },
       { url: '/img/placeholder/skyline-2.svg', alt: 'Placeholder alternate view of Millennium City Skyline' },
     ],
@@ -46,7 +46,7 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['ocean'],
-    imagesJson: [
+    imageSeeds: [
       { url: '/img/placeholder/sub-1.svg', alt: 'Placeholder image for Deep Sea Explorer Sub' },
     ],
     description: 'A research submarine with an underwater station and articulated arm.',
@@ -74,7 +74,7 @@ const PRODUCTS = [
     releaseType: 'limited_run' as const,
     status: 'published' as const,
     categories: ['fantasy', 'limited-edition'],
-    imagesJson: [
+    imageSeeds: [
       { url: '/img/placeholder/fortress-1.svg', alt: 'Placeholder image for Dragon Fortress' },
       { url: '/img/placeholder/fortress-2.svg', alt: 'Placeholder alternate view of Dragon Fortress' },
     ],
@@ -103,7 +103,7 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['space'],
-    imagesJson: [
+    imageSeeds: [
       { url: '/img/placeholder/station-1.svg', alt: 'Placeholder image for Orbital Research Station' },
     ],
     description: 'A modular orbital station with rotating habitat ring and docking ports.',
@@ -131,7 +131,7 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['nature', 'architecture'],
-    imagesJson: [
+    imageSeeds: [
       { url: '/img/placeholder/conservatory-1.svg', alt: 'Placeholder image for Botanical Conservatory' },
     ],
     description: 'A glasshouse of transparent panels filled with brick-built botanicals.',
@@ -159,7 +159,7 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['ocean', 'nature'],
-    imagesJson: [
+    imageSeeds: [
       { url: '/img/placeholder/reef-1.svg', alt: 'Placeholder image for Coral Reef Diorama' },
     ],
     description: 'A layered reef scene in translucent and textured brick.',
@@ -187,7 +187,7 @@ const PRODUCTS = [
     releaseType: 'limited_run' as const,
     status: 'published' as const,
     categories: ['space', 'limited-edition'],
-    imagesJson: [
+    imageSeeds: [
       { url: '/img/placeholder/lander-1.svg', alt: 'Placeholder image for Lunar Lander Replica' },
     ],
     description: 'A previously-sold lander set, complete and ready to display.',
@@ -215,7 +215,7 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['architecture'],
-    imagesJson: [
+    imageSeeds: [
       { url: '/img/placeholder/clocktower-1.svg', alt: 'Placeholder image for Clocktower Square' },
     ],
     description: 'A town square anchored by a working geared clocktower.',
@@ -255,7 +255,7 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['starter'],
-    imagesJson: [
+    imageSeeds: [
       { url: '/img/placeholder/starter-1.svg', alt: 'Placeholder image for Brick Builder Set' },
     ],
     description: 'An entry-level build used as a development fixture.',
@@ -278,7 +278,7 @@ const PRODUCTS = [
     releaseType: 'limited_run' as const,
     status: 'published' as const,
     categories: ['fantasy', 'limited-edition'],
-    imagesJson: [
+    imageSeeds: [
       { url: '/img/placeholder/castle-1.svg', alt: 'Placeholder image for Castle Mega Pack' },
     ],
     description: 'A previously-sold castle set used as a development fixture.',
@@ -302,7 +302,7 @@ export async function seed(): Promise<void> {
     create: { id: 'system', type: 'human', name: 'system' },
   })
   for (const p of PRODUCTS) {
-    const { variants, imagesJson, ...fields } = p
+    const { variants, imageSeeds, ...fields } = p
     await prisma.product.upsert({
       where: { slug: p.slug },
       update: {},
@@ -322,7 +322,7 @@ export async function seed(): Promise<void> {
     const saved = await prisma.product.findUniqueOrThrow({ where: { slug: p.slug } })
     if ((await prisma.image.count({ where: { productId: saved.id } })) === 0) {
       await prisma.image.createMany({
-        data: imagesJson.map((img, position) => ({
+        data: imageSeeds.map((img, position) => ({
           productId: saved.id,
           storageKey: img.url,
           alt: img.alt,

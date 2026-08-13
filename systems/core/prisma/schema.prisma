@@ -98,9 +98,6 @@ model Product {
   productType ProductType   @map("product_type")
   releaseType ReleaseType   @default(standard) @map("release_type")
   status      ProductStatus @default(draft)
-  // Superseded by the Image relation. Retained through the migration so each
-  // step leaves a working build; dropped once nothing reads it.
-  imagesJson  Json          @default("[]") @map("images")
   images      Image[]
   categories  Json          @default("[]")
 

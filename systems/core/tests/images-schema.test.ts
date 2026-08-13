@@ -81,6 +81,14 @@ describe('Image table', () => {
     expect((await prisma.image.findUniqueOrThrow({ where: { id: b.id } })).position).toBe(0)
   })
 
+  it('no longer exposes the legacy images JSON column', async () => {
+    const rows = await prisma.$queryRaw<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'products' AND column_name = 'images'
+    `
+    expect(rows).toEqual([])
+  })
+
   it('cascade-deletes images when the product is deleted', async () => {
     const p = await makeProduct('img-fixture-6')
     await prisma.image.create({
