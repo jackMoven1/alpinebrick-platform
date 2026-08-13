@@ -43,7 +43,9 @@ function toDto(p: any): ProductDto {
   return {
     id: p.id, slug: p.slug, name: p.name, description: p.description,
     productType: p.productType, releaseType: p.releaseType, status: p.status,
-    images: toImages(p.images),
+    // Still the legacy JSON column. Task 5 switches this to the Image
+    // relation; keeping it here leaves the build green in between.
+    images: toImages(p.imagesJson),
     categories: toStringArray(p.categories),
     pieces: p.pieces ?? null,
     difficulty: p.difficulty ?? null,

@@ -10,7 +10,7 @@ describe('catalog DTO', () => {
       data: {
         slug: 'dto-fixture', name: 'DTO Fixture', productType: 'own_designed',
         status: 'published', pieces: 100, difficulty: 'beginner',
-        images: [{ url: '/img/a.jpg', alt: 'Front view' }],
+        imagesJson: [{ url: '/img/a.jpg', alt: 'Front view' }],
         categories: ['architecture'],
         features: ['One'], includes: ['Two'],
         homePosition: 5, collectionPosition: 9,

@@ -46,7 +46,7 @@ describe('seed', () => {
     const all = await prisma.product.findMany({ include: { variants: true } })
     for (const p of all) {
       expect(p.variants.length).toBeGreaterThanOrEqual(1)
-      const imgs = p.images as { url: string; alt: string }[]
+      const imgs = p.imagesJson as { url: string; alt: string }[]
       expect(imgs.length).toBeGreaterThanOrEqual(1)
       for (const i of imgs) {
         expect(typeof i.url).toBe('string')

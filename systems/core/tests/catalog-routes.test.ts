@@ -13,7 +13,7 @@ describe('catalog routes', () => {
       data: {
         slug: 'route-fixture', name: 'Route Fixture', productType: 'resale',
         status: 'published', categories: ['space'],
-        images: [{ url: '/img/r.jpg', alt: 'Route fixture' }],
+        imagesJson: [{ url: '/img/r.jpg', alt: 'Route fixture' }],
         homePosition: 1, collectionPosition: 1,
         variants: { create: [{ sku: 'RF-1', priceCents: 2500 }] },
       },

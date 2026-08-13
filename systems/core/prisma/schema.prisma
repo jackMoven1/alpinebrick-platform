@@ -31,6 +31,11 @@ enum Difficulty {
   expert
 }
 
+enum ImageStatus {
+  pending
+  ready
+}
+
 enum ActorType {
   human
   agent
@@ -93,7 +98,10 @@ model Product {
   productType ProductType   @map("product_type")
   releaseType ReleaseType   @default(standard) @map("release_type")
   status      ProductStatus @default(draft)
-  images      Json          @default("[]")
+  // Superseded by the Image relation. Retained through the migration so each
+  // step leaves a working build; dropped once nothing reads it.
+  imagesJson  Json          @default("[]") @map("images")
+  images      Image[]
   categories  Json          @default("[]")
 
   pieces            Int?
@@ -119,6 +127,29 @@ model Product {
   @@index([homePosition])
   @@index([collectionPosition])
   @@map("products")
+}
+
+model Image {
+  id          String      @id @default(cuid())
+  productId   String      @map("product_id")
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // Immutable. Bytes are never replaced in place — replacing a photo means a
+  // new row and a new key, which is what makes derivative URLs safe to cache
+  // at the edge indefinitely.
+  storageKey  String      @unique @map("storage_key")
+  alt         String      @default("")
+  position    Int
+  width       Int
+  height      Int
+  contentType String      @map("content_type")
+  byteSize    Int         @map("byte_size")
+  status      ImageStatus @default(pending)
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  @@unique([productId, position], map: "images_product_id_position_key")
+  @@index([productId, position])
+  @@map("images")
 }
 
 model Variant {
