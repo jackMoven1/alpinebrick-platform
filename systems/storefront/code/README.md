@@ -111,6 +111,18 @@ public/img/placeholder/     neutral placeholder product images
   page 2 gets sorted independently of page 1.
 - **Never render `--muted-foreground` below 12px.** It is roughly 5.5:1 and
   fails contrast under that size. `text-xs` is the floor.
+- **Images are storage keys, not URLs.** The API returns
+  `images[].storageKey`; `src/lib/images.ts` composes delivery URLs from it.
+  That resolver is **duplicated in core** for the Walmart feed, and
+  `src/lib/resolver-parity.test.ts` fails if the two grammars drift.
+- **Storage keys are relative and never start with a slash.** A leading slash
+  produces a doubled separator in every resolved URL, which 404s in the browser
+  while every unit test still passes. A seed test pins this.
+- **Always render `width` and `height`** on product images. They come from the
+  API and stop cards reflowing as images load.
+- **`VITE_ASSET_BASE_URL` is empty by default**, so keys resolve against the
+  storefront's own origin — which is where `public/img/placeholder/` is served
+  from. Set it to the CDN origin once one is chosen (ADR-0002).
 - **Product photography is placeholder.** `public/img/placeholder/` holds
   deliberately neutral SVGs. Real photography is the largest open gap.
 

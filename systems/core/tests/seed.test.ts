@@ -56,6 +56,16 @@ describe('seed', () => {
     }
   })
 
+  // Keys are relative by contract. A leading slash makes every resolved URL
+  // carry a doubled separator, which 404s in the browser while unit tests pass.
+  it('uses relative storage keys with no leading slash', async () => {
+    const images = await prisma.image.findMany()
+    expect(images.length).toBeGreaterThan(0)
+    for (const i of images) {
+      expect(i.storageKey.startsWith('/')).toBe(false)
+    }
+  })
+
   it('numbers image positions from zero with no gaps', async () => {
     const all = await prisma.product.findMany({
       include: { images: { orderBy: { position: 'asc' } } },

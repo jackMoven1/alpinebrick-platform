@@ -17,8 +17,8 @@ const PRODUCTS = [
     status: 'published' as const,
     categories: ['architecture'],
     imageSeeds: [
-      { url: '/img/placeholder/skyline-1.svg', alt: 'Placeholder image for Millennium City Skyline' },
-      { url: '/img/placeholder/skyline-2.svg', alt: 'Placeholder alternate view of Millennium City Skyline' },
+      { url: 'img/placeholder/skyline-1.svg', alt: 'Placeholder image for Millennium City Skyline' },
+      { url: 'img/placeholder/skyline-2.svg', alt: 'Placeholder alternate view of Millennium City Skyline' },
     ],
     description: 'A sprawling metropolis skyline with towers, bridges and hidden details.',
     longDescription:
@@ -47,7 +47,7 @@ const PRODUCTS = [
     status: 'published' as const,
     categories: ['ocean'],
     imageSeeds: [
-      { url: '/img/placeholder/sub-1.svg', alt: 'Placeholder image for Deep Sea Explorer Sub' },
+      { url: 'img/placeholder/sub-1.svg', alt: 'Placeholder image for Deep Sea Explorer Sub' },
     ],
     description: 'A research submarine with an underwater station and articulated arm.',
     longDescription:
@@ -75,8 +75,8 @@ const PRODUCTS = [
     status: 'published' as const,
     categories: ['fantasy', 'limited-edition'],
     imageSeeds: [
-      { url: '/img/placeholder/fortress-1.svg', alt: 'Placeholder image for Dragon Fortress' },
-      { url: '/img/placeholder/fortress-2.svg', alt: 'Placeholder alternate view of Dragon Fortress' },
+      { url: 'img/placeholder/fortress-1.svg', alt: 'Placeholder image for Dragon Fortress' },
+      { url: 'img/placeholder/fortress-2.svg', alt: 'Placeholder alternate view of Dragon Fortress' },
     ],
     description: 'Ancient stone walls, a fire-breathing dragon and seven secret passages.',
     longDescription:
@@ -104,7 +104,7 @@ const PRODUCTS = [
     status: 'published' as const,
     categories: ['space'],
     imageSeeds: [
-      { url: '/img/placeholder/station-1.svg', alt: 'Placeholder image for Orbital Research Station' },
+      { url: 'img/placeholder/station-1.svg', alt: 'Placeholder image for Orbital Research Station' },
     ],
     description: 'A modular orbital station with rotating habitat ring and docking ports.',
     longDescription:
@@ -132,7 +132,7 @@ const PRODUCTS = [
     status: 'published' as const,
     categories: ['nature', 'architecture'],
     imageSeeds: [
-      { url: '/img/placeholder/conservatory-1.svg', alt: 'Placeholder image for Botanical Conservatory' },
+      { url: 'img/placeholder/conservatory-1.svg', alt: 'Placeholder image for Botanical Conservatory' },
     ],
     description: 'A glasshouse of transparent panels filled with brick-built botanicals.',
     longDescription:
@@ -160,7 +160,7 @@ const PRODUCTS = [
     status: 'published' as const,
     categories: ['ocean', 'nature'],
     imageSeeds: [
-      { url: '/img/placeholder/reef-1.svg', alt: 'Placeholder image for Coral Reef Diorama' },
+      { url: 'img/placeholder/reef-1.svg', alt: 'Placeholder image for Coral Reef Diorama' },
     ],
     description: 'A layered reef scene in translucent and textured brick.',
     longDescription:
@@ -188,7 +188,7 @@ const PRODUCTS = [
     status: 'published' as const,
     categories: ['space', 'limited-edition'],
     imageSeeds: [
-      { url: '/img/placeholder/lander-1.svg', alt: 'Placeholder image for Lunar Lander Replica' },
+      { url: 'img/placeholder/lander-1.svg', alt: 'Placeholder image for Lunar Lander Replica' },
     ],
     description: 'A previously-sold lander set, complete and ready to display.',
     longDescription:
@@ -216,7 +216,7 @@ const PRODUCTS = [
     status: 'published' as const,
     categories: ['architecture'],
     imageSeeds: [
-      { url: '/img/placeholder/clocktower-1.svg', alt: 'Placeholder image for Clocktower Square' },
+      { url: 'img/placeholder/clocktower-1.svg', alt: 'Placeholder image for Clocktower Square' },
     ],
     description: 'A town square anchored by a working geared clocktower.',
     longDescription:
@@ -256,7 +256,7 @@ const PRODUCTS = [
     status: 'published' as const,
     categories: ['starter'],
     imageSeeds: [
-      { url: '/img/placeholder/starter-1.svg', alt: 'Placeholder image for Brick Builder Set' },
+      { url: 'img/placeholder/starter-1.svg', alt: 'Placeholder image for Brick Builder Set' },
     ],
     description: 'An entry-level build used as a development fixture.',
     longDescription: '',
@@ -279,7 +279,7 @@ const PRODUCTS = [
     status: 'published' as const,
     categories: ['fantasy', 'limited-edition'],
     imageSeeds: [
-      { url: '/img/placeholder/castle-1.svg', alt: 'Placeholder image for Castle Mega Pack' },
+      { url: 'img/placeholder/castle-1.svg', alt: 'Placeholder image for Castle Mega Pack' },
     ],
     description: 'A previously-sold castle set used as a development fixture.',
     longDescription: '',

@@ -9,7 +9,15 @@ export interface ImageUrlOptions {
 export const CARD_WIDTHS = [400, 600, 900] as const
 export const DETAIL_WIDTHS = [600, 900, 1400, 2000] as const
 
-const BASE = (import.meta.env.VITE_ASSET_BASE_URL ?? '/assets').replace(/\/+$/, '')
+/**
+ * Empty by default: with no CDN chosen, keys resolve against the storefront's
+ * own origin, which is where the placeholder art in public/ is served from.
+ * Set VITE_ASSET_BASE_URL to the CDN origin once one exists.
+ *
+ * Storage keys are relative and never start with a slash, so joining is always
+ * `${BASE}/${key}` and never produces a doubled separator.
+ */
+const BASE = (import.meta.env.VITE_ASSET_BASE_URL ?? '').replace(/\/+$/, '')
 
 /**
  * Composes a delivery URL from an immutable storage key.
