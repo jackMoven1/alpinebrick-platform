@@ -24,6 +24,13 @@ enum ProductStatus {
   archived
 }
 
+enum Difficulty {
+  beginner
+  intermediate
+  advanced
+  expert
+}
+
 enum ActorType {
   human
   agent
@@ -88,9 +95,29 @@ model Product {
   status      ProductStatus @default(draft)
   images      Json          @default("[]")
   categories  Json          @default("[]")
+
+  pieces            Int?
+  difficulty        Difficulty?
+  ageRecommendation String?     @map("age_recommendation")
+  dimensions        String?
+  longDescription   String      @default("") @map("long_description")
+  features          Json        @default("[]")
+  includes          Json        @default("[]")
+  builderNotes      String      @default("") @map("builder_notes")
+
+  // Merchandised display order. Two independent orderings: a product's place on
+  // the home page is not its place inside a collection. Nullable rather than
+  // defaulted to 0 so unranked products sort LAST — a 0 default would silently
+  // promote every new product to the top of the home page.
+  homePosition       Int? @map("home_position")
+  collectionPosition Int? @map("collection_position")
+
   createdAt   DateTime      @default(now()) @map("created_at")
   updatedAt   DateTime      @updatedAt @map("updated_at")
   variants    Variant[]
+
+  @@index([homePosition])
+  @@index([collectionPosition])
   @@map("products")
 }
 
