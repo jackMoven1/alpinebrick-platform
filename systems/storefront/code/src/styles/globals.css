@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/* Self-hosted rather than loaded from Google Fonts: for a commerce site an
+   @import from a third party is a render-blocking runtime dependency on every
+   page load, and a privacy consideration. Only the weights actually used. */
+@import "@fontsource/barlow-condensed/900.css";
+@import "@fontsource/dm-sans/400.css";
+@import "@fontsource/dm-sans/500.css";
+@import "@fontsource/dm-sans/600.css";
+
+@import "../design-system/tokens.css";
+
+/* Map the tokens onto Tailwind's semantic scale so bg-background,
+   text-muted-foreground, border-border and rounded-md resolve to the design
+   system values. Tailwind v4 configures in CSS — there is no tailwind.config.js. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+
+  --radius-md: var(--radius);
+
+  --font-display: var(--font-display);
+  --font-sans: var(--font-sans);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}

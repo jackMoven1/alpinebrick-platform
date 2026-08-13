@@ -1,162 +1,83 @@
 # Storefront System
 
-**Status**: 🚀 Sprint 1 In Progress  
-**Owner**: Storefront Engineer  
-**Reports To**: Engineering Lead  
+**Status**: Foundation and catalog built; cart, checkout and support tooling deferred
+**Owner**: Storefront Engineer
+**Reports To**: Engineering Lead
 
 ---
 
 ## Overview
 
-The **Storefront** is the customer-facing website for AlpineBrick e-commerce platform. It includes:
-- Product catalog browsing with search & filters
-- Product detail pages with variants & pricing
-- Shopping cart management
-- Checkout flow with Stripe payment integration
-- Customer account management
-- Affiliate referral tracking
+The **Storefront** is the customer-facing website for Alpine Brick Exchange. It
+is a React 18 + TypeScript application built on the 2026-08-12 design handoff,
+served by Vite and backed by **`systems/core`**.
 
-## Status Timeline
+**It is not live.** `alpinebrickexchange.com` resolves to the Shopify store and
+continues to until the Phase 5 cutover. This app targets local and staging
+environments only, which is why an incomplete checkout is a normal mid-build
+state rather than a customer-facing defect.
 
-| Phase | Timeline | Status |
-|-------|----------|--------|
-| Hiring | Week 1 | ✅ Complete |
-| Onboarding | Week 1 | ✅ Complete |
-| Sprint 1: Catalog Pages | Weeks 2-3 | 🚀 In Progress |
-| Sprint 2: Cart & Checkout | Weeks 4-6 | 🔳 Not Started |
-| Sprint 3: Accounts | Weeks 7-8 | 🔳 Not Started |
-| Launch & Monitoring | Week 9+ | 🔳 Not Started |
+## What is built
 
----
+| Area | State |
+|---|---|
+| App shell, nav, footer, skip link | Built |
+| Design system: tokens + 7 primitives | Built |
+| Home page with category filtering and search | Built |
+| Product detail: gallery, specs, tabs, add to cart | Built |
+| Collections index and collection detail | Built |
+| Company pages: About, Designers, Careers, Press, Community | Built |
+| Support hub, FAQ, Shipping, Returns | Built |
+| Cart (in-memory, lost on reload) | Built |
 
-## 📁 What's Here
+## What is deliberately not built
 
-### `/docs/`
-- **ADR-*.md** – Architecture Decision Records
-  - Tech stack decisions (React, Vite, Tailwind)
-  - State management approach
-  - API integration patterns
-- **IMPLEMENTATION-STATUS.md** – Current sprint progress
-- **QUICK-START.md** – Development guide
+| Deferred | Blocked on |
+|---|---|
+| Checkout: shipping, payment, confirmation | No payment provider, no shipping rates |
+| Cart persistence across sessions | Needs a session or account model |
+| Promo codes | No promo engine; see the discount trap in the spec |
+| Order tracking by number | Needs a carrier integration |
+| Contact form submission | Needs a ticketing or email backend |
+| Product reviews and ratings | No reviews subsystem is designed |
 
-### `/hiring/`
-- **ONBOARDING.md** – Storefront engineer kickoff guide
-  - First week setup checklist
-  - Development workflow
-  - Sprint roadmap
+Ratings are **not** stubbed. Rendering an invented star rating or review count
+on a real storefront is fabricated social proof, so the UI is absent until real
+reviews exist.
 
----
+## Directories
 
-## 🚀 Quick Links
+- **`code/`** — the application. See [`code/README.md`](./code/README.md) for
+  how to run it and the traps that will bite you.
+- **`design/handoff/`** — the 2026-08-12 Figma design package: the authoritative
+  visual spec, a runnable React reference app, and a clickable prototype. It is
+  a **reference, not a codebase**; do not build or deploy from it.
+- **`design/references/`** — earlier mockups and design inputs.
+- **`hiring/`** — role onboarding notes.
 
-- **Current Sprint**: [docs/IMPLEMENTATION-STATUS.md](./docs/IMPLEMENTATION-STATUS.md)
-- **Engineering Decisions**: [docs/](./docs/) – ADRs and architecture docs
-- **Developer Guide**: [hiring/ONBOARDING.md](./hiring/ONBOARDING.md)
-- **Live App**: http://localhost:3000 (when running `docker-compose up`)
+## Service dependencies
 
----
+Exactly one: **`systems/core`** on `:4000`, backed by PostgreSQL on `:5433`.
 
-## 👥 Team
+The storefront does **not** depend on `catalog-service`, `order-service`,
+`inventory-service` or `affiliate-service`. Those are pre-redesign in-memory
+mocks. An earlier version of this app was wired to them and could not work
+against core; that version was replaced.
 
-| Role | Name | Status |
-|------|------|--------|
-| Product Owner | Jack (CEO) | ✅ Active |
-| Engineering Lead | Jack | ✅ Active |
-| Storefront Engineer | [Hired] | ✅ Active |
+## Governing documents
 
----
+- Spec: `docs/superpowers/specs/2026-08-12-storefront-foundation-and-catalog-design.md`
+- Plan: `docs/superpowers/plans/2026-08-12-storefront-foundation-and-catalog.md`
+- API contract: `contracts/openapi/catalog.yaml` (2.0.0)
+- ADR-0001 — Catalog API Contract, **amended 2026-08-12**: core is the source of
+  truth for the catalog surface.
 
-## Sprint 1: Catalog Pages (Current)
+## Open questions
 
-**Goal**: Browse products and view details with live data from catalog-service
-
-✅ **Completed:**
-- React + Vite + Tailwind setup
-- ProductList component with search, filter, pagination
-- ProductCard component
-- SearchBar component with category filter
-- API integration with catalog-service
-- Responsive design (desktop, tablet, mobile)
-- Build verified (1.34s)
-
-⏳ **Next:**
-- ProductDetail page
-- Variant selection UI
-- "Add to Cart" button (stubbed)
-- Error handling refinement
-- PR review with Engineering Lead
-
----
-
-## 🔧 Tech Stack
-
-- **Frontend**: React 18+, TypeScript, Tailwind CSS
-- **Build**: Vite (10x faster than webpack)
-- **Server**: Express.js (API proxy to backend services)
-- **HTTP**: axios or fetch
-- **State**: React Context or Zustand
-- **Testing**: Jest (unit), Cypress/Playwright (E2E)
-
----
-
-## 📦 Service Dependencies
-
-- **catalog-service** (`http://localhost:4001/api/`) – Product catalog
-- **order-service** (`http://localhost:4002/api/`) – Order creation (Sprint 2)
-- **inventory-service** (`http://localhost:4003/api/`) – Stock checks (later)
-- **affiliate-service** (`http://localhost:4004/api/`) – Referral tracking (later)
-
----
-
-## 🎯 Success Criteria (Sprint 1)
-
-- ✅ ProductList page working with live data
-- ✅ Search & category filtering functional
-- ✅ ProductDetail page implemented
-- ✅ Responsive across all devices
-- ✅ Error handling & loading states
-- ✅ Code reviewed & approved by Engineering Lead
-- ✅ PR merged to main
-
----
-
-## 💻 Local Development
-
-```bash
-# Start all services (from engineering root)
-docker-compose up
-
-# In storefront directory, Terminal 1: Run dev server
-npm run dev
-
-# Terminal 2 (optional): Run Express proxy server
-npm run dev:server
-
-# Browser: http://localhost:5173 (Vite dev server)
-```
-
----
-
-## 📚 Documentation
-
-- [System Architecture](../../shared-docs/SYSTEM-ARCHITECTURE.md) – Platform overview
-- [API Contracts](../../shared-docs/CONTRACTS.md) – Service API specs
-- [Git Workflow](../../shared-docs/CONVENTIONS.md) – PR standards
-- [Deployment Guide](../../shared-docs/DEPLOYMENT.md) – Docker & local setup
-
----
-
-## ⏭️ Next Steps
-
-1. **Complete ProductDetail page**
-2. **Add variant selection UI**
-3. **Create PR with progress**
-4. **Engineering Lead review**
-5. **Feedback incorporation**
-6. **Merge to main**
-7. **Start Sprint 2 (Cart & Checkout)**
-
----
-
-**Last Updated**: June 3, 2026  
-**Maintained By**: Storefront Engineer & Engineering Lead
+1. **Real product photography.** Everything ships with neutral placeholders.
+   This is the largest gap between the current build and something presentable.
+2. **Whether the seven collections match real merchandising.** The slugs came
+   from the design, not from a merchandising decision.
+3. **Whether the static page copy says what Jack wants.** It is honest and
+   states plainly where facts do not exist yet, but it has not had a marketing
+   review.

@@ -1,13 +1,23 @@
 openapi: 3.1.0
 info:
   title: AlpineBrick Catalog API
-  version: 1.0.0
+  version: 2.0.0
   description: >-
     API contract for the AlpineBrick product catalog (read + availability).
-    v1 surface is frozen per ADR-0001. All response fields are snake_case.
-    Search is case-insensitive substring matching (not relevance-ranked);
-    a relevance engine is a future ADR. Slug lookup, faceted navigation,
-    related products, and an image CDN are explicitly out of scope for v1.
+
+    This document describes `systems/core` AS BUILT. Per the ADR-0001 amendment
+    of 2026-08-12, core is the source of truth for this surface: the v1 contract
+    frozen in ADR-0001 was never implemented as written, and core — running,
+    tested and merged — won on shape. Field names are camelCase, the page-size
+    parameter is `pageSize`, and all money is an integer count of cents.
+
+    Money is NEVER a float. The v1 contract typed price as `number/float`;
+    floating-point dollars accumulate representation error and the repository's
+    money convention forbids estimated figures.
+
+    Search is case-insensitive substring matching over product name (not
+    relevance-ranked); a relevance engine is ADR-0003. An image CDN is ADR-0002.
+    Both remain DRAFT and are Jack's spend decisions.
 servers:
   - url: /api/v1/catalog
 paths:
@@ -15,9 +25,14 @@ paths:
     get:
       summary: List products
       description: >-
-        Returns a paginated envelope of products. Defaults to published-only.
-        Supports filtering by category, case-insensitive substring search over
-        name + description, and a frozen sort enum.
+        Returns a paginated envelope of published products. Supports filtering by
+        category, case-insensitive substring search over name, and a six-value
+        sort enum.
+
+        Invalid `page`, `pageSize` or `sort` values are REJECTED with
+        VALIDATION_ERROR rather than clamped or silently ignored — a silently
+        ignored bad parameter returns plausible wrong results, which is harder
+        to notice than an error.
       parameters:
         - name: page
           in: query
@@ -27,7 +42,7 @@ paths:
             type: integer
             minimum: 1
             default: 1
-        - name: limit
+        - name: pageSize
           in: query
           required: false
           description: Page size.
@@ -35,42 +50,48 @@ paths:
             type: integer
             minimum: 1
             maximum: 100
-            default: 24
-        - name: published
-          in: query
-          required: false
-          description: >-
-            Filter by publish state. When omitted, only published products are
-            returned.
-          schema:
-            type: boolean
+            default: 20
         - name: category
           in: query
           required: false
           description: >-
             Single exact-match category. Matches if the value is present in the
-            product's categories array.
+            product's `categories` array. Values are lowercase kebab-case slugs
+            (`architecture`, `limited-edition`) — never display casing.
           schema:
             type: string
         - name: search
           in: query
           required: false
           description: >-
-            Case-insensitive substring matched against name and description.
-            v1 is substring-only, not relevance-ranked.
+            Case-insensitive substring matched against product name. Substring
+            only, not relevance-ranked.
           schema:
             type: string
         - name: sort
           in: query
           required: false
           description: >-
-            Sort order. `name_asc` (default), `price_asc`, `price_desc`,
-            `newest`. price_asc/price_desc sort by the product's minimum variant
-            price (its cheapest variant); products with no variants sort last.
-            `newest` sorts by created_at descending.
+            Sort order.
+
+            `name_asc` (default) — product name ascending.
+
+            `price_asc` / `price_desc` — by the product's MINIMUM variant price
+            (its cheapest variant); products with no variants sort last.
+
+            `newest` — `createdAt` descending.
+
+            `home_display` — merchandised order for the home page, by
+            `homePosition` ascending.
+
+            `collection_display` — merchandised order within a collection, by
+            `collectionPosition` ascending.
+
+            Both `*_display` sorts place unranked (null-position) products LAST
+            and break ties on product name, so pagination is stable.
           schema:
             type: string
-            enum: [name_asc, price_asc, price_desc, newest]
+            enum: [name_asc, price_asc, price_desc, newest, home_display, collection_display]
             default: name_asc
       responses:
         '200':
@@ -91,13 +112,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /products/{product_id}:
+  /products/{idOrSlug}:
     get:
-      summary: Get product by ID
+      summary: Get product by id or slug
       parameters:
-        - name: product_id
+        - name: idOrSlug
           in: path
           required: true
+          description: Either the product's id or its unique slug.
           schema:
             type: string
       responses:
@@ -119,22 +141,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /products/{product_id}/availability:
+  /products/{idOrSlug}/availability:
     get:
-      summary: Get SKU availability for a product
+      summary: Get per-variant availability for a product
       parameters:
-        - name: product_id
+        - name: idOrSlug
           in: path
           required: true
           schema:
             type: string
       responses:
         '200':
-          description: Availability data
+          description: Availability per variant
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProductAvailability'
+                type: array
+                items:
+                  $ref: '#/components/schemas/VariantAvailability'
         '404':
           description: Product not found
           content:
@@ -151,7 +175,7 @@ components:
   schemas:
     ProductListEnvelope:
       type: object
-      required: [items, total, page, limit]
+      required: [items, total, page, pageSize]
       properties:
         items:
           type: array
@@ -162,10 +186,11 @@ components:
           description: Full unpaginated count of products matching the filters.
         page:
           type: integer
-        limit:
+        pageSize:
           type: integer
     Product:
       type: object
+      required: [id, slug, name, description, productType, releaseType, status, images, categories, variants]
       properties:
         id:
           type: string
@@ -175,87 +200,105 @@ components:
           type: string
         description:
           type: string
-        published:
-          type: boolean
+        productType:
+          type: string
+          enum: [own_designed, resale]
+        releaseType:
+          type: string
+          enum: [standard, limited_run, specialty]
+        status:
+          type: string
+          enum: [draft, published, archived]
         categories:
           type: array
+          description: Lowercase kebab-case slugs.
           items:
             type: string
         images:
           type: array
           description: >-
-            Display-ordered images. The first element is the primary image.
+            Display-ordered images; the first element is the primary image.
+            Entries failing this shape are discarded on read, so a corrupt row
+            renders without images rather than crashing a consumer.
           items:
             $ref: '#/components/schemas/Image'
-        metadata:
-          type: object
-          additionalProperties: true
-        created_at:
+        pieces:
+          type: [integer, 'null']
+        difficulty:
+          type: [string, 'null']
+          enum: [beginner, intermediate, advanced, expert, null]
+        ageRecommendation:
+          type: [string, 'null']
+        dimensions:
+          type: [string, 'null']
+        longDescription:
           type: string
-          format: date-time
-        updated_at:
+        features:
+          type: array
+          items:
+            type: string
+        includes:
+          type: array
+          items:
+            type: string
+        builderNotes:
+          type: string
+        homePosition:
+          type: [integer, 'null']
+          description: >-
+            Merchandised display order on the home page, ascending. Null means
+            unranked, which sorts LAST — never first.
+        collectionPosition:
+          type: [integer, 'null']
+          description: >-
+            Merchandised display order within a collection, ascending, and
+            independent of homePosition. Null sorts LAST.
+
+            Known limitation: `categories` is an array, so a product belonging
+            to several collections carries one position and holds the same rank
+            in each.
+        createdAt:
           type: string
           format: date-time
         variants:
           type: array
           items:
-            $ref: '#/components/schemas/ProductVariant'
+            $ref: '#/components/schemas/Variant'
     Image:
       type: object
       required: [url, alt]
       properties:
         url:
           type: string
-          description: Plain absolute-or-relative image URL (CDN-agnostic for v1).
+          description: Plain absolute-or-relative image URL (CDN-agnostic; see ADR-0002).
         alt:
           type: string
           description: Human-authored alternative text (WCAG 2.1 AA).
-    ProductVariant:
+    Variant:
       type: object
+      required: [id, sku, priceCents, currency]
       properties:
         id:
           type: string
-        product_id:
+        sku:
+          type: string
+        priceCents:
+          type: integer
+          description: >-
+            Price as an INTEGER COUNT OF CENTS. Never a float, never dollars.
+        currency:
+          type: string
+    VariantAvailability:
+      type: object
+      required: [variantId, sku, available]
+      properties:
+        variantId:
           type: string
         sku:
           type: string
-        price:
-          type: number
-          format: float
-        currency:
-          type: string
-        inventory_item_id:
-          type: string
-        attributes:
-          type: object
-          additionalProperties: true
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-    ProductAvailability:
-      type: object
-      required: [product_id, available, variants]
-      properties:
-        product_id:
-          type: string
         available:
-          type: boolean
-        variants:
-          type: array
-          items:
-            type: object
-            required: [sku_id, available_quantity]
-            properties:
-              sku_id:
-                type: string
-              available_quantity:
-                description: >-
-                  Returns null until the catalog-inventory integration lands
-                  (separate ADR). Consumers treat null as "unknown".
-                type: [integer, 'null']
+          type: integer
+          description: onHand minus reserved.
     Error:
       type: object
       required: [code, message]
@@ -269,6 +312,6 @@ components:
           description: Human-readable error message.
         fields:
           type: object
-          description: Optional per-field validation detail.
+          description: Per-field validation detail, present on VALIDATION_ERROR.
           additionalProperties:
             type: string

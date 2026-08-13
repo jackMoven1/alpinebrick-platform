@@ -31,8 +31,13 @@ jobs:
           cache: npm
           cache-dependency-path: systems/core/package-lock.json
       - run: npm ci
+      # Runs every migration against an empty database. This is the step that
+      # catches a migration whose timestamp sorts before the one it depends on.
       - run: npx prisma migrate deploy
       - run: npx vitest run
+      # A green suite does not mean the app compiles: vitest resolves
+      # TypeScript directly and never touches compiled output.
+      - run: npm run build
 
   storefront:
     runs-on: ubuntu-latest
@@ -45,4 +50,8 @@ jobs:
         with:
           node-version: 20
       - run: npm install
+      - run: npx vitest run
+      # `build` is `tsc -b && vite build`, so this also typechecks. Keep it
+      # AFTER the tests: a component can pass its tests and still fail to
+      # compile, and the compile error is the more useful failure to surface.
       - run: npm run build
