@@ -16,9 +16,9 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['architecture'],
-    images: [
-      { url: '/img/placeholder/skyline-1.svg', alt: 'Placeholder image for Millennium City Skyline' },
-      { url: '/img/placeholder/skyline-2.svg', alt: 'Placeholder alternate view of Millennium City Skyline' },
+    imageSeeds: [
+      { url: 'img/placeholder/skyline-1.svg', alt: 'Placeholder image for Millennium City Skyline' },
+      { url: 'img/placeholder/skyline-2.svg', alt: 'Placeholder alternate view of Millennium City Skyline' },
     ],
     description: 'A sprawling metropolis skyline with towers, bridges and hidden details.',
     longDescription:
@@ -46,8 +46,8 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['ocean'],
-    images: [
-      { url: '/img/placeholder/sub-1.svg', alt: 'Placeholder image for Deep Sea Explorer Sub' },
+    imageSeeds: [
+      { url: 'img/placeholder/sub-1.svg', alt: 'Placeholder image for Deep Sea Explorer Sub' },
     ],
     description: 'A research submarine with an underwater station and articulated arm.',
     longDescription:
@@ -74,9 +74,9 @@ const PRODUCTS = [
     releaseType: 'limited_run' as const,
     status: 'published' as const,
     categories: ['fantasy', 'limited-edition'],
-    images: [
-      { url: '/img/placeholder/fortress-1.svg', alt: 'Placeholder image for Dragon Fortress' },
-      { url: '/img/placeholder/fortress-2.svg', alt: 'Placeholder alternate view of Dragon Fortress' },
+    imageSeeds: [
+      { url: 'img/placeholder/fortress-1.svg', alt: 'Placeholder image for Dragon Fortress' },
+      { url: 'img/placeholder/fortress-2.svg', alt: 'Placeholder alternate view of Dragon Fortress' },
     ],
     description: 'Ancient stone walls, a fire-breathing dragon and seven secret passages.',
     longDescription:
@@ -103,8 +103,8 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['space'],
-    images: [
-      { url: '/img/placeholder/station-1.svg', alt: 'Placeholder image for Orbital Research Station' },
+    imageSeeds: [
+      { url: 'img/placeholder/station-1.svg', alt: 'Placeholder image for Orbital Research Station' },
     ],
     description: 'A modular orbital station with rotating habitat ring and docking ports.',
     longDescription:
@@ -131,8 +131,8 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['nature', 'architecture'],
-    images: [
-      { url: '/img/placeholder/conservatory-1.svg', alt: 'Placeholder image for Botanical Conservatory' },
+    imageSeeds: [
+      { url: 'img/placeholder/conservatory-1.svg', alt: 'Placeholder image for Botanical Conservatory' },
     ],
     description: 'A glasshouse of transparent panels filled with brick-built botanicals.',
     longDescription:
@@ -159,8 +159,8 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['ocean', 'nature'],
-    images: [
-      { url: '/img/placeholder/reef-1.svg', alt: 'Placeholder image for Coral Reef Diorama' },
+    imageSeeds: [
+      { url: 'img/placeholder/reef-1.svg', alt: 'Placeholder image for Coral Reef Diorama' },
     ],
     description: 'A layered reef scene in translucent and textured brick.',
     longDescription:
@@ -187,8 +187,8 @@ const PRODUCTS = [
     releaseType: 'limited_run' as const,
     status: 'published' as const,
     categories: ['space', 'limited-edition'],
-    images: [
-      { url: '/img/placeholder/lander-1.svg', alt: 'Placeholder image for Lunar Lander Replica' },
+    imageSeeds: [
+      { url: 'img/placeholder/lander-1.svg', alt: 'Placeholder image for Lunar Lander Replica' },
     ],
     description: 'A previously-sold lander set, complete and ready to display.',
     longDescription:
@@ -215,8 +215,8 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['architecture'],
-    images: [
-      { url: '/img/placeholder/clocktower-1.svg', alt: 'Placeholder image for Clocktower Square' },
+    imageSeeds: [
+      { url: 'img/placeholder/clocktower-1.svg', alt: 'Placeholder image for Clocktower Square' },
     ],
     description: 'A town square anchored by a working geared clocktower.',
     longDescription:
@@ -255,8 +255,8 @@ const PRODUCTS = [
     releaseType: 'standard' as const,
     status: 'published' as const,
     categories: ['starter'],
-    images: [
-      { url: '/img/placeholder/starter-1.svg', alt: 'Placeholder image for Brick Builder Set' },
+    imageSeeds: [
+      { url: 'img/placeholder/starter-1.svg', alt: 'Placeholder image for Brick Builder Set' },
     ],
     description: 'An entry-level build used as a development fixture.',
     longDescription: '',
@@ -278,8 +278,8 @@ const PRODUCTS = [
     releaseType: 'limited_run' as const,
     status: 'published' as const,
     categories: ['fantasy', 'limited-edition'],
-    images: [
-      { url: '/img/placeholder/castle-1.svg', alt: 'Placeholder image for Castle Mega Pack' },
+    imageSeeds: [
+      { url: 'img/placeholder/castle-1.svg', alt: 'Placeholder image for Castle Mega Pack' },
     ],
     description: 'A previously-sold castle set used as a development fixture.',
     longDescription: '',
@@ -302,7 +302,7 @@ export async function seed(): Promise<void> {
     create: { id: 'system', type: 'human', name: 'system' },
   })
   for (const p of PRODUCTS) {
-    const { variants, ...fields } = p
+    const { variants, imageSeeds, ...fields } = p
     await prisma.product.upsert({
       where: { slug: p.slug },
       update: {},
@@ -316,6 +316,27 @@ export async function seed(): Promise<void> {
         },
       },
     })
+
+    // Images are rows, not JSON. Created separately so re-seeding an existing
+    // product does not duplicate them.
+    const saved = await prisma.product.findUniqueOrThrow({ where: { slug: p.slug } })
+    if ((await prisma.image.count({ where: { productId: saved.id } })) === 0) {
+      await prisma.image.createMany({
+        data: imageSeeds.map((img, position) => ({
+          productId: saved.id,
+          storageKey: img.url,
+          alt: img.alt,
+          position,
+          // The real viewBox of every placeholder SVG in the storefront's
+          // public/img/placeholder directory.
+          width: 900,
+          height: 720,
+          contentType: 'image/svg+xml',
+          byteSize: 512,
+          status: 'ready' as const,
+        })),
+      })
+    }
   }
 }
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AlpineBrick Catalog API
-  version: 2.0.0
+  version: 3.0.0
   description: >-
     API contract for the AlpineBrick product catalog (read + availability).
 
@@ -10,6 +10,10 @@ info:
     frozen in ADR-0001 was never implemented as written, and core — running,
     tested and merged — won on shape. Field names are camelCase, the page-size
     parameter is `pageSize`, and all money is an integer count of cents.
+
+    Images are returned as immutable storage KEYS, never URLs, and only images
+    in the `ready` state are returned. See the ADR-0001 amendment of
+    2026-08-13.
 
     Money is NEVER a float. The v1 contract typed price as `number/float`;
     floating-point dollars accumulate representation error and the repository's
@@ -217,9 +221,9 @@ components:
         images:
           type: array
           description: >-
-            Display-ordered images; the first element is the primary image.
-            Entries failing this shape are discarded on read, so a corrupt row
-            renders without images rather than crashing a consumer.
+            Images ordered by `position`; position 0 is the primary image.
+            Only images in the `ready` state appear — a partially uploaded
+            image is never returned.
           items:
             $ref: '#/components/schemas/Image'
         pieces:
@@ -266,14 +270,33 @@ components:
             $ref: '#/components/schemas/Variant'
     Image:
       type: object
-      required: [url, alt]
+      required: [storageKey, alt, width, height, position]
       properties:
-        url:
+        storageKey:
           type: string
-          description: Plain absolute-or-relative image URL (CDN-agnostic; see ADR-0002).
+          description: >-
+            Immutable storage key, format products/{productId}/{imageId}/original.{ext}.
+            NOT a URL. Consumers compose a delivery URL from this key, so the CDN
+            host and transform grammar can change without touching any data.
+            Bytes are never replaced in place, so derivative URLs built from this
+            key are safe to cache at the edge indefinitely.
         alt:
           type: string
-          description: Human-authored alternative text (WCAG 2.1 AA).
+          description: >-
+            Human-authored alternative text (WCAG 2.1 AA). May be empty for
+            decorative images; empty alt is a publish-time warning, not an error.
+        width:
+          type: integer
+          description: >-
+            Intrinsic pixel width, read from storage at upload rather than
+            supplied by the client. Lets clients reserve layout space instead of
+            reflowing as images load.
+        height:
+          type: integer
+          description: Intrinsic pixel height, read from storage at upload.
+        position:
+          type: integer
+          description: Display order within the product. position 0 is the primary image.
     Variant:
       type: object
       required: [id, sku, priceCents, currency]

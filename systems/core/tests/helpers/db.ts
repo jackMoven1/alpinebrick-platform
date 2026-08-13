@@ -11,6 +11,7 @@ export async function resetDb() {
   await prisma.channelSettlement.deleteMany()
   await prisma.channelListing.deleteMany()
   await prisma.inventory.deleteMany()
+  await prisma.image.deleteMany()
   await prisma.variant.deleteMany()
   await prisma.product.deleteMany()
   await prisma.actor.deleteMany()

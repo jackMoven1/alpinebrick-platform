@@ -6,7 +6,8 @@ export interface CartLine {
   productSlug: string
   name: string
   priceCents: number
-  image: string
+  /** Storage key of the product's primary image, NOT a URL. Resolve at render. */
+  imageKey: string
   quantity: number
 }
 

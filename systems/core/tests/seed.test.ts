@@ -42,16 +42,36 @@ describe('seed', () => {
     }
   })
 
-  it('gives every product at least one variant and one image with alt text', async () => {
-    const all = await prisma.product.findMany({ include: { variants: true } })
+  it('gives every product at least one variant and one image row with alt text', async () => {
+    const all = await prisma.product.findMany({ include: { variants: true, images: true } })
     for (const p of all) {
       expect(p.variants.length).toBeGreaterThanOrEqual(1)
-      const imgs = p.images as { url: string; alt: string }[]
-      expect(imgs.length).toBeGreaterThanOrEqual(1)
-      for (const i of imgs) {
-        expect(typeof i.url).toBe('string')
+      expect(p.images.length).toBeGreaterThanOrEqual(1)
+      for (const i of p.images) {
         expect(i.alt.length).toBeGreaterThan(0)
+        expect(i.width).toBeGreaterThan(0)
+        expect(i.height).toBeGreaterThan(0)
+        expect(i.status).toBe('ready')
       }
+    }
+  })
+
+  // Keys are relative by contract. A leading slash makes every resolved URL
+  // carry a doubled separator, which 404s in the browser while unit tests pass.
+  it('uses relative storage keys with no leading slash', async () => {
+    const images = await prisma.image.findMany()
+    expect(images.length).toBeGreaterThan(0)
+    for (const i of images) {
+      expect(i.storageKey.startsWith('/')).toBe(false)
+    }
+  })
+
+  it('numbers image positions from zero with no gaps', async () => {
+    const all = await prisma.product.findMany({
+      include: { images: { orderBy: { position: 'asc' } } },
+    })
+    for (const p of all) {
+      expect(p.images.map(i => i.position)).toEqual(p.images.map((_, idx) => idx))
     }
   })
 

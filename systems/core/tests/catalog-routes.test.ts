@@ -9,13 +9,19 @@ const app = buildApp()
 describe('catalog routes', () => {
   beforeAll(async () => {
     await resetDb()
-    await prisma.product.create({
+    const p = await prisma.product.create({
       data: {
         slug: 'route-fixture', name: 'Route Fixture', productType: 'resale',
         status: 'published', categories: ['space'],
-        images: [{ url: '/img/r.jpg', alt: 'Route fixture' }],
         homePosition: 1, collectionPosition: 1,
         variants: { create: [{ sku: 'RF-1', priceCents: 2500 }] },
+      },
+    })
+    await prisma.image.create({
+      data: {
+        productId: p.id, storageKey: `products/${p.id}/r/original.jpg`,
+        alt: 'Route fixture', position: 0, width: 900, height: 720,
+        contentType: 'image/jpeg', byteSize: 100, status: 'ready',
       },
     })
   })
@@ -26,7 +32,12 @@ describe('catalog routes', () => {
     expect(res.status).toBe(200)
     expect(res.body.items).toHaveLength(1)
     expect(res.body.items[0].slug).toBe('route-fixture')
-    expect(res.body.items[0].images).toEqual([{ url: '/img/r.jpg', alt: 'Route fixture' }])
+    expect(res.body.items[0].images).toEqual([
+      {
+        storageKey: expect.stringContaining('/r/original.jpg'),
+        alt: 'Route fixture', width: 900, height: 720, position: 0,
+      },
+    ])
     expect(res.body.pageSize).toBe(20)
   })
 
