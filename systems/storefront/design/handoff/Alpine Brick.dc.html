@@ -1,0 +1,1934 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;700;800;900&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #0f0f0f; }
+  * { box-sizing: border-box; }
+  a { color: #ffd100; text-decoration: none; }
+  a:hover { color: #ffffff; }
+  button { font-family: inherit; cursor: pointer; }
+  input { font-family: inherit; }
+  @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  ::selection { background: #ffd100; color: #0f0f0f; }
+</style>
+</helmet>
+
+<div style="min-height: 100vh; background: #0f0f0f; color: #f0ede8; font-family: 'DM Sans', sans-serif; font-size: 16px;">
+
+  <nav style="position: sticky; top: 0; z-index: 50; border-bottom: 1px solid rgba(255,255,255,0.08); background: rgba(15,15,15,0.95); backdrop-filter: blur(8px);">
+    <div style="max-width: 1280px; margin: 0 auto; padding: 0 24px; height: 64px; display: flex; align-items: center; justify-content: space-between;">
+      <button onClick="{{ goHome }}" style="display: flex; align-items: center; gap: 10px; background: none; border: 0; padding: 0;">
+        <svg width="32" height="32" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+          <rect width="36" height="36" rx="3" fill="#111111"></rect>
+          <circle cx="12" cy="12" r="5.5" fill="#FFD100"></circle>
+          <circle cx="24" cy="12" r="5.5" fill="#FFD100"></circle>
+          <circle cx="12" cy="24" r="5.5" fill="#FFD100"></circle>
+          <circle cx="24" cy="24" r="5.5" fill="#FFD100"></circle>
+          <circle cx="12" cy="12" r="2.8" fill="#111111" fill-opacity="0.45"></circle>
+          <circle cx="24" cy="12" r="2.8" fill="#111111" fill-opacity="0.45"></circle>
+          <circle cx="12" cy="24" r="2.8" fill="#111111" fill-opacity="0.45"></circle>
+          <circle cx="24" cy="24" r="2.8" fill="#111111" fill-opacity="0.45"></circle>
+        </svg>
+        <span style="font-family: 'Barlow Condensed', sans-serif; font-size: 21px; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase; color: #f0ede8;" style-hover="color: #ffd100;">Alpine Brick</span>
+      </button>
+
+      <div style="display: flex; align-items: center; gap: 32px;">
+        <sc-for list="{{ navLinks }}" as="link" hint-placeholder-count="4">
+          <button onClick="{{ link.go }}" style="background: none; border: 0; padding: 0; font-size: 12px; font-weight: 600; color: #8a8a8a; letter-spacing: 0.15em; text-transform: uppercase; transition: color 0.2s;" style-hover="color: #f0ede8;">{{ link.label }}</button>
+        </sc-for>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 4px;">
+        <button onClick="{{ toggleSearch }}" aria-label="Search" style="background: none; border: 0; padding: 10px; color: #8a8a8a; display: flex;" style-hover="color: #f0ede8;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+        </button>
+        <button onClick="{{ goCart }}" aria-label="Cart" style="position: relative; background: none; border: 0; padding: 10px; color: #8a8a8a; display: flex;" style-hover="color: #f0ede8;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="20" r="1.5"></circle><circle cx="18" cy="20" r="1.5"></circle><path d="M2 3h3l2.4 12.4a1.5 1.5 0 0 0 1.5 1.1h8.6a1.5 1.5 0 0 0 1.5-1.2L21 7H6"></path></svg>
+          <sc-if value="{{ hasCart }}" hint-placeholder-val="{{ true }}">
+            <span style="position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; background: #ffd100; color: #0f0f0f; font-size: 10px; font-weight: 900; border-radius: 999px; display: flex; align-items: center; justify-content: center;">{{ cartCount }}</span>
+          </sc-if>
+        </button>
+      </div>
+    </div>
+
+    <sc-if value="{{ searchOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="border-top: 1px solid rgba(255,255,255,0.08); padding: 12px 24px; background: #0f0f0f;">
+        <div style="max-width: 1280px; margin: 0 auto;">
+          <input type="text" value="{{ query }}" onChange="{{ onQuery }}" placeholder="Search sets, themes, piece counts…" style="width: 100%; background: #1e1e1e; color: #f0ede8; padding: 10px 16px; font-size: 14px; border: 1px solid rgba(255,255,255,0.08); border-radius: 2px; outline: none;" />
+        </div>
+      </div>
+    </sc-if>
+  </nav>
+
+  <main>
+    <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+      <section style="position: relative; min-height: calc(100vh - 64px); display: flex; align-items: center; overflow: hidden; background: #0f0f0f;">
+        <div style="position: absolute; inset: 0;">
+          <img src="https://images.unsplash.com/photo-1587654780291-39c9404d746b?w=1800&h=1000&fit=crop&auto=format" alt="Colorful LEGO bricks" style="width: 100%; height: 100%; object-fit: cover; opacity: 0.15;" />
+          <div style="position: absolute; inset: 0; background: linear-gradient(to right, #0f0f0f, rgba(15,15,15,0.75) 55%, rgba(15,15,15,0.2));"></div>
+        </div>
+
+        <div style="position: relative; z-index: 10; max-width: 1280px; margin: 0 auto; padding: 96px 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; width: 100%;">
+          <div>
+            <div style="display: inline-flex; align-items: center; gap: 8px; color: #ffd100; font-size: 10px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 32px; border: 1px solid rgba(255,209,0,0.25); padding: 6px 12px;">
+              <span>⚡</span> Designed by AFOLs · Built for Builders
+            </div>
+            <h1 style="font-family: 'Barlow Condensed', sans-serif; font-size: clamp(64px, 8vw, 128px); font-weight: 900; text-transform: uppercase; line-height: 0.9; letter-spacing: -0.02em; color: #f0ede8; margin: 0 0 32px;">
+              Be a<br /><span style="color: #ffd100;">Master</span><br />Builder
+            </h1>
+            <p style="color: #8a8a8a; font-size: 18px; max-width: 448px; margin: 0 0 40px; line-height: 1.7; text-wrap: pretty;">
+              Custom-designed LEGO sets crafted by AFOLs for fans and builders who want something truly one of a kind. No two collections alike.
+            </p>
+            <div style="display: flex; flex-wrap: wrap; gap: 16px;">
+              <button onClick="{{ goCatalog }}" style="background: #ffd100; color: #0f0f0f; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; padding: 16px 32px; font-size: 12px; border: 0; border-radius: 2px; display: inline-flex; align-items: center; gap: 8px;" style-hover="background: #e6bd00;">Shop Now →</button>
+              <button onClick="{{ goSpotlight }}" style="border: 1px solid rgba(255,255,255,0.08); background: none; color: #f0ede8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; padding: 16px 32px; font-size: 12px; border-radius: 2px;" style-hover="border-color: rgba(240,237,232,0.6);">View Spotlights</button>
+            </div>
+            <div style="display: flex; align-items: center; gap: 40px; margin-top: 56px; padding-top: 40px; border-top: 1px solid rgba(255,255,255,0.08);">
+              <sc-for list="{{ stats }}" as="stat" hint-placeholder-count="3">
+                <div>
+                  <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 30px; font-weight: 900; color: #f0ede8;">{{ stat.value }}<span style="color: #ffd100; font-size: 20px;">{{ stat.suffix }}</span></div>
+                  <div style="font-size: 10px; color: #8a8a8a; text-transform: uppercase; letter-spacing: 0.15em; margin-top: 2px;">{{ stat.label }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="position: relative;">
+            <div style="position: relative; aspect-ratio: 4 / 5; max-width: 384px; margin-left: auto;">
+              <img src="https://images.unsplash.com/photo-1633469924738-52101af51d87?w=640&h=800&fit=crop&auto=format" alt="Close-up of colorful LEGO pieces" style="width: 100%; height: 100%; object-fit: cover; background: #242424;" />
+              <div style="position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(to top, rgba(15,15,15,0.92), transparent); padding: 24px;">
+                <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.2em; color: #ffd100; margin-bottom: 4px;">New Drop</div>
+                <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; color: #f0ede8;">Dragon Fortress</div>
+                <div style="color: #8a8a8a; font-size: 12px; margin-top: 4px;">3,156 pieces · $249</div>
+              </div>
+              <div style="position: absolute; top: -12px; right: -12px; width: 80px; height: 80px; border: 1px solid rgba(255,209,0,0.3); pointer-events: none;"></div>
+              <div style="position: absolute; bottom: -12px; left: -12px; width: 48px; height: 48px; background: rgba(255,209,0,0.2); pointer-events: none;"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div style="border-top: 1px solid rgba(255,255,255,0.08); border-bottom: 1px solid rgba(255,255,255,0.08); background: rgba(30,30,30,0.4); padding: 14px 0; overflow: hidden;">
+        <div style="display: flex; gap: 40px; white-space: nowrap; animation: marquee 28s linear infinite; width: max-content;">
+          <sc-for list="{{ trustItems }}" as="item" hint-placeholder-count="16">
+            <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.18em; color: #8a8a8a; display: flex; align-items: center; gap: 12px; flex-shrink: 0;"><span style="color: #ffd100;">◆</span> {{ item.label }}</span>
+          </sc-for>
+        </div>
+      </div>
+
+      <section style="padding: 112px 24px; max-width: 1280px; margin: 0 auto;">
+        <div style="display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 56px;">
+          <div>
+            <div style="color: #ffd100; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 12px;">Featured Drops</div>
+            <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 60px; font-weight: 900; text-transform: uppercase; line-height: 1; margin: 0;">Spotlight<br />Collection</h2>
+          </div>
+          <button onClick="{{ goCatalog }}" style="background: none; border: 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: flex; align-items: center; gap: 8px;" style-hover="color: #f0ede8;">View All ›</button>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px;">
+          <sc-for list="{{ spotlights }}" as="s" hint-placeholder-count="2">
+            <div style="background: #181818; border: 1px solid rgba(255,255,255,0.08); overflow: hidden; transition: border-color 0.3s;" style-hover="border-color: rgba(255,209,0,0.4);">
+              <button onClick="{{ s.open }}" style="display: block; position: relative; height: 320px; width: 100%; overflow: hidden; background: #242424; border: 0; padding: 0;">
+                <img src="{{ s.image }}" alt="{{ s.name }}" style="width: 100%; height: 100%; object-fit: cover;" />
+                <div style="position: absolute; inset: 0; background: linear-gradient(to top, rgba(24,24,24,0.9), rgba(24,24,24,0.15) 55%, transparent);"></div>
+                <div style="position: absolute; top: 16px; left: 16px;">
+                  <span style="font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.18em; padding: 6px 12px; background: {{ s.badgeBg }}; color: {{ s.badgeFg }};">{{ s.badge }}</span>
+                </div>
+              </button>
+              <div style="padding: 28px;">
+                <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; gap: 16px;">
+                  <div>
+                    <div style="color: #8a8a8a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 6px;">{{ s.category }}</div>
+                    <button onClick="{{ s.open }}" style="background: none; border: 0; padding: 0; text-align: left; font-family: 'Barlow Condensed', sans-serif; font-size: 26px; font-weight: 900; text-transform: uppercase; line-height: 1.05; color: #f0ede8;" style-hover="color: #ffd100;">{{ s.name }}</button>
+                  </div>
+                  <div style="text-align: right; flex-shrink: 0;">
+                    <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 30px; font-weight: 900;">{{ s.priceStr }}</div>
+                    <div style="color: #8a8a8a; font-size: 10px; margin-top: 2px;">{{ s.piecesStr }}</div>
+                  </div>
+                </div>
+                <p style="color: #8a8a8a; font-size: 14px; line-height: 1.7; margin: 0 0 24px; text-wrap: pretty;">{{ s.description }}</p>
+                <div style="display: flex; gap: 12px;">
+                  <button onClick="{{ s.open }}" style="flex: 1; border: 1px solid rgba(255,255,255,0.08); background: none; color: #f0ede8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; padding: 12px; font-size: 12px; border-radius: 2px;" style-hover="border-color: #ffd100; color: #ffd100;">View Details</button>
+                  <button onClick="{{ s.add }}" style="flex: 1; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; padding: 12px; font-size: 12px; border: 0; border-radius: 2px; background: {{ s.addBg }}; color: {{ s.addFg }};">{{ s.addLabel }}</button>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </section>
+
+      <section id="catalog" style="padding: 112px 0; border-top: 1px solid rgba(255,255,255,0.08); background: rgba(30,30,30,0.2);">
+        <div style="max-width: 1280px; margin: 0 auto; padding: 0 24px;">
+          <div style="margin-bottom: 40px;">
+            <div style="color: #ffd100; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 12px;">Browse the Build</div>
+            <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 60px; font-weight: 900; text-transform: uppercase; line-height: 1; margin: 0;">Full<br />Catalog</h2>
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 48px;">
+            <sc-for list="{{ categories }}" as="cat" hint-placeholder-count="6">
+              <button onClick="{{ cat.select }}" style="padding: 8px 16px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.18em; border-radius: 2px; border: 1px solid {{ cat.border }}; background: {{ cat.bg }}; color: {{ cat.fg }};">{{ cat.name }}</button>
+            </sc-for>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;">
+            <sc-for list="{{ catalog }}" as="p" hint-placeholder-count="6">
+              <div style="background: #181818; border: 1px solid rgba(255,255,255,0.08); overflow: hidden; transition: border-color 0.3s;" style-hover="border-color: rgba(255,209,0,0.35);">
+                <button onClick="{{ p.open }}" style="display: block; position: relative; height: 208px; width: 100%; overflow: hidden; background: #242424; border: 0; padding: 0;">
+                  <img src="{{ p.image }}" alt="{{ p.name }}" style="width: 100%; height: 100%; object-fit: cover;" />
+                  <sc-if value="{{ p.hasBadge }}" hint-placeholder-val="{{ true }}">
+                    <div style="position: absolute; top: 12px; left: 12px;">
+                      <span style="font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 4px 10px; background: {{ p.badgeBg }}; color: {{ p.badgeFg }};">{{ p.badge }}</span>
+                    </div>
+                  </sc-if>
+                </button>
+                <div style="padding: 20px;">
+                  <div style="color: #8a8a8a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 6px;">{{ p.category }}</div>
+                  <button onClick="{{ p.open }}" style="background: none; border: 0; padding: 0; text-align: left; font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; line-height: 1.05; color: #f0ede8; margin-bottom: 8px;" style-hover="color: #ffd100;">{{ p.name }}</button>
+                  <p style="color: #8a8a8a; font-size: 12px; line-height: 1.6; margin: 0 0 20px; text-wrap: pretty;">{{ p.shortDescription }}</p>
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                    <div>
+                      <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 24px; font-weight: 900;">{{ p.priceStr }}</div>
+                      <div style="color: #8a8a8a; font-size: 10px; margin-top: 2px;">{{ p.piecesStr }}</div>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                      <button onClick="{{ p.open }}" style="padding: 10px 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; border: 1px solid rgba(255,255,255,0.08); background: none; color: #8a8a8a; border-radius: 2px;" style-hover="border-color: #ffd100; color: #ffd100;">Details</button>
+                      <button onClick="{{ p.add }}" style="padding: 10px 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; border: 0; border-radius: 2px; background: {{ p.addBg }}; color: {{ p.addFg }};">{{ p.addShort }}</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+
+          <sc-if value="{{ catalogEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="text-align: center; padding: 112px 0; color: #8a8a8a;">
+              <div style="font-size: 40px; opacity: 0.25; margin-bottom: 20px;">◻</div>
+              <p style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.15em;">No sets in this category yet — check back soon</p>
+            </div>
+          </sc-if>
+        </div>
+      </section>
+
+      <section style="padding: 112px 24px; max-width: 1280px; margin: 0 auto;">
+        <div style="text-align: center; margin-bottom: 56px;">
+          <div style="color: #ffd100; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 12px;">What Sets Us Apart</div>
+          <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 60px; font-weight: 900; text-transform: uppercase; line-height: 1; margin: 0;">Why Alpine<br />Brick Exchange</h2>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;">
+          <sc-for list="{{ pillars }}" as="item" hint-placeholder-count="3">
+            <div style="border: 1px solid rgba(255,255,255,0.08); padding: 32px; transition: border-color 0.3s;" style-hover="border-color: rgba(255,209,0,0.35);">
+              <div style="color: #ffd100; margin-bottom: 20px; font-size: 26px;">{{ item.icon }}</div>
+              <h3 style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; margin: 0 0 12px;">{{ item.title }}</h3>
+              <p style="color: #8a8a8a; font-size: 14px; line-height: 1.7; margin: 0; text-wrap: pretty;">{{ item.body }}</p>
+            </div>
+          </sc-for>
+        </div>
+      </section>
+
+      <section style="padding: 112px 0; background: #ffd100; position: relative; overflow: hidden; border-top: 1px solid rgba(255,255,255,0.08);">
+        <div style="position: absolute; inset: 0; opacity: 0.1;">
+          <img src="https://images.unsplash.com/photo-1587654780291-39c9404d746b?w=1600&h=700&fit=crop&auto=format" alt="" aria-hidden="true" style="width: 100%; height: 100%; object-fit: cover;" />
+        </div>
+        <div style="position: relative; z-index: 10; max-width: 672px; margin: 0 auto; padding: 0 24px; text-align: center;">
+          <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 72px; font-weight: 900; text-transform: uppercase; color: #0f0f0f; margin: 0 0 20px; line-height: 1;">Join the<br />Exchange</h2>
+          <p style="color: rgba(15,15,15,0.75); margin: 0 0 40px; font-size: 16px; line-height: 1.7; text-wrap: pretty;">Early access to limited drops, builder-to-builder trade listings, and exclusive community challenges — all for AFOLs, by AFOLs.</p>
+          <div style="display: flex; gap: 12px; max-width: 448px; margin: 0 auto;">
+            <input type="email" placeholder="your@email.com" style="flex: 1; background: rgba(15,15,15,0.1); border: 1px solid rgba(15,15,15,0.25); color: #0f0f0f; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+            <button style="background: #0f0f0f; color: #ffd100; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 12px 28px; font-size: 12px; border: 0; border-radius: 2px; white-space: nowrap;">Join Now</button>
+          </div>
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isCollections }}" hint-placeholder-val="{{ false }}">
+      <section style="max-width: 1280px; margin: 0 auto; padding: 80px 24px 32px;">
+        <div style="color: #ffd100; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 12px;">Browse by Theme</div>
+        <h1 style="font-family: 'Barlow Condensed', sans-serif; font-size: 72px; font-weight: 900; text-transform: uppercase; line-height: 0.95; margin: 0 0 16px;">Collections</h1>
+        <p style="color: #8a8a8a; font-size: 16px; max-width: 560px; margin: 0; line-height: 1.7; text-wrap: pretty;">Every set is designed in-house, produced in a limited run, and numbered. Pick a theme and see what our builders have been up to.</p>
+      </section>
+
+      <section style="max-width: 1280px; margin: 0 auto; padding: 24px 24px 112px;">
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;">
+          <sc-for list="{{ collections }}" as="c" hint-placeholder-count="6">
+            <button onClick="{{ c.select }}" style="display: block; text-align: left; padding: 0; background: #181818; border: 1px solid rgba(255,255,255,0.08); overflow: hidden; transition: border-color 0.3s;" style-hover="border-color: rgba(255,209,0,0.4);">
+              <div style="position: relative; height: 240px; background: #242424; overflow: hidden;">
+                <img src="{{ c.image }}" alt="{{ c.name }}" style="width: 100%; height: 100%; object-fit: cover; opacity: 0.75;" />
+                <div style="position: absolute; inset: 0; background: linear-gradient(to top, rgba(24,24,24,0.95), transparent 65%);"></div>
+                <div style="position: absolute; bottom: 20px; left: 20px; right: 20px;">
+                  <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 30px; font-weight: 900; text-transform: uppercase; color: #f0ede8; line-height: 1;">{{ c.name }}</div>
+                  <div style="color: #ffd100; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.18em; margin-top: 6px;">{{ c.countLabel }}</div>
+                </div>
+              </div>
+              <div style="padding: 20px;">
+                <p style="color: #8a8a8a; font-size: 13px; line-height: 1.6; margin: 0; text-wrap: pretty;">{{ c.blurb }}</p>
+              </div>
+            </button>
+          </sc-for>
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isProduct }}" hint-placeholder-val="{{ false }}">
+      <div style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+        <div style="max-width: 1280px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; gap: 8px; font-size: 10px; color: #8a8a8a; text-transform: uppercase; letter-spacing: 0.15em;">
+          <button onClick="{{ goHome }}" style="background: none; border: 0; padding: 0; color: #8a8a8a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em;" style-hover="color: #f0ede8;">← Home</button>
+          <span>›</span>
+          <span>{{ p.category }}</span>
+          <span>›</span>
+          <span style="color: #f0ede8;">{{ p.name }}</span>
+        </div>
+      </div>
+
+      <div style="max-width: 1280px; margin: 0 auto; padding: 48px 24px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 80px;">
+          <div style="position: sticky; top: 88px; align-self: start;">
+            <div style="position: relative; aspect-ratio: 4 / 3; background: #242424; overflow: hidden; margin-bottom: 12px;">
+              <img src="{{ p.activeImage }}" alt="{{ p.name }}" style="width: 100%; height: 100%; object-fit: cover;" />
+              <sc-if value="{{ p.hasBadge }}" hint-placeholder-val="{{ true }}">
+                <div style="position: absolute; top: 16px; left: 16px;">
+                  <span style="font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 6px 12px; background: {{ p.badgeBg }}; color: {{ p.badgeFg }};">{{ p.badge }}</span>
+                </div>
+              </sc-if>
+              <button onClick="{{ prevImage }}" aria-label="Previous image" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; background: rgba(15,15,15,0.8); border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; display: flex; align-items: center; justify-content: center;">‹</button>
+              <button onClick="{{ nextImage }}" aria-label="Next image" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; background: rgba(15,15,15,0.8); border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; display: flex; align-items: center; justify-content: center;">›</button>
+              <div style="position: absolute; bottom: 16px; right: 16px; background: rgba(15,15,15,0.8); border: 1px solid rgba(255,255,255,0.08); padding: 4px 10px; font-size: 10px; font-weight: 700;">{{ p.imageCounter }}</div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
+              <sc-for list="{{ p.thumbs }}" as="t" hint-placeholder-count="4">
+                <button onClick="{{ t.select }}" style="aspect-ratio: 1; overflow: hidden; padding: 0; background: #242424; border: 2px solid {{ t.border }};">
+                  <img src="{{ t.src }}" alt="" style="width: 100%; height: 100%; object-fit: cover;" />
+                </button>
+              </sc-for>
+            </div>
+            <div style="margin-top: 16px; color: #8a8a8a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em;"># Set {{ p.setNumber }}</div>
+          </div>
+
+          <div>
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+              <span style="color: #ffd100; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2em;">{{ p.category }}</span>
+              <span style="color: #8a8a8a; font-size: 12px;"><span style="color: #ffd100;">{{ p.stars }}</span> {{ p.ratingLabel }}</span>
+            </div>
+            <h1 style="font-family: 'Barlow Condensed', sans-serif; font-size: 52px; font-weight: 900; text-transform: uppercase; line-height: 1.05; margin: 0 0 16px;">{{ p.name }}</h1>
+
+            <div style="display: flex; align-items: flex-end; gap: 16px; margin-bottom: 32px; padding-bottom: 32px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+              <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 52px; font-weight: 900; line-height: 1;">{{ p.priceStr }}</div>
+              <div style="padding-bottom: 6px;">
+                <div style="color: #8a8a8a; font-size: 14px;">{{ p.piecesStr }}</div>
+                <div style="color: #8a8a8a; font-size: 12px; margin-top: 2px;">Ages {{ p.ageRecommendation }}</div>
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 32px;">
+              <sc-for list="{{ p.specs }}" as="spec" hint-placeholder-count="4">
+                <div style="background: rgba(30,30,30,0.4); border: 1px solid rgba(255,255,255,0.08); padding: 12px 16px;">
+                  <div style="color: #8a8a8a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 4px;">{{ spec.label }}</div>
+                  <div style="font-size: 14px; font-weight: 600; color: {{ spec.color }};">{{ spec.value }}</div>
+                </div>
+              </sc-for>
+            </div>
+
+            <p style="color: #8a8a8a; line-height: 1.7; margin: 0 0 32px; text-wrap: pretty;">{{ p.description }}</p>
+
+            <div style="display: flex; gap: 12px; margin-bottom: 32px;">
+              <div style="display: flex; align-items: center; border: 1px solid rgba(255,255,255,0.08);">
+                <button onClick="{{ decQty }}" style="padding: 12px 16px; background: none; border: 0; color: #8a8a8a; font-weight: 700; font-size: 18px;" style-hover="color: #f0ede8;">−</button>
+                <span style="padding: 12px 16px; font-size: 14px; font-weight: 700; min-width: 48px; text-align: center;">{{ qty }}</span>
+                <button onClick="{{ incQty }}" style="padding: 12px 16px; background: none; border: 0; color: #8a8a8a; font-weight: 700; font-size: 18px;" style-hover="color: #f0ede8;">+</button>
+              </div>
+              <button onClick="{{ addCurrent }}" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 12px; font-size: 14px; border: 0; border-radius: 2px; background: {{ addCurrentBg }}; color: {{ addCurrentFg }};">{{ addCurrentLabel }}</button>
+            </div>
+
+            <div style="display: flex; flex-wrap: wrap; gap: 16px; padding-bottom: 32px; margin-bottom: 32px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+              <sc-for list="{{ trustMicro }}" as="t" hint-placeholder-count="3">
+                <div style="display: flex; align-items: center; gap: 6px; color: #8a8a8a; font-size: 12px;"><span style="color: #ffd100;">✓</span> {{ t.label }}</div>
+              </sc-for>
+            </div>
+
+            <div style="display: flex; border-bottom: 1px solid rgba(255,255,255,0.08); margin-bottom: 24px;">
+              <sc-for list="{{ tabs }}" as="tab" hint-placeholder-count="3">
+                <button onClick="{{ tab.select }}" style="padding: 12px 20px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; background: none; border: 0; border-bottom: 2px solid {{ tab.border }}; color: {{ tab.color }}; margin-bottom: -1px;">{{ tab.label }}</button>
+              </sc-for>
+            </div>
+
+            <sc-if value="{{ tabOverview }}" hint-placeholder-val="{{ true }}">
+              <div>
+                <p style="color: #8a8a8a; line-height: 1.7; margin: 0 0 24px; font-size: 14px; text-wrap: pretty;">{{ p.longDescription }}</p>
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                  <sc-for list="{{ p.features }}" as="f" hint-placeholder-count="6">
+                    <div style="display: flex; align-items: flex-start; gap: 12px; font-size: 14px;"><span style="color: #ffd100;">✓</span><span style="color: #f0ede8;">{{ f.label }}</span></div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ tabInbox }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; flex-direction: column; gap: 12px;">
+                <sc-for list="{{ p.includes }}" as="i" hint-placeholder-count="5">
+                  <div style="display: flex; align-items: flex-start; gap: 12px; font-size: 14px;"><span style="color: #ffd100; font-weight: 900;">◆</span><span style="color: #f0ede8;">{{ i.label }}</span></div>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ tabNotes }}" hint-placeholder-val="{{ false }}">
+              <div style="border-left: 2px solid #ffd100; padding-left: 20px;">
+                <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.2em; color: #ffd100; font-weight: 700; margin-bottom: 12px;">From the Design Team</div>
+                <p style="color: #8a8a8a; line-height: 1.7; font-size: 14px; font-style: italic; margin: 0; text-wrap: pretty;">{{ p.builderNotesQuoted }}</p>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+
+      <section style="border-top: 1px solid rgba(255,255,255,0.08); padding: 80px 0; background: rgba(30,30,30,0.2);">
+        <div style="max-width: 1280px; margin: 0 auto; padding: 0 24px;">
+          <div style="display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 40px;">
+            <div>
+              <div style="color: #ffd100; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 8px;">You Might Also Like</div>
+              <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 34px; font-weight: 900; text-transform: uppercase; margin: 0;">Related Sets</h2>
+            </div>
+            <button onClick="{{ goCatalog }}" style="background: none; border: 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a;" style-hover="color: #f0ede8;">View All ›</button>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;">
+            <sc-for list="{{ related }}" as="r" hint-placeholder-count="3">
+              <button onClick="{{ r.open }}" style="display: block; text-align: left; padding: 0; background: #181818; border: 1px solid rgba(255,255,255,0.08); overflow: hidden; transition: border-color 0.3s;" style-hover="border-color: rgba(255,209,0,0.35);">
+                <div style="position: relative; height: 176px; overflow: hidden; background: #242424;">
+                  <img src="{{ r.image }}" alt="{{ r.name }}" style="width: 100%; height: 100%; object-fit: cover;" />
+                </div>
+                <div style="padding: 20px;">
+                  <div style="color: #8a8a8a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 4px;">{{ r.category }}</div>
+                  <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 19px; font-weight: 900; text-transform: uppercase; line-height: 1.1; color: #f0ede8;">{{ r.name }}</div>
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 12px;">
+                    <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 24px; font-weight: 900;">{{ r.priceStr }}</div>
+                    <div style="color: #8a8a8a; font-size: 10px;">{{ r.piecesStr }}</div>
+                  </div>
+                </div>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isCheckout }}" hint-placeholder-val="{{ false }}">
+      <div style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+        <div style="max-width: 1280px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; gap: 8px; font-size: 10px; color: #8a8a8a; text-transform: uppercase; letter-spacing: 0.15em;">
+          <button onClick="{{ goHome }}" style="background: none; border: 0; padding: 0; color: #8a8a8a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em;" style-hover="color: #f0ede8;">Home</button>
+          <span>›</span><span style="color: #f0ede8;">Checkout</span>
+        </div>
+      </div>
+
+      <sc-if value="{{ stepActive }}" hint-placeholder-val="{{ true }}">
+        <section style="max-width: 1280px; margin: 0 auto; padding: 40px 24px 112px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 32px; margin-bottom: 40px;">
+            <h1 style="font-family: 'Barlow Condensed', sans-serif; font-size: 52px; font-weight: 900; text-transform: uppercase; margin: 0;">{{ checkoutTitle }}</h1>
+            <div style="display: flex; align-items: center;">
+              <sc-for list="{{ stepDots }}" as="dot" hint-placeholder-count="4">
+                <div style="display: flex; align-items: center;">
+                  <div style="display: flex; flex-direction: column; align-items: center;">
+                    <div style="width: 32px; height: 32px; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 900; border: 2px solid {{ dot.border }}; background: {{ dot.bg }}; color: {{ dot.fg }};">{{ dot.mark }}</div>
+                    <span style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; margin-top: 6px; font-weight: 700; color: {{ dot.labelColor }};">{{ dot.label }}</span>
+                  </div>
+                  <sc-if value="{{ dot.notLast }}" hint-placeholder-val="{{ true }}">
+                    <div style="width: 72px; height: 1px; margin: 0 4px 20px; background: {{ dot.barBg }};"></div>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 40px; align-items: start;">
+            <div>
+              <sc-if value="{{ stepCart }}" hint-placeholder-val="{{ true }}">
+                <div>
+                  <sc-if value="{{ cartEmpty }}" hint-placeholder-val="{{ true }}">
+                    <div style="border: 1px solid rgba(255,255,255,0.08); padding: 80px 32px; text-align: center;">
+                      <div style="font-size: 40px; color: #ffd100; margin-bottom: 20px;">◆</div>
+                      <p style="color: #8a8a8a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.15em; margin: 0 0 28px;">Your cart is empty — go find something worth building</p>
+                      <button onClick="{{ goCatalog }}" style="background: #ffd100; color: #0f0f0f; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 14px 32px; font-size: 12px; border: 0; border-radius: 2px;">← Continue Shopping</button>
+                    </div>
+                  </sc-if>
+                  <sc-if value="{{ hasCart }}" hint-placeholder-val="{{ false }}">
+                    <div>
+                      <div style="border: 1px solid rgba(255,255,255,0.08);">
+                        <sc-for list="{{ cartItems }}" as="item" hint-placeholder-count="2">
+                          <div style="display: grid; grid-template-columns: 96px 1fr auto; gap: 20px; padding: 20px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+                            <div style="height: 96px; background: #242424; overflow: hidden;">
+                              <img src="{{ item.image }}" alt="{{ item.name }}" style="width: 100%; height: 100%; object-fit: cover;" />
+                            </div>
+                            <div>
+                              <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 900; text-transform: uppercase; line-height: 1.1;">{{ item.name }}</div>
+                              <div style="color: #8a8a8a; font-size: 12px; margin-top: 2px;">{{ item.unitLabel }}</div>
+                              <div style="display: flex; align-items: center; gap: 12px; margin-top: 12px;">
+                                <div style="display: flex; align-items: center; border: 1px solid rgba(255,255,255,0.08);">
+                                  <button onClick="{{ item.dec }}" style="padding: 6px 12px; background: none; border: 0; color: #8a8a8a; font-weight: 700;" style-hover="color: #f0ede8;">−</button>
+                                  <span style="padding: 6px 10px; font-size: 13px; font-weight: 700; min-width: 32px; text-align: center;">{{ item.qty }}</span>
+                                  <button onClick="{{ item.inc }}" style="padding: 6px 12px; background: none; border: 0; color: #8a8a8a; font-weight: 700;" style-hover="color: #f0ede8;">+</button>
+                                </div>
+                                <button onClick="{{ item.remove }}" style="background: none; border: 0; padding: 0; color: #8a8a8a; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em;" style-hover="color: #e3000b;">Remove</button>
+                              </div>
+                            </div>
+                            <div style="text-align: right;">
+                              <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 26px; font-weight: 900;">{{ item.lineTotal }}</div>
+                            </div>
+                          </div>
+                        </sc-for>
+                      </div>
+                      <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 24px;">
+                        <button onClick="{{ goCatalog }}" style="background: none; border: 0; padding: 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a;" style-hover="color: #f0ede8;">← Continue Shopping</button>
+                        <button onClick="{{ toShipping }}" style="background: #ffd100; color: #0f0f0f; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 14px 32px; font-size: 12px; border: 0; border-radius: 2px;">Proceed to Shipping ›</button>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ stepShipping }}" hint-placeholder-val="{{ false }}">
+                <div style="display: flex; flex-direction: column; gap: 32px;">
+                  <div>
+                    <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; margin: 0 0 20px;">Contact Information</h2>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                      <sc-for list="{{ shipFields }}" as="fld" hint-placeholder-count="4">
+                        <div>
+                          <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">{{ fld.label }}</label>
+                          <input value="{{ fld.f.value }}" onChange="{{ fld.f.onChange }}" placeholder="{{ fld.ph }}" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+                  <div>
+                    <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; margin: 0 0 20px;">Shipping Address</h2>
+                    <div style="display: flex; flex-direction: column; gap: 16px;">
+                      <sc-for list="{{ addrFields }}" as="fld" hint-placeholder-count="2">
+                        <div>
+                          <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">{{ fld.label }}</label>
+                          <input value="{{ fld.f.value }}" onChange="{{ fld.f.onChange }}" placeholder="{{ fld.ph }}" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+                        </div>
+                      </sc-for>
+                      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
+                        <div>
+                          <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">{{ cityField.label }}</label>
+                          <input value="{{ cityField.f.value }}" onChange="{{ cityField.f.onChange }}" placeholder="{{ cityField.ph }}" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+                        </div>
+                        <div>
+                          <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">State</label>
+                          <select value="{{ stateField.value }}" onChange="{{ stateField.onChange }}" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;">
+                            <sc-for list="{{ states }}" as="o" hint-placeholder-count="5"><option value="{{ o.value }}">{{ o.label }}</option></sc-for>
+                          </select>
+                        </div>
+                        <div>
+                          <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">{{ zipField.label }}</label>
+                          <input value="{{ zipField.f.value }}" onChange="{{ zipField.f.onChange }}" placeholder="{{ zipField.ph }}" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+                        </div>
+                      </div>
+                      <div>
+                        <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">Country</label>
+                        <select value="{{ countryField.value }}" onChange="{{ countryField.onChange }}" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;">
+                          <sc-for list="{{ countries }}" as="o" hint-placeholder-count="8"><option value="{{ o.value }}">{{ o.label }}</option></sc-for>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; margin: 0 0 20px;">Shipping Method</h2>
+                    <div style="display: flex; flex-direction: column; gap: 12px;">
+                      <sc-for list="{{ shipOptions }}" as="opt" hint-placeholder-count="3">
+                        <button onClick="{{ opt.select }}" style="display: flex; align-items: center; gap: 16px; padding: 16px; text-align: left; width: 100%; border: 1px solid {{ opt.border }}; background: {{ opt.bg }};">
+                          <span style="width: 14px; height: 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.3); background: {{ opt.dot }}; flex-shrink: 0;"></span>
+                          <span style="flex: 1;">
+                            <span style="display: block; font-weight: 700; font-size: 14px; color: #f0ede8;">{{ opt.label }}</span>
+                            <span style="display: block; color: #8a8a8a; font-size: 12px;">{{ opt.time }}</span>
+                          </span>
+                          <span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 16px; color: {{ opt.priceColor }};">{{ opt.priceLabel }}</span>
+                        </button>
+                      </sc-for>
+                    </div>
+                  </div>
+                  <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 8px;">
+                    <button onClick="{{ toCart }}" style="background: none; border: 0; padding: 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a;" style-hover="color: #f0ede8;">← Back to Cart</button>
+                    <button onClick="{{ toPayment }}" style="background: #ffd100; color: #0f0f0f; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 14px 32px; font-size: 12px; border: 0; border-radius: 2px;">Continue to Payment ›</button>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ stepPayment }}" hint-placeholder-val="{{ false }}">
+                <div style="display: flex; flex-direction: column; gap: 32px;">
+                  <div style="border: 1px solid rgba(255,255,255,0.08); padding: 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                    <div>
+                      <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; margin-bottom: 4px;">Shipping to</div>
+                      <div style="font-size: 14px; font-weight: 600; color: #f0ede8;">{{ shipSummary }}</div>
+                    </div>
+                    <button onClick="{{ toShipping }}" style="background: none; border: 0; padding: 0; color: #ffd100; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em;">Edit</button>
+                  </div>
+                  <div>
+                    <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; margin: 0 0 20px;">Card Details</h2>
+                    <div style="display: flex; flex-direction: column; gap: 16px;">
+                      <sc-for list="{{ payFields }}" as="fld" hint-placeholder-count="2">
+                        <div>
+                          <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">{{ fld.label }}</label>
+                          <input value="{{ fld.f.value }}" onChange="{{ fld.f.onChange }}" placeholder="{{ fld.ph }}" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+                        </div>
+                      </sc-for>
+                      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                        <div>
+                          <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">{{ expiryField.label }}</label>
+                          <input value="{{ expiryField.f.value }}" onChange="{{ expiryField.f.onChange }}" placeholder="{{ expiryField.ph }}" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+                        </div>
+                        <div>
+                          <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">{{ cvvField.label }}</label>
+                          <input value="{{ cvvField.f.value }}" onChange="{{ cvvField.f.onChange }}" placeholder="{{ cvvField.ph }}" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; margin: 0 0 20px;">Billing Address</h2>
+                    <label style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px; cursor: pointer;">
+                      <input type="checkbox" checked="{{ sameAsShipping.value }}" onChange="{{ sameAsShipping.onChange }}" style="width: 16px; height: 16px; accent-color: #ffd100;" />
+                      <span style="font-size: 14px; color: #8a8a8a;">Same as shipping address</span>
+                    </label>
+                    <sc-if value="{{ showBilling }}" hint-placeholder-val="{{ false }}">
+                      <div style="display: flex; flex-direction: column; gap: 16px;">
+                        <sc-for list="{{ billingFields }}" as="fld" hint-placeholder-count="3">
+                          <div>
+                            <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">{{ fld.label }}</label>
+                            <input value="{{ fld.f.value }}" onChange="{{ fld.f.onChange }}" placeholder="{{ fld.ph }}" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+                          </div>
+                        </sc-for>
+                      </div>
+                    </sc-if>
+                  </div>
+                  <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 8px;">
+                    <button onClick="{{ toShipping }}" style="background: none; border: 0; padding: 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a;" style-hover="color: #f0ede8;">← Back to Shipping</button>
+                    <button onClick="{{ placeOrder }}" style="background: #ffd100; color: #0f0f0f; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 14px 32px; font-size: 12px; border: 0; border-radius: 2px;">🔒 {{ placeOrderLabel }}</button>
+                  </div>
+                </div>
+              </sc-if>
+            </div>
+
+            <div style="border: 1px solid rgba(255,255,255,0.08); padding: 24px; position: sticky; top: 88px;">
+              <h3 style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; margin: 0 0 20px;">Order Summary</h3>
+              <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 20px;">
+                <sc-for list="{{ summaryLines }}" as="line" hint-placeholder-count="2">
+                  <div style="display: flex; gap: 12px; align-items: center;">
+                    <div style="width: 56px; height: 56px; background: #242424; overflow: hidden; flex-shrink: 0;">
+                      <img src="{{ line.image }}" alt="{{ line.name }}" style="width: 100%; height: 100%; object-fit: cover;" />
+                    </div>
+                    <div style="flex: 1; min-width: 0;">
+                      <div style="font-weight: 600; font-size: 12px; color: #f0ede8; line-height: 1.3;">{{ line.name }}</div>
+                      <div style="color: #8a8a8a; font-size: 10px; margin-top: 2px;">{{ line.qtyLabel }}</div>
+                    </div>
+                    <div style="font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 15px;">{{ line.lineAmount }}</div>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 8px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 16px; font-size: 14px;">
+                <div style="display: flex; justify-content: space-between; color: #8a8a8a;"><span>Subtotal</span><span>{{ coSubtotal }}</span></div>
+                <sc-if value="{{ hasDiscount }}" hint-placeholder-val="{{ false }}">
+                  <div style="display: flex; justify-content: space-between; color: #ffd100;"><span>Promo (ALPINE10)</span><span>{{ coDiscount }}</span></div>
+                </sc-if>
+                <div style="display: flex; justify-content: space-between; color: #8a8a8a;"><span>Shipping</span><span style="color: {{ coShippingColor }};">{{ coShipping }}</span></div>
+                <div style="display: flex; justify-content: space-between; color: #8a8a8a;"><span>Tax (est.)</span><span>{{ coTax }}</span></div>
+                <div style="display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; margin-top: 2px; font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 900; color: #ffd100;"><span>Total</span><span>{{ coTotal }}</span></div>
+              </div>
+              <sc-if value="{{ stepCart }}" hint-placeholder-val="{{ true }}">
+                <div style="margin-top: 20px;">
+                  <div style="display: flex; gap: 8px;">
+                    <input value="{{ promoValue }}" onChange="{{ onPromo }}" placeholder="Promo code" style="flex: 1; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 8px 12px; font-size: 12px; outline: none; text-transform: uppercase; border-radius: 2px;" />
+                    <button onClick="{{ applyPromo }}" style="background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); padding: 8px 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; border-radius: 2px;" style-hover="color: #f0ede8;">Apply</button>
+                  </div>
+                  <sc-if value="{{ promoOk }}" hint-placeholder-val="{{ false }}">
+                    <p style="color: #ffd100; font-size: 10px; margin: 6px 0 0; text-transform: uppercase; letter-spacing: 0.15em;">✓ 10% discount applied</p>
+                  </sc-if>
+                  <sc-if value="{{ promoBad }}" hint-placeholder-val="{{ false }}">
+                    <p style="color: #e3000b; font-size: 10px; margin: 6px 0 0;">Invalid promo code. Try ALPINE10.</p>
+                  </sc-if>
+                </div>
+              </sc-if>
+              <div style="display: flex; align-items: center; gap: 8px; margin-top: 20px; color: #8a8a8a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em;">🔒 Secure checkout · SSL encrypted</div>
+            </div>
+          </div>
+        </section>
+      </sc-if>
+
+      <sc-if value="{{ stepConfirm }}" hint-placeholder-val="{{ false }}">
+        <section style="max-width: 512px; margin: 0 auto; padding: 96px 24px; text-align: center;">
+          <div style="width: 64px; height: 64px; background: #ffd100; border-radius: 999px; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; font-size: 28px; color: #0f0f0f;">✓</div>
+          <div style="color: #ffd100; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 12px;">Order Confirmed</div>
+          <h1 style="font-family: 'Barlow Condensed', sans-serif; font-size: 60px; font-weight: 900; text-transform: uppercase; margin: 0 0 16px; line-height: 1;">You're All Set</h1>
+          <p style="color: #8a8a8a; margin: 0;">Thank you for your order. A confirmation has been sent to <span style="color: #f0ede8; font-weight: 600;">{{ confirmEmail }}</span>.</p>
+          <div style="border: 1px solid rgba(255,255,255,0.08); padding: 20px; margin: 32px 0; text-align: left; display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; justify-content: space-between; font-size: 14px;"><span style="color: #8a8a8a;">Order Number</span><span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 900; color: #f0ede8;">{{ orderNumber }}</span></div>
+            <div style="display: flex; justify-content: space-between; font-size: 14px;"><span style="color: #8a8a8a;">Shipping Method</span><span style="color: #f0ede8; font-weight: 600;">{{ shipMethodLabel }}</span></div>
+            <div style="display: flex; justify-content: space-between; font-size: 14px;"><span style="color: #8a8a8a;">Estimated Delivery</span><span style="color: #ffd100; font-weight: 600;">{{ shipMethodTime }}</span></div>
+            <div style="display: flex; justify-content: space-between; font-size: 14px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 12px;"><span style="color: #8a8a8a;">Total Charged</span><span style="font-family: 'Barlow Condensed', sans-serif; font-weight: 900; color: #f0ede8;">{{ coTotal }}</span></div>
+          </div>
+          <div style="display: flex; gap: 12px; justify-content: center;">
+            <button onClick="{{ goTrack }}" style="border: 1px solid rgba(255,255,255,0.08); background: none; color: #f0ede8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; padding: 14px 24px; font-size: 12px; border-radius: 2px;" style-hover="border-color: #ffd100; color: #ffd100;">Track Order</button>
+            <button onClick="{{ goCatalog }}" style="background: #ffd100; color: #0f0f0f; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 14px 24px; font-size: 12px; border: 0; border-radius: 2px;">Continue Shopping</button>
+          </div>
+        </section>
+      </sc-if>
+    </sc-if>
+
+    <sc-if value="{{ isCollection }}" hint-placeholder-val="{{ false }}">
+      <div style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+        <div style="max-width: 1280px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; gap: 8px; font-size: 10px; color: #8a8a8a; text-transform: uppercase; letter-spacing: 0.15em;">
+          <button onClick="{{ goHome }}" style="background: none; border: 0; padding: 0; color: #8a8a8a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em;" style-hover="color: #f0ede8;">Home</button>
+          <span>›</span>
+          <button onClick="{{ goCollections }}" style="background: none; border: 0; padding: 0; color: #8a8a8a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em;" style-hover="color: #f0ede8;">Collections</button>
+          <span>›</span><span style="color: #f0ede8;">{{ col.label }}</span>
+        </div>
+      </div>
+      <div style="position: relative; height: 320px; overflow: hidden; background: #242424;">
+        <img src="{{ col.image }}" alt="{{ col.label }}" style="width: 100%; height: 100%; object-fit: cover; opacity: 0.3;" />
+        <div style="position: absolute; inset: 0; background: linear-gradient(to right, rgba(15,15,15,0.9), rgba(15,15,15,0.6) 55%, transparent);"></div>
+        <div style="position: absolute; inset: 0; display: flex; align-items: center;">
+          <div style="max-width: 1280px; margin: 0 auto; padding: 0 24px; width: 100%;">
+            <button onClick="{{ goCollections }}" style="background: none; border: 0; padding: 0; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; margin-bottom: 24px; display: block;" style-hover="color: #f0ede8;">← All Collections</button>
+            <div style="color: #ffd100; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 12px;">Collection</div>
+            <h1 style="font-family: 'Barlow Condensed', sans-serif; font-size: 84px; font-weight: 900; text-transform: uppercase; line-height: 1; margin: 0;">{{ col.label }}</h1>
+            <p style="color: #8a8a8a; margin: 16px 0 0; max-width: 512px; line-height: 1.7; text-wrap: pretty;">{{ col.description }}</p>
+          </div>
+        </div>
+      </div>
+      <section style="max-width: 1280px; margin: 0 auto; padding: 48px 24px 112px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+          <span style="color: #8a8a8a; font-size: 14px;">{{ col.countLabel }}</span>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span style="color: #8a8a8a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.15em;">Sort</span>
+            <select value="{{ sortValue }}" onChange="{{ onSort }}" style="background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; font-size: 12px; text-transform: uppercase; letter-spacing: 0.15em; padding: 8px 12px; outline: none; border-radius: 2px;">
+              <sc-for list="{{ sortOptions }}" as="o" hint-placeholder-count="4"><option value="{{ o.value }}">{{ o.label }}</option></sc-for>
+            </select>
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;">
+          <sc-for list="{{ col.products }}" as="p" hint-placeholder-count="3">
+            <div style="background: #181818; border: 1px solid rgba(255,255,255,0.08); overflow: hidden; transition: border-color 0.3s;" style-hover="border-color: rgba(255,209,0,0.35);">
+              <button onClick="{{ p.open }}" style="display: block; position: relative; height: 224px; width: 100%; overflow: hidden; background: #242424; border: 0; padding: 0;">
+                <img src="{{ p.image }}" alt="{{ p.name }}" style="width: 100%; height: 100%; object-fit: cover;" />
+                <sc-if value="{{ p.hasBadge }}" hint-placeholder-val="{{ true }}">
+                  <div style="position: absolute; top: 12px; left: 12px;">
+                    <span style="font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 4px 10px; background: {{ p.badgeBg }}; color: {{ p.badgeFg }};">{{ p.badge }}</span>
+                  </div>
+                </sc-if>
+              </button>
+              <div style="padding: 20px;">
+                <div style="color: #8a8a8a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 6px;">{{ p.category }}</div>
+                <button onClick="{{ p.open }}" style="background: none; border: 0; padding: 0; text-align: left; font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; line-height: 1.05; color: #f0ede8; margin-bottom: 8px;" style-hover="color: #ffd100;">{{ p.name }}</button>
+                <p style="color: #8a8a8a; font-size: 12px; line-height: 1.6; margin: 0 0 20px; text-wrap: pretty;">{{ p.shortDescription }}</p>
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                  <div>
+                    <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 24px; font-weight: 900;">{{ p.priceStr }}</div>
+                    <div style="color: #8a8a8a; font-size: 10px; margin-top: 2px;">{{ p.piecesStr }}</div>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button onClick="{{ p.open }}" style="padding: 10px 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; border: 1px solid rgba(255,255,255,0.08); background: none; color: #8a8a8a; border-radius: 2px;" style-hover="border-color: #ffd100; color: #ffd100;">Details</button>
+                    <button onClick="{{ p.add }}" style="padding: 10px 12px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; border: 0; border-radius: 2px; background: {{ p.addBg }}; color: {{ p.addFg }};">{{ p.addShort }}</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+        <sc-if value="{{ col.empty }}" hint-placeholder-val="{{ false }}">
+          <div style="text-align: center; padding: 128px 0; color: #8a8a8a;">
+            <div style="font-size: 40px; opacity: 0.25; margin-bottom: 20px;">◻</div>
+            <p style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.15em;">No sets in this collection yet — check back soon</p>
+          </div>
+        </sc-if>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ hasPageHeader }}" hint-placeholder-val="{{ false }}">
+      <div>
+        <div style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+          <div style="max-width: 1280px; margin: 0 auto; padding: 12px 24px; font-size: 10px; color: #8a8a8a; text-transform: uppercase; letter-spacing: 0.15em;">{{ pageHeader.crumbs }}</div>
+        </div>
+        <div style="position: relative; overflow: hidden; background: rgba(30,30,30,0.2); border-bottom: 1px solid rgba(255,255,255,0.08); min-height: {{ pageHeader.height }}; padding: {{ pageHeader.pad }};">
+          <sc-if value="{{ pageHeader.hasImage }}" hint-placeholder-val="{{ false }}">
+            <div style="position: absolute; inset: 0;">
+              <img src="{{ pageHeader.image }}" alt="" aria-hidden="true" style="width: 100%; height: 100%; object-fit: cover; opacity: 0.2;" />
+              <div style="position: absolute; inset: 0; background: linear-gradient(to right, rgba(15,15,15,0.95), rgba(15,15,15,0.7) 55%, transparent);"></div>
+            </div>
+          </sc-if>
+          <div style="position: relative; z-index: 10; max-width: 1280px; margin: 0 auto; padding: 0 24px; height: 100%; display: flex; flex-direction: column; justify-content: center;">
+            <div style="color: #ffd100; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 12px;">{{ pageHeader.eyebrow }}</div>
+            <h1 style="font-family: 'Barlow Condensed', sans-serif; font-size: 76px; font-weight: 900; text-transform: uppercase; line-height: 0.95; margin: 0; color: #f0ede8;">{{ pageHeader.title }}</h1>
+            <sc-if value="{{ pageHeader.hasSubtitle }}" hint-placeholder-val="{{ true }}">
+              <p style="color: #8a8a8a; margin: 16px 0 0; max-width: 576px; font-size: 16px; line-height: 1.7; text-wrap: pretty;">{{ pageHeader.subtitle }}</p>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isContentPage }}" hint-placeholder-val="{{ false }}">
+      <section style="max-width: {{ pageHeader.maxWidth }}; margin: 0 auto; padding: 64px 24px 112px;">
+        <sc-for list="{{ pageSections }}" as="sec" hint-placeholder-count="3">
+          <div style="margin-bottom: {{ sec.wrapMargin }};">
+
+            <sc-if value="{{ sec.isHeading }}" hint-placeholder-val="{{ false }}">
+              <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 34px; font-weight: 900; text-transform: uppercase; margin: 0; color: {{ sec.headingColor }}; padding-bottom: {{ sec.headingPad }}; border-bottom: {{ sec.headingRule }};">{{ sec.title }}</h2>
+            </sc-if>
+
+            <sc-if value="{{ sec.isCards }}" hint-placeholder-val="{{ false }}">
+              <div style="display: grid; grid-template-columns: {{ sec.gridCols }}; gap: 16px;">
+                <sc-for list="{{ sec.items }}" as="item" hint-placeholder-count="4">
+                  <button onClick="{{ item.go }}" style="display: block; width: 100%; padding: 24px; text-align: {{ item.align }}; background: none; border: 1px solid {{ item.border }}; transition: border-color 0.3s;" style-hover="border-color: rgba(255,209,0,0.35);">
+                    <sc-if value="{{ item.hasIcon }}" hint-placeholder-val="{{ true }}">
+                      <div style="color: #ffd100; font-size: 24px; margin-bottom: 16px;">{{ item.icon }}</div>
+                    </sc-if>
+                    <sc-if value="{{ item.hasEyebrow }}" hint-placeholder-val="{{ false }}">
+                      <div style="color: #ffd100; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 12px;">{{ item.eyebrow }}</div>
+                    </sc-if>
+                    <span style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 8px;">
+                      <h3 style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; margin: 0; line-height: 1.1; color: #f0ede8;">{{ item.title }}</h3>
+                      <sc-if value="{{ item.hasHeaderCta }}" hint-placeholder-val="{{ false }}">
+                        <span onClick="{{ item.headerCtaGo }}" style="background: #ffd100; color: #0f0f0f; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; padding: 8px 16px; font-size: 12px; border-radius: 2px; flex-shrink: 0; white-space: nowrap;">{{ item.headerCtaLabel }}</span>
+                      </sc-if>
+                    </span>
+                    <sc-if value="{{ item.hasMeta }}" hint-placeholder-val="{{ false }}">
+                      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
+                        <span style="color: #ffd100; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em;">{{ item.meta1 }}</span>
+                        <span style="color: #8a8a8a; font-size: 12px;">· {{ item.meta2 }}</span>
+                      </div>
+                    </sc-if>
+                    <p style="color: #8a8a8a; font-size: 14px; line-height: 1.7; margin: 0; text-wrap: pretty;">{{ item.body }}</p>
+                    <sc-if value="{{ item.hasNote }}" hint-placeholder-val="{{ false }}">
+                      <p style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; margin: 12px 0 0;">{{ item.note }}</p>
+                    </sc-if>
+                    <sc-if value="{{ item.hasEmail }}" hint-placeholder-val="{{ false }}">
+                      <p style="font-size: 14px; margin: 16px 0 0; color: #8a8a8a;">Email: <span style="color: #ffd100; font-weight: 600;">{{ item.email }}</span></p>
+                    </sc-if>
+                    <sc-if value="{{ item.hasBullets }}" hint-placeholder-val="{{ false }}">
+                      <div style="margin-top: 16px;">
+                        <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; margin-bottom: 8px;">{{ item.bulletsTitle }}</div>
+                        <div style="display: flex; flex-direction: column; gap: 6px;">
+                          <sc-for list="{{ item.bullets }}" as="b" hint-placeholder-count="4">
+                            <div style="display: flex; gap: 8px; font-size: 12px; color: #8a8a8a;"><span style="color: #ffd100;">◆</span> {{ b.label }}</div>
+                          </sc-for>
+                        </div>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ item.hasCta }}" hint-placeholder-val="{{ false }}">
+                      <span onClick="{{ item.ctaGo }}" style="display: inline-block; margin-top: 16px; color: #ffd100; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em;">{{ item.ctaLabel }}</span>
+                    </sc-if>
+                  </button>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ sec.isChecks }}" hint-placeholder-val="{{ false }}">
+              <div style="border: 1px solid rgba(255,255,255,0.08); padding: {{ sec.checksPad }};">
+                <sc-if value="{{ sec.hasTitle }}" hint-placeholder-val="{{ false }}">
+                  <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 34px; font-weight: 900; text-transform: uppercase; margin: 0 0 24px;">{{ sec.title }}</h2>
+                </sc-if>
+                <div style="display: grid; grid-template-columns: {{ sec.gridCols }}; gap: 12px;">
+                  <sc-for list="{{ sec.items }}" as="item" hint-placeholder-count="6">
+                    <div style="display: flex; align-items: flex-start; gap: 12px; font-size: 14px; color: #8a8a8a;"><span style="color: {{ item.markColor }}; flex-shrink: 0;">{{ item.mark }}</span><span>{{ item.label }}</span></div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ sec.isAccordion }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                <sc-for list="{{ sec.items }}" as="item" hint-placeholder-count="4">
+                  <div style="border: 1px solid {{ item.border }};">
+                    <button onClick="{{ item.toggle }}" style="width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; text-align: left; background: none; border: 0;">
+                      <span style="font-weight: 600; font-size: 14px; color: #f0ede8;">{{ item.q }}</span>
+                      <span style="color: {{ item.color }}; transform: {{ item.rotate }}; transition: transform 0.2s; flex-shrink: 0;">⌄</span>
+                    </button>
+                    <sc-if value="{{ item.open }}" hint-placeholder-val="{{ false }}">
+                      <div style="padding: 0 20px 20px;">
+                        <p style="color: #8a8a8a; font-size: 14px; line-height: 1.7; margin: 0; text-wrap: pretty;">{{ item.a }}</p>
+                      </div>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ sec.isSplit }}" hint-placeholder-val="{{ false }}">
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+                <div>
+                  <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 26px; font-weight: 900; text-transform: uppercase; margin: 0 0 24px;">{{ sec.left.title }}</h2>
+                  <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <sc-for list="{{ sec.left.items }}" as="item" hint-placeholder-count="4">
+                      <div style="display: flex; align-items: flex-start; gap: 12px; font-size: 14px; color: #8a8a8a;"><span style="color: {{ item.markColor }}; flex-shrink: 0;">{{ item.mark }}</span><span>{{ item.label }}</span></div>
+                    </sc-for>
+                  </div>
+                </div>
+                <div>
+                  <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 26px; font-weight: 900; text-transform: uppercase; margin: 0 0 24px;">{{ sec.right.title }}</h2>
+                  <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <sc-for list="{{ sec.right.items }}" as="item" hint-placeholder-count="5">
+                      <div style="display: flex; align-items: flex-start; gap: 12px; font-size: 14px; color: #8a8a8a;"><span style="color: {{ item.markColor }}; flex-shrink: 0;">{{ item.mark }}</span><span>{{ item.label }}</span></div>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ sec.isNumbered }}" hint-placeholder-val="{{ false }}">
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+                <sc-for list="{{ sec.items }}" as="item" hint-placeholder-count="4">
+                  <div style="border: 1px solid rgba(255,255,255,0.08); padding: 24px;">
+                    <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 52px; font-weight: 900; color: rgba(255,255,255,0.12); line-height: 1; margin-bottom: 16px;">{{ item.number }}</div>
+                    <h3 style="font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 900; text-transform: uppercase; margin: 0 0 8px;">{{ item.title }}</h3>
+                    <p style="color: #8a8a8a; font-size: 14px; line-height: 1.7; margin: 0; text-wrap: pretty;">{{ item.body }}</p>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ sec.isCallout }}" hint-placeholder-val="{{ false }}">
+              <div style="border-left: {{ sec.calloutRule }}; border: {{ sec.calloutBox }}; padding: {{ sec.calloutPad }}; text-align: {{ sec.calloutAlign }};">
+                <sc-if value="{{ sec.hasTitle }}" hint-placeholder-val="{{ false }}">
+                  <h3 style="font-family: 'Barlow Condensed', sans-serif; font-size: 26px; font-weight: 900; text-transform: uppercase; margin: 0 0 12px;">{{ sec.title }}</h3>
+                </sc-if>
+                <p style="color: #8a8a8a; font-size: 14px; line-height: 1.7; margin: 0; text-wrap: pretty;">{{ sec.body }}</p>
+                <sc-if value="{{ sec.hasButtons }}" hint-placeholder-val="{{ false }}">
+                  <div style="display: flex; flex-wrap: wrap; gap: 16px; margin-top: 24px; justify-content: {{ sec.calloutJustify }};">
+                    <sc-for list="{{ sec.buttons }}" as="btn" hint-placeholder-count="1">
+                      <button onClick="{{ btn.go }}" style="font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; padding: 14px 24px; font-size: 12px; border-radius: 2px; background: {{ btn.bg }}; color: {{ btn.fg }}; border: 1px solid {{ btn.border }};">{{ btn.label }}</button>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ sec.isCta }}" hint-placeholder-val="{{ false }}">
+              <div style="text-align: {{ sec.ctaAlign }}; border: {{ sec.ctaBox }}; padding: {{ sec.ctaPad }};">
+                <sc-if value="{{ sec.hasNote }}" hint-placeholder-val="{{ false }}">
+                  <p style="color: #8a8a8a; font-size: 14px; margin: 0 0 16px;">{{ sec.note }}</p>
+                </sc-if>
+                <div style="display: flex; flex-wrap: wrap; gap: 16px; justify-content: {{ sec.ctaJustify }};">
+                  <sc-for list="{{ sec.buttons }}" as="btn" hint-placeholder-count="2">
+                    <button onClick="{{ btn.go }}" style="font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; padding: 14px 24px; font-size: 12px; border-radius: 2px; background: {{ btn.bg }}; color: {{ btn.fg }}; border: 1px solid {{ btn.border }};">{{ btn.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ sec.isStats }}" hint-placeholder-val="{{ false }}">
+              <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; border-top: 1px solid rgba(255,255,255,0.08); border-bottom: 1px solid rgba(255,255,255,0.08); padding: 48px 0;">
+                <sc-for list="{{ sec.items }}" as="item" hint-placeholder-count="4">
+                  <div style="text-align: center;">
+                    <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 40px; font-weight: 900; color: #ffd100; line-height: 1;">{{ item.value }}</div>
+                    <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; margin-top: 8px;">{{ item.label }}</div>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ sec.isRows }}" hint-placeholder-val="{{ false }}">
+              <div style="display: flex; flex-direction: column; gap: {{ sec.rowsGap }};">
+                <sc-for list="{{ sec.items }}" as="item" hint-placeholder-count="5">
+                  <div style="border: 1px solid rgba(255,255,255,0.08); padding: 20px 24px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
+                    <div style="flex: 1;">
+                      <sc-if value="{{ item.hasTag }}" hint-placeholder-val="{{ false }}">
+                        <span style="display: inline-block; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; color: #ffd100; margin-bottom: 8px;">{{ item.tag }}<span style="color: #8a8a8a; font-weight: 400;"> · {{ item.meta }}</span></span>
+                      </sc-if>
+                      <div style="font-weight: 700; font-size: 14px; color: #f0ede8; line-height: 1.35;">{{ item.title }}</div>
+                      <sc-if value="{{ item.hasSub }}" hint-placeholder-val="{{ false }}">
+                        <div style="color: #8a8a8a; font-size: 12px; margin-top: 4px;">{{ item.sub }}</div>
+                      </sc-if>
+                      <sc-if value="{{ item.hasBody }}" hint-placeholder-val="{{ false }}">
+                        <p style="color: #8a8a8a; font-size: 12px; line-height: 1.6; margin: 8px 0 0; text-wrap: pretty;">{{ item.body }}</p>
+                      </sc-if>
+                    </div>
+                    <span style="color: #8a8a8a; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; flex-shrink: 0;">{{ item.right }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ sec.isTeam }}" hint-placeholder-val="{{ false }}">
+              <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px;">
+                <sc-for list="{{ sec.items }}" as="m" hint-placeholder-count="6">
+                  <div style="border: 1px solid rgba(255,255,255,0.08); overflow: hidden; transition: border-color 0.3s;" style-hover="border-color: rgba(255,209,0,0.35);">
+                    <div style="position: relative; height: 208px; overflow: hidden; background: #242424;">
+                      <img src="{{ m.image }}" alt="{{ m.name }}" style="width: 100%; height: 100%; object-fit: cover; opacity: 0.6;" />
+                      <div style="position: absolute; inset: 0; background: linear-gradient(to top, #181818, rgba(24,24,24,0.3) 55%, transparent);"></div>
+                      <div style="position: absolute; bottom: 16px; left: 16px;">
+                        <span style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; background: rgba(15,15,15,0.7); padding: 4px 10px; border: 1px solid rgba(255,255,255,0.08);">{{ m.yearsLabel }}</span>
+                      </div>
+                    </div>
+                    <div style="padding: 24px;">
+                      <div style="color: #ffd100; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 6px;">{{ m.specialty }}</div>
+                      <h3 style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; line-height: 1.1; margin: 0;">{{ m.name }}</h3>
+                      <div style="color: #8a8a8a; font-size: 12px; margin: 4px 0 16px;">{{ m.role }}</div>
+                      <p style="color: #8a8a8a; font-size: 12px; line-height: 1.7; margin: 0 0 16px; text-wrap: pretty;">{{ m.bio }}</p>
+                      <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; margin-bottom: 8px;">Sets Designed</div>
+                      <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                        <sc-for list="{{ m.tags }}" as="t" hint-placeholder-count="3">
+                          <span style="font-size: 10px; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); padding: 2px 8px; color: #8a8a8a;">{{ t.label }}</span>
+                        </sc-for>
+                      </div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ sec.isQuotes }}" hint-placeholder-val="{{ false }}">
+              <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
+                <sc-for list="{{ sec.items }}" as="q" hint-placeholder-count="3">
+                  <div style="border: 1px solid rgba(255,255,255,0.08); padding: 24px;">
+                    <div style="color: #ffd100; font-size: 12px; margin-bottom: 12px;">★★★★★</div>
+                    <blockquote style="color: #8a8a8a; font-size: 14px; line-height: 1.7; margin: 0 0 16px; font-style: italic; text-wrap: pretty;">{{ q.quote }}</blockquote>
+                    <div style="font-weight: 700; font-size: 12px; color: #f0ede8;">{{ q.name }}</div>
+                    <div style="color: #8a8a8a; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em;">{{ q.handle }}</div>
+                    <div style="color: #ffd100; font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; margin-top: 4px;">{{ q.set }}</div>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ sec.isStory }}" hint-placeholder-val="{{ false }}">
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start;">
+                <div>
+                  <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 46px; font-weight: 900; text-transform: uppercase; line-height: 1.05; margin: 0 0 24px;">{{ sec.title1 }}<br /><span style="color: #ffd100;">{{ sec.title2 }}</span></h2>
+                  <div style="display: flex; flex-direction: column; gap: 16px;">
+                    <sc-for list="{{ sec.paras }}" as="para" hint-placeholder-count="3">
+                      <p style="color: #8a8a8a; font-size: 14px; line-height: 1.7; margin: 0; text-wrap: pretty;">{{ para.t }}</p>
+                    </sc-for>
+                  </div>
+                </div>
+                <div style="position: relative;">
+                  <img src="{{ sec.image }}" alt="" style="width: 100%; object-fit: cover; background: #242424;" />
+                  <div style="position: absolute; bottom: -16px; right: -16px; width: 96px; height: 96px; border: 1px solid rgba(255,209,0,0.3); pointer-events: none;"></div>
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ sec.isBanner }}" hint-placeholder-val="{{ false }}">
+              <div style="background: #ffd100; padding: 48px 40px; text-align: center;">
+                <h3 style="font-family: 'Barlow Condensed', sans-serif; font-size: 46px; font-weight: 900; text-transform: uppercase; color: #0f0f0f; margin: 0 0 12px; line-height: 1;">{{ sec.title }}</h3>
+                <p style="color: rgba(15,15,15,0.75); font-size: 14px; margin: 0 auto 24px; max-width: 448px; line-height: 1.7;">{{ sec.body }}</p>
+                <div style="display: flex; flex-wrap: wrap; gap: 12px; justify-content: center;">
+                  <sc-for list="{{ sec.buttons }}" as="btn" hint-placeholder-count="2">
+                    <button style="font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 14px 24px; font-size: 12px; border-radius: 2px; background: {{ btn.bannerBg }}; color: {{ btn.bannerFg }}; border: 1px solid {{ btn.bannerBorder }};">{{ btn.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+          </div>
+        </sc-for>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isContact }}" hint-placeholder-val="{{ false }}">
+      <section style="max-width: 1024px; margin: 0 auto; padding: 64px 24px 112px; display: grid; grid-template-columns: 1fr 2fr; gap: 48px; align-items: start;">
+        <div>
+          <h2 style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; margin: 0 0 24px;">Get in Touch</h2>
+          <div style="display: flex; flex-direction: column; gap: 24px;">
+            <sc-for list="{{ contactInfo }}" as="info" hint-placeholder-count="3">
+              <div style="border: 1px solid rgba(255,255,255,0.08); padding: 16px;">
+                <div style="color: #ffd100; font-size: 18px; margin-bottom: 8px;">{{ info.icon }}</div>
+                <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; margin-bottom: 2px;">{{ info.label }}</div>
+                <div style="font-weight: 600; font-size: 14px; color: #f0ede8;">{{ info.value }}</div>
+                <div style="color: #8a8a8a; font-size: 12px; margin-top: 2px;">{{ info.sub }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="margin-top: 32px; border-left: 2px solid #ffd100; padding-left: 16px;">
+            <p style="color: #8a8a8a; font-size: 12px; line-height: 1.7; margin: 0;">For commission build inquiries, please select "Commission Build Inquiry" from the department dropdown and include as much detail as possible about your vision.</p>
+          </div>
+        </div>
+        <div>
+          <sc-if value="{{ contactSent }}" hint-placeholder-val="{{ false }}">
+            <div style="border: 1px solid rgba(255,209,0,0.4); padding: 64px 40px; text-align: center;">
+              <div style="width: 56px; height: 56px; background: #ffd100; border-radius: 999px; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; font-size: 24px; color: #0f0f0f;">✓</div>
+              <h3 style="font-family: 'Barlow Condensed', sans-serif; font-size: 30px; font-weight: 900; text-transform: uppercase; margin: 0 0 12px;">Message Sent</h3>
+              <p style="color: #8a8a8a; font-size: 14px; line-height: 1.7; margin: 0 auto; max-width: 384px;">Thanks for reaching out. We'll get back to you at <span style="color: #f0ede8; font-weight: 700;">{{ contactEmailShown }}</span> within one business day.</p>
+            </div>
+          </sc-if>
+          <sc-if value="{{ contactIdle }}" hint-placeholder-val="{{ true }}">
+            <div style="display: flex; flex-direction: column; gap: 20px;">
+              <div>
+                <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">Department</label>
+                <select value="{{ contactDept.value }}" onChange="{{ contactDept.onChange }}" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;">
+                  <sc-for list="{{ contactDepts }}" as="o" hint-placeholder-count="8"><option value="{{ o.value }}">{{ o.label }}</option></sc-for>
+                </select>
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <div>
+                  <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">Your Name</label>
+                  <input value="{{ contactName.value }}" onChange="{{ contactName.onChange }}" placeholder="First and last name" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+                </div>
+                <div>
+                  <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">Email Address</label>
+                  <input value="{{ contactEmail.value }}" onChange="{{ contactEmail.onChange }}" placeholder="your@email.com" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+                </div>
+              </div>
+              <div>
+                <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">Order Number (optional)</label>
+                <input value="{{ contactOrder.value }}" onChange="{{ contactOrder.onChange }}" placeholder="ABE-2026-XXXXX" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+              </div>
+              <div>
+                <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">Message</label>
+                <textarea value="{{ contactMessage.value }}" onChange="{{ contactMessage.onChange }}" placeholder="Tell us how we can help…" rows="6" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; resize: none; border-radius: 2px;"></textarea>
+              </div>
+              <button onClick="{{ sendContact }}" style="width: 100%; background: #ffd100; color: #0f0f0f; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 14px; font-size: 12px; border: 0; border-radius: 2px;">{{ contactSubmitLabel }}</button>
+            </div>
+          </sc-if>
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isTrack }}" hint-placeholder-val="{{ false }}">
+      <section style="max-width: 672px; margin: 0 auto; padding: 64px 24px 112px;">
+        <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 48px;">
+          <div>
+            <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">Order Number</label>
+            <input value="{{ trackNumber.value }}" onChange="{{ trackNumber.onChange }}" placeholder="e.g. ABE-2026-08421" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+          </div>
+          <div>
+            <label style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; display: block; margin-bottom: 8px;">Email Address</label>
+            <input value="{{ trackEmail.value }}" onChange="{{ trackEmail.onChange }}" placeholder="The email used at checkout" style="width: 100%; background: #1e1e1e; border: 1px solid rgba(255,255,255,0.08); color: #f0ede8; padding: 12px 16px; font-size: 14px; outline: none; border-radius: 2px;" />
+          </div>
+          <button onClick="{{ doTrack }}" style="width: 100%; background: #ffd100; color: #0f0f0f; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 14px; font-size: 12px; border: 0; border-radius: 2px;">{{ trackLabel }}</button>
+        </div>
+
+        <sc-if value="{{ trackIdle }}" hint-placeholder-val="{{ true }}">
+          <p style="text-align: center; color: #8a8a8a; font-size: 12px;">Your order number appears in your confirmation email — look for something like <span style="color: #f0ede8;">ABE-2026-XXXXX</span>.</p>
+        </sc-if>
+
+        <sc-if value="{{ trackNotFound }}" hint-placeholder-val="{{ false }}">
+          <div style="border: 1px solid rgba(255,255,255,0.08); padding: 40px; text-align: center;">
+            <div style="font-size: 36px; color: #8a8a8a; opacity: 0.4; margin-bottom: 16px;">◻</div>
+            <h3 style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; margin: 0 0 8px;">Order Not Found</h3>
+            <p style="color: #8a8a8a; font-size: 14px; line-height: 1.7; margin: 0 0 24px;">We couldn't find an order matching that number and email. Double-check the details or contact our support team.</p>
+            <button onClick="{{ goContact }}" style="background: #ffd100; color: #0f0f0f; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; padding: 10px 20px; font-size: 12px; border: 0; border-radius: 2px;">Contact Support</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ trackFound }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <div style="border: 1px solid rgba(255,209,0,0.4); padding: 24px; margin-bottom: 32px;">
+              <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; gap: 16px;">
+                <div>
+                  <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; margin-bottom: 4px;">Order</div>
+                  <div style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900;">{{ order.number }}</div>
+                </div>
+                <span style="background: #ffd100; color: #0f0f0f; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em; padding: 6px 12px;">⛟ {{ order.status }}</span>
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 14px;">
+                <div>
+                  <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; margin-bottom: 2px;">Item</div>
+                  <div style="font-weight: 600; color: #f0ede8;">{{ order.product }}</div>
+                </div>
+                <div>
+                  <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; margin-bottom: 2px;">Carrier</div>
+                  <div style="font-weight: 600; color: #f0ede8;">{{ order.carrier }} · {{ order.tracking }}</div>
+                </div>
+                <div>
+                  <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; margin-bottom: 2px;">Order Date</div>
+                  <div style="font-weight: 600; color: #f0ede8;">{{ order.placed }}</div>
+                </div>
+                <div>
+                  <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.15em; color: #8a8a8a; margin-bottom: 2px;">Estimated Arrival</div>
+                  <div style="font-weight: 600; color: #ffd100;">{{ order.eta }}</div>
+                </div>
+              </div>
+            </div>
+            <h3 style="font-family: 'Barlow Condensed', sans-serif; font-size: 22px; font-weight: 900; text-transform: uppercase; margin: 0 0 24px;">Shipment Progress</h3>
+            <div>
+              <sc-for list="{{ orderSteps }}" as="st" hint-placeholder-count="6">
+                <div style="display: flex; gap: 16px;">
+                  <div style="display: flex; flex-direction: column; align-items: center;">
+                    <div style="width: 28px; height: 28px; border-radius: 999px; border: 2px solid {{ st.border }}; background: {{ st.bg }}; color: {{ st.markColor }}; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0;">{{ st.mark }}</div>
+                    <sc-if value="{{ st.notLast }}" hint-placeholder-val="{{ true }}">
+                      <div style="width: 1px; flex: 1; margin: 4px 0; min-height: 32px; background: {{ st.barBg }};"></div>
+                    </sc-if>
+                  </div>
+                  <div style="padding-bottom: 24px;">
+                    <div style="font-weight: 600; font-size: 14px; color: {{ st.labelColor }};">{{ st.label }}</div>
+                    <div style="font-size: 10px; color: #8a8a8a; text-transform: uppercase; letter-spacing: 0.15em; margin-top: 2px;">{{ st.date }}</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+      </section>
+    </sc-if>
+
+  </main>
+
+  <footer style="border-top: 1px solid rgba(255,255,255,0.08); padding: 64px 0 40px;">
+    <div style="max-width: 1280px; margin: 0 auto; padding: 0 24px;">
+      <div style="display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 48px; margin-bottom: 56px;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px;">
+            <svg width="28" height="28" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+              <rect width="36" height="36" rx="3" fill="#111111"></rect>
+              <circle cx="12" cy="12" r="5.5" fill="#FFD100"></circle>
+              <circle cx="24" cy="12" r="5.5" fill="#FFD100"></circle>
+              <circle cx="12" cy="24" r="5.5" fill="#FFD100"></circle>
+              <circle cx="24" cy="24" r="5.5" fill="#FFD100"></circle>
+            </svg>
+            <span style="font-family: 'Barlow Condensed', sans-serif; font-size: 19px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.15em;">Alpine Brick</span>
+          </div>
+          <p style="color: #8a8a8a; font-size: 14px; line-height: 1.7; margin: 0; text-wrap: pretty;">Custom-designed LEGO sets for AFOLs and fans who refuse to settle for off-the-shelf. Buy, sell, and trade with the community.</p>
+        </div>
+        <sc-for list="{{ footerCols }}" as="col" hint-placeholder-count="3">
+          <div>
+            <div style="font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; font-size: 10px; color: #f0ede8; margin-bottom: 16px;">{{ col.heading }}</div>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <sc-for list="{{ col.links }}" as="link" hint-placeholder-count="5">
+                <button onClick="{{ link.go }}" style="background: none; border: 0; padding: 0; text-align: left; color: #8a8a8a; font-size: 14px;" style-hover="color: #f0ede8;">{{ link.label }}</button>
+              </sc-for>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+      <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 32px; display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+        <div style="color: #8a8a8a; font-size: 12px;">© 2026 Alpine Brick Exchange™. All rights reserved. Not affiliated with the LEGO Group.</div>
+        <div style="display: flex; align-items: center; gap: 24px;">
+          <sc-for list="{{ legalLinks }}" as="l" hint-placeholder-count="3">
+            <span style="color: #8a8a8a; font-size: 12px;">{{ l.label }}</span>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </footer>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1440, &quot;height&quot;: 1000}}">
+const B = "https://images.unsplash.com/photo-";
+const IMG = (id) => `${B}${id}?w=900&h=720&fit=crop&auto=format`;
+
+const PRODUCTS = [
+  { id: 1, name: "Millennium City Skyline", category: "Architecture", pieces: 2847, price: 189, badge: "Best Seller",
+    images: ["1774223638287-021fed6e3b3d","1760883786219-166f9a0398f1","1587654780291-39c9404d746b","1631106254201-ffbee2305c5b"].map(IMG),
+    description: "A sprawling metropolis skyline featuring iconic towers, suspension bridges, and hidden details throughout every city block.",
+    longDescription: "The Millennium City Skyline is our most ambitious architectural build to date. Meticulously designed over eight months by our AFOL team, this set captures the energy of a thriving modern city in extraordinary brick detail. From the interlocking street-level shops to the penthouse rooftop gardens crowning the tallest tower, every layer rewards closer inspection. The suspension bridge connecting the two main districts is fully poseable, and the waterfront district includes a working drawbridge mechanism hidden beneath the promenade.",
+    features: ["Fully detailed street-level shopfronts with opening doors","Poseable suspension bridge with working cable tension mechanism","Hidden drawbridge mechanism in the waterfront district","Rooftop gardens with micro-scale trees and benches","Modular base design — expand the skyline with future sets","Display stand and city map tile included"],
+    includes: ["6 exclusive minifigures (Mayor, Architect, Street vendor, Tourist ×2, Police officer)","Display nameplate","Illustrated builder's guide (280 pages)","City district map art print","Numbered certificate of authenticity"],
+    difficulty: "Expert", ageRecommendation: "16+", dimensions: "68 × 32 × 48 cm", setNumber: "ABE-1001",
+    builderNotes: "We struggled with the bridge suspension cables for weeks before landing on a SNOT technique that holds tension without any non-standard parts. The waterfront drawbridge was a late addition — once we got it working, we had to redesign the entire promenade around it. Worth every rebuild.",
+    rating: 4.9, reviewCount: 214 },
+  { id: 2, name: "Deep Sea Explorer Sub", category: "Ocean", pieces: 1204, price: 94, badge: "New",
+    images: ["1631106254201-ffbee2305c5b","1620309668391-26ac1c90f61b","1633469924738-52101af51d87","1644175897056-50f4d3a9a827"].map(IMG),
+    description: "Dive into the abyss with a fully-detailed research submarine, underwater station, and articulated mechanical arm.",
+    longDescription: "The Deep Sea Explorer Sub began as a sketch on a napkin at a LEGO Fan convention and grew into one of our most technically impressive builds. The submarine hull uses a continuous SNOT curve across 140 bricks to achieve its hydrodynamic silhouette — no flat panels in sight. The accompanying research station clips onto the sub at three docking points and extends into a modular seafloor base with coral formations, a treasure wreck section, and a glowing crystal cave built entirely from transparent bricks.",
+    features: ["Continuous curved hull — no flat panel sections","Articulated 3-axis mechanical arm with claw","Detachable research station with 3 docking clamps","Transparent brick crystal cave section","Coral reef micro-landscape with printed sea floor tiles","Interior crew cabin with instrument panel details"],
+    includes: ["4 minifigures (Research pilot, Marine biologist, Engineer, Deep sea diver)","Diving equipment accessories pack","Illustrated builder's guide (180 pages)","Numbered certificate of authenticity"],
+    difficulty: "Intermediate", ageRecommendation: "12+", dimensions: "54 × 18 × 24 cm", setNumber: "ABE-2001",
+    builderNotes: "The curved hull took three prototypes to get right. We went through about 400 test bricks figuring out the SNOT offset angles before the seams disappeared. The crystal cave was added in week twelve when we realized the seafloor base needed something that would photograph brilliantly under a desk lamp.",
+    rating: 4.8, reviewCount: 97 },
+  { id: 3, name: "Dragon Fortress", category: "Fantasy", pieces: 3156, price: 249, badge: "Limited",
+    images: ["1633469924738-52101af51d87","1644175897056-50f4d3a9a827","1631106256072-54c89defe828","1587654780291-39c9404d746b"].map(IMG),
+    description: "Ancient stone walls, a fire-breathing dragon minifig, and seven secret passages hidden inside this epic castle build.",
+    longDescription: "Dragon Fortress is our flagship fantasy build — three years of concept sketches distilled into 3,156 bricks of battlements, towers, and secrets. The fortress is split across two levels: a lower courtyard with stables, a forge, and a dungeon, and an upper keep with the throne room, a great hall, and the dragon's lair. Every wall section hinges open to reveal the interior, and the seven secret passages are genuinely hidden — even our test builders took an average of four hours to find them all. Only 1,000 sets will ever be produced.",
+    features: ["Seven genuinely hidden secret passages throughout the fortress","Full hinged wall sections for interior access","Working portcullis with chain-and-gear mechanism","Dragon's lair with lava floor built from transparent orange bricks","Forge with printed anvil tile and working bellows detail","Dungeon with removable prison bars and treasure chest"],
+    includes: ["10 minifigures (Dragon knight, Queen, Wizard, Blacksmith, Guard ×4, Prisoner, Dragon rider)","Exclusive flame-wing dragon figure (custom mold)","Illustrated builder's guide (420 pages)","Fortress lore booklet","Numbered limited-edition certificate (of 1,000)"],
+    difficulty: "Expert", ageRecommendation: "18+", dimensions: "72 × 56 × 62 cm", setNumber: "ABE-3001-LE",
+    builderNotes: "The secret passages were designed last — we built the entire fortress first, then went back and carved the passages through it without disturbing the exterior. Two of them required us to redesign structural columns from scratch. The portcullis mechanism took six iterations; the seventh version uses a worm gear borrowed from a Technic concept we abandoned three years ago.",
+    rating: 5.0, reviewCount: 63 },
+  { id: 4, name: "Retro Space Station", category: "Space", pieces: 987, price: 79, badge: null,
+    images: ["1620309668391-26ac1c90f61b","1631106256072-54c89defe828","1587654780291-39c9404d746b","1633469924738-52101af51d87"].map(IMG),
+    description: "Inspired by the golden age of space exploration — vintage-styled habitat modules, solar arrays, and a docking crew of four.",
+    longDescription: "The Retro Space Station is a love letter to the optimistic space programs of the 1960s and 70s, filtered through AFOL eyes. Every module is designed to be reconfigured — the habitat ring, science lab, communications array, and docking collar all connect via a standardized port system, so builders can design their own station layout before committing to the display configuration. The color palette uses authentic period shades: a warm off-white, retro orange, and classic space blue that you won't find in any current official set.",
+    features: ["Fully modular — six modules reconfigure into 12+ layouts","Standardized port connection system across all modules","Rotating solar array panels (360° on two axes)","Period-authentic color palette exclusive to this set","Printed instrument panels on every module interior","Display stand with constellation star map base tile"],
+    includes: ["4 minifigures (Commander, Scientist, Engineer, Cosmonaut) with retro-styled suits","Illustrated builder's guide (148 pages)","Module reconfiguration guide","Numbered certificate of authenticity"],
+    difficulty: "Beginner", ageRecommendation: "10+", dimensions: "42 × 42 × 28 cm", setNumber: "ABE-4001",
+    builderNotes: "The port system was the key design decision that made this set. Once we committed to it, everything else followed naturally. We spent two months just on the color palette, ordering custom dye samples until the orange matched a photo of an Apollo-era spacesuit glove we had pinned above the design desk.",
+    rating: 4.7, reviewCount: 142 },
+  { id: 5, name: "Mountain Railway Express", category: "Nature", pieces: 1567, price: 134, badge: "New",
+    images: ["1644175897056-50f4d3a9a827","1774223638287-021fed6e3b3d","1620309668391-26ac1c90f61b","1631106254201-ffbee2305c5b"].map(IMG),
+    description: "Wind through alpine meadows and granite cliffs aboard this painstakingly detailed steam locomotive and stone viaduct.",
+    longDescription: "The Mountain Railway Express captures a specific feeling: the smell of coal smoke as a narrow-gauge locomotive rounds a granite cliff face, the valley opening below, the viaduct arching across the gorge like something from another century. The locomotive features a working piston mechanism driven by the rear wheels, and the tender car opens to reveal a detailed coal loading area. The viaduct spans 58 cm and is fully load-bearing — engineered to support the locomotive with a 2 kg margin above the brick weight.",
+    features: ["Working piston mechanism on the locomotive (driven by wheel rotation)","Opening tender with detailed coal loading area","Load-bearing viaduct spanning 58 cm","Layered granite cliff face using 14 different gray brick variants","Alpine meadow base with wildflower details and grazing sheep","Station building with operating signal light mechanism"],
+    includes: ["5 minifigures (Engineer, Fireman, Station master, Passenger ×2)","Steam locomotive and two passenger cars","Illustrated builder's guide (220 pages)","Structural load certificate","Numbered certificate of authenticity"],
+    difficulty: "Advanced", ageRecommendation: "14+", dimensions: "88 × 24 × 36 cm", setNumber: "ABE-5001",
+    builderNotes: "The viaduct was stress-tested at 8 kg before we approved it. We wanted builders to know they could actually run the locomotive across it without fear. The 14 gray variants in the cliff face caused real supply headaches — three of them had to be sourced from aftermarket suppliers — but the texture result justified every email.",
+    rating: 4.9, reviewCount: 88 },
+  { id: 6, name: "Enchanted Forest Temple", category: "Fantasy", pieces: 2103, price: 167, badge: null,
+    images: ["1631106256072-54c89defe828","1633469924738-52101af51d87","1644175897056-50f4d3a9a827","1765403256661-c60b291c38ba"].map(IMG),
+    description: "Moss-covered ruins, glowing crystal minifigs, and ancient woodland spirits guard the sacred temple sanctum.",
+    longDescription: "The Enchanted Forest Temple is built around a single design principle: everything is alive. The ruins are overgrown with moss-brick vines, the roots of a 40-cm ancient tree are lifting flagstones from the courtyard floor, and the crystal spirits that inhabit the inner sanctum are built from a combination of transparent and translucent bricks that create genuine depth when backlit. The temple splits into four quadrant sections for interior access, and each quadrant tells a different chapter of the forest lore told in the accompanying booklet.",
+    features: ["Four quadrant sections split for interior access","40 cm ancient tree with root system lifting courtyard flagstones","Layered transparent/translucent crystal spirits (backlit-ready)","Moss-brick vine system covering 30% of all exterior surfaces","Hidden altar chamber beneath the temple floor","Seasonal swap kit — summer and autumn foliage variants included"],
+    includes: ["7 minifigures (Forest guardian, Crystal spirit ×3, Druid, Adventurer, Woodland sprite)","Seasonal foliage swap pack (summer/autumn)","Temple lore booklet","Illustrated builder's guide (310 pages)","Numbered certificate of authenticity"],
+    difficulty: "Advanced", ageRecommendation: "14+", dimensions: "58 × 58 × 52 cm", setNumber: "ABE-6001",
+    builderNotes: "The seasonal swap kit was a last-minute addition after a builder in our test group mentioned they wanted to change the display for autumn. We went back into production to add it. The translucent crystal spirits work best with a white LED light strip placed behind the inner sanctum wall — the effect when you do that is genuinely something we're proud of.",
+    rating: 4.8, reviewCount: 119 },
+];
+
+const SPOTLIGHTS = [
+  { id: 101, name: "Retro Game Boy — Collector's Edition", category: "Limited Edition", pieces: 1024, price: 219, badge: "One of a Kind",
+    images: ["1764557257729-78a549bf2929","1765403256661-c60b291c38ba","1620309668391-26ac1c90f61b","1587654780291-39c9404d746b"].map(IMG),
+    description: "A museum-quality brick replica of the iconic handheld console. Pixel-perfect stud-art screen, working cartridge slot detail, and numbered certificate of authenticity. Only 500 made.",
+    longDescription: "The Retro Game Boy Collector's Edition is the most technically demanding set we've ever produced. The stud-art screen renders a pixel-perfect scene using 312 individual 1×1 tiles in 11 colors — each tile placed by hand during final quality control. The cartridge slot is fully functional: the included game cartridge brick slides in with the same resistance as the original hardware. The build uses a proprietary internal frame system that keeps the iconic silhouette mathematically accurate to within 2mm of the original device's proportions.",
+    features: ["312-tile stud-art screen, pixel-perfect in 11 colors","Functional cartridge slot — included game cartridge slides in/out","Mathematically accurate silhouette (within 2mm of original dimensions)","Proprietary internal frame system for structural integrity","Display easel built into the design","Only 500 units worldwide — hand-inspected before shipment"],
+    includes: ["1 Collector's Edition set","1 game cartridge brick (printed label)","Certificate of authenticity (hand-signed, numbered of 500)","Collector's box with magnetic closure","Illustrated builder's guide (160 pages)","White-glove delivery packaging"],
+    difficulty: "Advanced", ageRecommendation: "16+", dimensions: "28 × 18 × 6 cm", setNumber: "ABE-LE-101",
+    builderNotes: "We measured a real handheld fourteen times before we were satisfied the silhouette was correct. The cartridge slot is the feature we're most proud of — it required designing a custom brick geometry that we then had to verify wouldn't violate any IP. The stud-art screen took three artists three weeks to agree on. Number 001 of 500 is on our studio display shelf.",
+    rating: 5.0, reviewCount: 47 },
+  { id: 102, name: "Geometric Color Study No. 7", category: "Art Series", pieces: 4892, price: 389, badge: "Designer Series",
+    images: ["1765403256661-c60b291c38ba","1587654780291-39c9404d746b","1631106254201-ffbee2305c5b","1633469924738-52101af51d87"].map(IMG),
+    description: "A collaboration with abstract artists — a 94×94 cm wall-mounted statement piece that is equally art object and building challenge.",
+    longDescription: "Color Study No. 7 is the seventh in our ongoing Art Series — a collaboration between our AFOL design team and abstract painters working in the Pacific Northwest. The design originates as a 94×94 cm oil painting, which our team then translates into brick, negotiating between the infinite gradients of paint and the discrete world of the 1×1 tile. The result is not a copy of the painting but a conversation with it — some areas are faithful translations, others are deliberate brick-specific interpretations where the stud grid creates patterns paint cannot.",
+    features: ["94×94 cm completed dimensions — genuine statement scale","4,892 bricks across 31 distinct colors","Two wall-mount systems (flush plate + 15° angled gallery bracket)","Collaborative design with named Pacific Northwest abstract artists","Build sequence designed to reveal the composition gradually","Museum-quality display — suitable for professional gallery installation"],
+    includes: ["Complete brick kit (sorted by build sequence, not color)","Certificate of artistic collaboration (signed by both design teams)","Flush wall mount plate and hardware","15° angled gallery bracket","Archival illustrated builder's guide (380 pages)","Artist statement booklet","Numbered certificate of authenticity"],
+    difficulty: "Expert", ageRecommendation: "18+", dimensions: "94 × 94 × 4 cm", setNumber: "ABE-ART-007",
+    builderNotes: "We sort the bricks by build sequence rather than color intentionally — you discover the composition as you build it, the same way the artist discovered it while painting. Sorting by color first and building section-by-section destroys that experience. Trust the sequence. The reveal in the final 800 bricks is worth it.",
+    rating: 4.9, reviewCount: 31 },
+];
+
+const ALL = [...PRODUCTS, ...SPOTLIGHTS];
+const CATEGORIES = ["All", "Architecture", "Fantasy", "Space", "Ocean", "Nature"];
+const TRUST = ["Designed by AFOLs","Free Shipping Over $75","Buy · Sell · Trade","Expert Builder Support","30-Day Returns","Collector Grade Quality","Custom Commission Builds","Limited Runs Only"];
+const DIFF_COLOR = { Beginner: "#4ade80", Intermediate: "#ffd100", Advanced: "#fb923c", Expert: "#f87171" };
+
+class Component extends DCLogic {
+  state = { page: "home", pid: null, slug: null, cat: "All", tab: "overview", qty: 1, img: 0, cart: [], searchOpen: false, query: "", justAdded: null, addedCurrent: false,
+    faqOpen: null, sort: "featured", step: "cart", shipMethod: "standard", promo: "", promoState: "idle", orderNumber: "ABE-2026-08421",
+    ship: { firstName: "", lastName: "", email: "", phone: "", address: "", apt: "", city: "", state: "CO", zip: "", country: "United States" },
+    pay: { nameOnCard: "", cardNumber: "", expiry: "", cvv: "", sameAsShipping: true, billingAddress: "", billingCity: "", billingState: "CO", billingZip: "" },
+    contact: { dept: DEPARTMENTS[0], name: "", email: "", order: "", message: "" }, contactState: "idle",
+    track: { number: "", email: "" }, trackState: "idle" };
+
+  field(group, key, transform) {
+    return { value: this.state[group][key], onChange: (e) => {
+      const v = e.target.type === "checkbox" ? e.target.checked : (transform ? transform(e.target.value) : e.target.value);
+      this.setState((st) => ({ [group]: { ...st[group], [key]: v } }));
+    }};
+  }
+
+  go(page, extra) { this.setState({ page, ...(extra || {}) }); window.scrollTo({ top: 0, behavior: "instant" }); }
+
+  openProduct(id) { this.go("product", { pid: id, tab: "overview", qty: 1, img: 0, addedCurrent: false }); }
+
+  addItem(p, n) {
+    const qty = n || 1;
+    this.setState((s) => {
+      const cart = s.cart.slice();
+      const i = cart.findIndex((c) => c.id === p.id);
+      if (i >= 0) cart[i] = { ...cart[i], qty: cart[i].qty + qty };
+      else cart.push({ id: p.id, qty });
+      return { cart };
+    });
+  }
+
+  flash(id) {
+    this.setState({ justAdded: id });
+    clearTimeout(this._t);
+    this._t = setTimeout(() => this.setState({ justAdded: null }), 1600);
+  }
+
+  badgeColors(badge) {
+    if (badge === "Limited" || badge === "One of a Kind") return { bg: "#ffd100", fg: "#0f0f0f" };
+    if (badge === "New" || badge === "Designer Series") return { bg: "#ffffff", fg: "#0f0f0f" };
+    return { bg: "#f0ede8", fg: "#0f0f0f" };
+  }
+
+  card(p) {
+    const bc = this.badgeColors(p.badge);
+    const added = this.state.justAdded === p.id;
+    return {
+      ...p,
+      image: p.images[0],
+      shortDescription: p.description,
+      priceStr: "$" + p.price,
+      piecesStr: p.pieces.toLocaleString() + " pieces",
+      hasBadge: !!p.badge,
+      badgeBg: bc.bg, badgeFg: bc.fg,
+      addLabel: added ? "Added ✓" : "Add to Cart",
+      addShort: added ? "Added ✓" : "Add",
+      addBg: added ? "#ffffff" : "#ffd100",
+      addFg: "#0f0f0f",
+      open: () => this.openProduct(p.id),
+      add: () => { this.addItem(p); this.flash(p.id); },
+    };
+  }
+
+  renderVals() {
+    const s = this.state;
+    const cur = ALL.find((p) => p.id === s.pid) || ALL[0];
+    const q = s.query.trim().toLowerCase();
+    let catalog = s.cat === "All" ? PRODUCTS : PRODUCTS.filter((p) => p.category === s.cat);
+    if (q) catalog = ALL.filter((p) => (p.name + " " + p.category + " " + p.pieces).toLowerCase().includes(q));
+
+    const cartItems = s.cart.map((c) => {
+      const p = ALL.find((x) => x.id === c.id);
+      return {
+        id: c.id, name: p.name, category: p.category, image: p.images[0], qty: c.qty,
+        unitLabel: "$" + p.price + " each",
+        lineTotal: "$" + (p.price * c.qty).toLocaleString(),
+        inc: () => this.addItem(p, 1),
+        dec: () => this.setState((st) => ({ cart: st.cart.map((x) => x.id === c.id ? { ...x, qty: Math.max(1, x.qty - 1) } : x) })),
+        remove: () => this.setState((st) => ({ cart: st.cart.filter((x) => x.id !== c.id) })),
+      };
+    });
+    const subtotal = s.cart.reduce((t, c) => t + ALL.find((x) => x.id === c.id).price * c.qty, 0);
+    const shipping = subtotal > 75 || subtotal === 0 ? 0 : 12;
+    const tax = Math.round(subtotal * 0.0875);
+    const promoApplied = s.promoState === "ok";
+    const coDiscount = promoApplied ? subtotal * 0.1 : 0;
+    const coOpt = SHIPPING_OPTIONS.find((o) => o.id === s.shipMethod) || SHIPPING_OPTIONS[0];
+    const coShip = s.shipMethod === "standard" && subtotal >= 75 ? 0 : coOpt.price;
+    const coTax = (subtotal - coDiscount) * 0.07;
+    const coTotal = subtotal - coDiscount + coShip + coTax;
+
+    const related = (() => {
+      const same = PRODUCTS.filter((p) => p.id !== cur.id && p.category === cur.category);
+      return (same.length ? same : PRODUCTS.filter((p) => p.id !== cur.id)).slice(0, 3).map((p) => this.card(p));
+    })();
+
+    const counts = {};
+    ALL.forEach((p) => { counts[p.category] = (counts[p.category] || 0) + 1; });
+
+    return {
+      isHome: s.page === "home", isCollections: s.page === "collections", isProduct: s.page === "product",
+      isCheckout: s.page === "checkout", isCollection: s.page === "collection", isContact: s.page === "contact", isTrack: s.page === "track",
+      isContentPage: !!PAGE_META[s.page] && s.page !== "contact" && s.page !== "track",
+      searchOpen: s.searchOpen, query: s.query,
+      toggleSearch: () => this.setState((st) => ({ searchOpen: !st.searchOpen })),
+      onQuery: (e) => this.setState({ query: e.target.value, page: "home" }),
+      goHome: () => this.go("home"),
+      goCart: () => this.go("checkout", { step: "cart" }),
+      goCatalog: () => { this.go("home", { cat: "All" }); setTimeout(() => { const el = document.getElementById("catalog"); if (el) window.scrollTo({ top: el.offsetTop - 64, behavior: "smooth" }); }, 60); },
+      goSpotlight: () => window.scrollTo({ top: window.innerHeight - 64, behavior: "smooth" }),
+      navLinks: [
+        { label: "Collections", go: () => this.go("collections") },
+        { label: "New Arrivals", go: () => this.go("collection", { slug: "new-arrivals", sort: "featured" }) },
+        { label: "Limited Edition", go: () => this.go("collection", { slug: "limited-edition", sort: "featured" }) },
+        { label: "About", go: () => this.go("about") },
+      ],
+      hasCart: s.cart.length > 0, cartEmpty: s.cart.length === 0,
+      cartCount: s.cart.reduce((t, c) => t + c.qty, 0),
+      cartItems,
+      summaryRows: [
+        { label: "Subtotal", value: "$" + subtotal.toLocaleString() },
+        { label: "Shipping", value: shipping === 0 ? "Free" : "$" + shipping },
+        { label: "Estimated tax", value: "$" + tax.toLocaleString() },
+      ],
+      total: "$" + (subtotal + shipping + tax).toLocaleString(),
+      stats: [ { value: "500+", suffix: "", label: "Custom Sets" }, { value: "12K+", suffix: "", label: "Builders" }, { value: "4.9", suffix: "★", label: "Avg Rating" } ],
+      trustItems: [...TRUST, ...TRUST].map((label, i) => ({ label, key: i })),
+      trustMicro: ["Free shipping over $75", "30-day returns", "Numbered certificate included"].map((label) => ({ label })),
+      pillars: [
+        { icon: "◈", title: "Exclusively Designed", body: "Every set originates with our AFOL design team — builders who live and breathe the hobby. Created for the community, by the community. You won't find these anywhere else." },
+        { icon: "◻", title: "Collector-Grade Quality", body: "Premium packaging, numbered certificates of authenticity, and brick quality you can feel from the first stud. Built to display and built to last generations." },
+        { icon: "★", title: "Drops That Matter", body: "We release new sets when they're ready, not on a timetable. Sign up to get early access to limited runs before they open to the general community." },
+      ],
+      categories: CATEGORIES.map((name) => ({
+        name,
+        select: () => this.setState({ cat: name, query: "" }),
+        bg: s.cat === name && !q ? "#ffd100" : "transparent",
+        fg: s.cat === name && !q ? "#0f0f0f" : "#8a8a8a",
+        border: s.cat === name && !q ? "#ffd100" : "rgba(255,255,255,0.08)",
+      })),
+      catalog: catalog.map((p) => this.card(p)),
+      catalogEmpty: catalog.length === 0,
+      spotlights: SPOTLIGHTS.map((p) => this.card(p)),
+      collections: COLLECTION_LIST.map((c) => {
+        const n = c.slug === "limited-edition" ? SPOTLIGHTS.length : (counts[c.label] || 0);
+        return { name: c.label, blurb: c.description, image: c.image, countLabel: n + (n === 1 ? " set" : " sets"),
+          select: () => this.go("collection", { slug: c.slug, sort: "featured" }) };
+      }),
+      collectionsIntro: COLLECTION_LIST.length + " themed collections, " + ALL.length + " unique sets — all designed in-house by our AFOL team and produced in limited quantities.",
+      related,
+      qty: s.qty,
+      incQty: () => this.setState((st) => ({ qty: st.qty + 1 })),
+      decQty: () => this.setState((st) => ({ qty: Math.max(1, st.qty - 1) })),
+      addCurrent: () => { this.addItem(cur, s.qty); this.setState({ addedCurrent: true }); clearTimeout(this._t2); this._t2 = setTimeout(() => this.setState({ addedCurrent: false }), 2000); },
+      addCurrentLabel: s.addedCurrent ? "✓ Added to Cart" : "Add to Cart",
+      addCurrentBg: s.addedCurrent ? "#ffffff" : "#ffd100",
+      addCurrentFg: "#0f0f0f",
+      tabOverview: s.tab === "overview", tabInbox: s.tab === "inbox", tabNotes: s.tab === "notes",
+      tabs: [["overview", "Overview"], ["inbox", "In the Box"], ["notes", "Builder Notes"]].map(([key, label]) => ({
+        label, select: () => this.setState({ tab: key }),
+        border: s.tab === key ? "#ffd100" : "transparent",
+        color: s.tab === key ? "#ffd100" : "#8a8a8a",
+      })),
+      prevImage: () => this.setState((st) => ({ img: (st.img - 1 + cur.images.length) % cur.images.length })),
+      nextImage: () => this.setState((st) => ({ img: (st.img + 1) % cur.images.length })),
+      p: {
+        ...cur,
+        priceStr: "$" + cur.price,
+        piecesStr: cur.pieces.toLocaleString() + " pieces",
+        hasBadge: !!cur.badge,
+        badgeBg: this.badgeColors(cur.badge).bg, badgeFg: this.badgeColors(cur.badge).fg,
+        activeImage: cur.images[s.img % cur.images.length],
+        imageCounter: (s.img % cur.images.length) + 1 + " / " + cur.images.length,
+        thumbs: cur.images.map((src, i) => ({ src, border: i === s.img ? "#ffd100" : "rgba(255,255,255,0.08)", select: () => this.setState({ img: i }) })),
+        stars: "★★★★★".slice(0, Math.floor(cur.rating)),
+        ratingLabel: cur.rating + " (" + cur.reviewCount + " reviews)",
+        specs: [
+          { label: "Difficulty", value: cur.difficulty, color: DIFF_COLOR[cur.difficulty] },
+          { label: "Assembled Size", value: cur.dimensions, color: "#f0ede8" },
+          { label: "Piece Count", value: cur.pieces.toLocaleString(), color: "#f0ede8" },
+          { label: "Set Number", value: cur.setNumber, color: "#f0ede8" },
+        ],
+        features: cur.features.map((label) => ({ label })),
+        includes: cur.includes.map((label) => ({ label })),
+        builderNotesQuoted: '"' + cur.builderNotes + '"',
+      },
+      footerCols: [
+        { heading: "Shop", links: [["All Collections", () => this.go("collections")], ["New Arrivals", () => this.go("collection", { slug: "new-arrivals" })], ["Limited Editions", () => this.go("collection", { slug: "limited-edition" })], ["Art Series", () => this.openProduct(102)], ["Gift Cards", () => this.go("home")]] },
+        { heading: "Support", links: [["FAQ", () => this.go("faq")], ["Shipping Info", () => this.go("shipping")], ["Returns", () => this.go("returns")], ["Track Order", () => this.go("track")], ["Contact Us", () => this.go("contact")]] },
+        { heading: "Company", links: [["About Us", () => this.go("about")], ["Our Designers", () => this.go("designers")], ["Careers", () => this.go("careers")], ["Press", () => this.go("press")], ["Community", () => this.go("community")]] },
+      ].map((col) => ({ heading: col.heading, links: col.links.map(([label, go]) => ({ label, go })) })),
+      legalLinks: [{ label: "Privacy" }, { label: "Terms" }, { label: "Cookies" }],
+
+      pageHeader: (() => {
+        const m = PAGE_META[s.page] || {};
+        return { eyebrow: m.eyebrow || "", title: m.title || "", subtitle: m.subtitle || "", hasSubtitle: !!m.subtitle,
+          image: m.image, hasImage: !!m.image, crumbs: m.crumbs || "", maxWidth: (m.width || 1024) + "px",
+          height: m.image ? "288px" : "auto", pad: m.image ? "0" : "72px 24px" };
+      })(),
+      pageSections: buildSections(s.page, this),
+      hasPageHeader: !!PAGE_META[s.page],
+      stepActive: s.step !== "confirmation",
+      goTrack: () => this.go("track"),
+      goContact: () => this.go("contact"),
+
+      col: (() => {
+        const m = COLLECTION_META[s.slug] || COLLECTION_META.architecture;
+        const base = s.slug === "limited-edition" ? SPOTLIGHTS : s.slug === "new-arrivals" ? PRODUCTS.filter((p) => p.badge === "New") : PRODUCTS.filter((p) => p.category === m.label);
+        const sorted = base.slice().sort((a, b) => s.sort === "price-asc" ? a.price - b.price : s.sort === "price-desc" ? b.price - a.price : s.sort === "pieces-desc" ? b.pieces - a.pieces : 0);
+        return { label: m.label, description: m.description, image: m.image,
+          countLabel: sorted.length + (sorted.length === 1 ? " set" : " sets"),
+          products: sorted.map((p) => this.card(p)), empty: sorted.length === 0 };
+      })(),
+      sortValue: s.sort,
+      onSort: (e) => this.setState({ sort: e.target.value }),
+      sortOptions: [["featured", "Featured"], ["price-asc", "Price: Low to High"], ["price-desc", "Price: High to Low"], ["pieces-desc", "Most Pieces"]].map(([value, label]) => ({ value, label })),
+      goCollections: () => this.go("collections"),
+
+      stepCart: s.step === "cart", stepShipping: s.step === "shipping", stepPayment: s.step === "payment", stepConfirm: s.step === "confirmation",
+      checkoutTitle: s.step === "cart" ? "Your Cart" : s.step === "shipping" ? "Shipping" : "Payment",
+      stepDots: (() => {
+        const list = [["cart", "Cart"], ["shipping", "Shipping"], ["payment", "Payment"], ["confirmation", "Confirm"]];
+        const idx = list.findIndex(([k]) => k === s.step);
+        return list.map(([k, label], i) => ({ label, mark: i < idx ? "✓" : String(i + 1), last: i === list.length - 1, notLast: i < list.length - 1,
+          bg: i < idx ? "#ffd100" : "#0f0f0f", border: i <= idx ? "#ffd100" : "rgba(255,255,255,0.08)",
+          fg: i < idx ? "#0f0f0f" : i === idx ? "#ffd100" : "#8a8a8a",
+          labelColor: i === idx ? "#ffd100" : i < idx ? "#f0ede8" : "#8a8a8a",
+          barBg: i < idx ? "#ffd100" : "rgba(255,255,255,0.08)" }));
+      })(),
+      goStep: (step) => this.go("checkout", { step }),
+      toCart: () => this.go("checkout", { step: "cart" }),
+      toShipping: () => this.go("checkout", { step: "shipping" }),
+      toPayment: () => this.go("checkout", { step: "payment" }),
+      placeOrder: () => this.go("checkout", { step: "confirmation", orderNumber: "ABE-2026-" + Math.floor(10000 + Math.random() * 90000) }),
+      summaryLines: cartItems.map((i) => ({ ...i, lineAmount: "$" + (ALL.find((x) => x.id === i.id).price * i.qty).toFixed(2), qtyLabel: "Qty " + i.qty })),
+      coSubtotal: "$" + subtotal.toFixed(2),
+      coDiscount: "−$" + coDiscount.toFixed(2),
+      hasDiscount: promoApplied,
+      coShipping: coShip === 0 ? "Free" : "$" + coShip.toFixed(2),
+      coShippingColor: coShip === 0 ? "#ffd100" : "#f0ede8",
+      coTax: "$" + coTax.toFixed(2),
+      coTotal: "$" + coTotal.toFixed(2),
+      promoValue: s.promo,
+      onPromo: (e) => this.setState({ promo: e.target.value.toUpperCase(), promoState: "idle" }),
+      applyPromo: () => this.setState((st) => ({ promoState: st.promo.trim().toUpperCase() === "ALPINE10" ? "ok" : "bad" })),
+      promoOk: s.promoState === "ok", promoBad: s.promoState === "bad",
+      shipOptions: SHIPPING_OPTIONS.map((o) => {
+        const cost = o.id === "standard" && subtotal >= 75 ? 0 : o.price;
+        const on = s.shipMethod === o.id;
+        return { ...o, priceLabel: cost === 0 ? "Free" : "$" + cost.toFixed(2), priceColor: cost === 0 ? "#ffd100" : "#f0ede8",
+          border: on ? "#ffd100" : "rgba(255,255,255,0.08)", bg: on ? "rgba(255,209,0,0.05)" : "transparent",
+          dot: on ? "#ffd100" : "transparent", select: () => this.setState({ shipMethod: o.id }) };
+      }),
+      shipMethodLabel: (SHIPPING_OPTIONS.find((o) => o.id === s.shipMethod) || SHIPPING_OPTIONS[0]).label,
+      shipMethodTime: (SHIPPING_OPTIONS.find((o) => o.id === s.shipMethod) || SHIPPING_OPTIONS[0]).time,
+      shipSummary: [s.ship.firstName || "—", s.ship.lastName, "·", s.ship.address, s.ship.city, s.ship.state, s.ship.zip].filter(Boolean).join(" "),
+      confirmEmail: s.ship.email || "your email",
+      orderNumber: s.orderNumber,
+      placeOrderLabel: "Place Order — $" + coTotal.toFixed(2),
+      shipFields: [
+        { label: "First Name", ph: "First name", f: this.field("ship", "firstName"), half: true },
+        { label: "Last Name", ph: "Last name", f: this.field("ship", "lastName"), half: true },
+        { label: "Email Address", ph: "your@email.com", f: this.field("ship", "email"), half: true },
+        { label: "Phone", ph: "(555) 000-0000", f: this.field("ship", "phone"), half: true },
+      ],
+      addrFields: [
+        { label: "Street Address", ph: "123 Main Street", f: this.field("ship", "address") },
+        { label: "Apt / Suite (optional)", ph: "Apt, suite, unit, etc.", f: this.field("ship", "apt") },
+      ],
+      cityField: { label: "City", ph: "City", f: this.field("ship", "city") },
+      zipField: { label: "ZIP Code", ph: "80301", f: this.field("ship", "zip") },
+      stateField: this.field("ship", "state"),
+      countryField: this.field("ship", "country"),
+      states: US_STATES.map((v) => ({ value: v, label: v })),
+      countries: COUNTRIES.map((v) => ({ value: v, label: v })),
+      payFields: [
+        { label: "Name on Card", ph: "As it appears on the card", f: this.field("pay", "nameOnCard") },
+        { label: "Card Number", ph: "1234 5678 9012 3456", f: this.field("pay", "cardNumber", (v) => v.replace(/\D/g, "").slice(0, 16).replace(/(.{4})/g, "$1 ").trim()) },
+      ],
+      expiryField: { label: "Expiry", ph: "MM/YY", f: this.field("pay", "expiry", (v) => { const d = v.replace(/\D/g, "").slice(0, 4); return d.length > 2 ? d.slice(0, 2) + "/" + d.slice(2) : d; }) },
+      cvvField: { label: "CVV", ph: "•••", f: this.field("pay", "cvv", (v) => v.replace(/\D/g, "").slice(0, 4)) },
+      sameAsShipping: this.field("pay", "sameAsShipping"),
+      showBilling: !s.pay.sameAsShipping,
+      billingFields: [
+        { label: "Street Address", ph: "123 Main Street", f: this.field("pay", "billingAddress") },
+        { label: "City", ph: "City", f: this.field("pay", "billingCity") },
+        { label: "ZIP", ph: "80301", f: this.field("pay", "billingZip") },
+      ],
+
+      contactDepts: DEPARTMENTS.map((v) => ({ value: v, label: v })),
+      contactDept: this.field("contact", "dept"),
+      contactName: this.field("contact", "name"),
+      contactEmail: this.field("contact", "email"),
+      contactOrder: this.field("contact", "order"),
+      contactMessage: this.field("contact", "message"),
+      contactSent: s.contactState === "sent",
+      contactSending: s.contactState === "sending",
+      contactIdle: s.contactState !== "sent",
+      contactSubmitLabel: s.contactState === "sending" ? "Sending…" : "Send Message",
+      sendContact: () => { this.setState({ contactState: "sending" }); setTimeout(() => this.setState({ contactState: "sent" }), 1400); },
+      contactEmailShown: s.contact.email || "your email",
+      contactInfo: [
+        { icon: "✉", label: "Email", value: "support@alpinebrickexchange.com", sub: "For all order and product questions" },
+        { icon: "◷", label: "Response Time", value: "Within 1 Business Day", sub: "Mon–Fri, 9 AM–5 PM MT" },
+        { icon: "◍", label: "Community", value: "Forum & Discord", sub: "Peer support from the builder community" },
+      ],
+
+      trackNumber: this.field("track", "number"),
+      trackEmail: this.field("track", "email"),
+      trackIdle: s.trackState === "idle",
+      trackFound: s.trackState === "found",
+      trackNotFound: s.trackState === "not-found",
+      trackLabel: s.trackState === "loading" ? "Searching…" : "⌕ Track Order",
+      doTrack: () => { const v = s.track.number; this.setState({ trackState: "loading" }); setTimeout(() => this.setState({ trackState: v.toUpperCase().includes("ABE") ? "found" : "not-found" }), 1000); },
+      order: MOCK_ORDER,
+      orderSteps: MOCK_ORDER.steps.map((st, i) => ({ ...st, notLast: i < MOCK_ORDER.steps.length - 1,
+        bg: st.done ? "#ffd100" : "#0f0f0f", border: st.done ? "#ffd100" : "rgba(255,255,255,0.08)",
+        mark: st.done ? "✓" : "◷", markColor: st.done ? "#0f0f0f" : "#8a8a8a",
+        labelColor: st.done ? "#f0ede8" : "#8a8a8a", barBg: st.done ? "rgba(255,209,0,0.4)" : "rgba(255,255,255,0.08)" })),
+    };
+  }
+}
+
+
+const KINDS = ["heading","text","cards","checks","accordion","split","callout","cta","stats","rows","team","quotes","banner","numbered","story"];
+function S(kind, obj) {
+  const o = Object.assign({ kind, cols: 2 }, obj);
+  KINDS.forEach((k) => { o["is" + k[0].toUpperCase() + k.slice(1)] = kind === k; });
+  o.gridCols = o.grid || "repeat(" + (o.cols || 2) + ", 1fr)";
+  o.wrapMargin = kind === "heading" ? "24px" : "56px";
+  o.hasTitle = !!o.title;
+  o.hasNote = !!o.note;
+  o.hasButtons = !!(o.buttons && o.buttons.length);
+  o.headingColor = o.accent ? "#ffd100" : "#f0ede8";
+  o.headingPad = o.rule ? "12px" : "0";
+  o.headingRule = o.rule ? "1px solid rgba(255,255,255,0.08)" : "none";
+  o.checksPad = o.boxed ? "32px" : "0";
+  o.calloutRule = o.boxed ? "0" : "2px solid #ffd100";
+  o.calloutBox = o.boxed ? "1px solid rgba(255,255,255,0.08)" : "0";
+  o.calloutPad = o.boxed ? "40px" : "0 0 0 24px";
+  o.calloutAlign = o.center ? "center" : "left";
+  o.calloutJustify = o.center ? "center" : "flex-start";
+  o.ctaAlign = o.note ? "center" : "left";
+  o.ctaBox = o.note ? "1px solid rgba(255,255,255,0.08)" : "0";
+  o.ctaPad = o.note ? "32px" : "0";
+  o.ctaJustify = o.note ? "center" : "flex-start";
+  o.rowsGap = o.boxed ? "0px" : "16px";
+  if (o.items) o.items = o.items.map((it) => Object.assign({}, it, {
+    hasIcon: !!it.icon, hasEyebrow: !!it.eyebrow, hasMeta: !!it.meta1, hasNote: !!it.note,
+    hasBullets: !!(it.bullets && it.bullets.length), hasCta: !!it.ctaLabel,
+    hasSub: !!it.sub, hasTag: !!it.tag, hasBody: !!it.body && kind === "rows",
+    hasHeaderCta: !!it.headerCtaLabel, hasEmail: !!it.email,
+    align: it.center ? "center" : "left",
+    border: it.accent ? "rgba(255,209,0,0.4)" : "rgba(255,255,255,0.08)",
+    right: it.right || "",
+  }));
+  if (o.buttons) o.buttons = o.buttons.map((b) => Object.assign({}, b, {
+    bg: b.primary ? "#ffd100" : "transparent",
+    fg: b.primary ? "#0f0f0f" : (b.link ? "#ffd100" : "#f0ede8"),
+    border: b.primary ? "#ffd100" : (b.link ? "transparent" : "rgba(255,255,255,0.08)"),
+    bannerBg: b.primary ? "#0f0f0f" : "transparent",
+    bannerFg: b.primary ? "#ffd100" : "#0f0f0f",
+    bannerBorder: b.primary ? "#0f0f0f" : "rgba(15,15,15,0.4)",
+  }));
+  return o;
+}
+const U = (id, w, h) => `${B}${id}?w=${w}&h=${h}&fit=crop&auto=format`;
+
+const PAGE_META = {
+  support: { crumbs: "Home › Support", eyebrow: "Help Center", title: "Support", subtitle: "How can we help? Find answers below or reach our team directly.", image: null, width: 896 },
+  faq: { crumbs: "Home › Support › FAQ", eyebrow: "Support", title: "Frequently Asked Questions", subtitle: "Everything you need to know about ordering, building, and the Alpine Brick community.", image: null, width: 768 },
+  shipping: { crumbs: "Home › Support › Shipping Info", eyebrow: "Support", title: "Shipping Info", subtitle: "We ship every order with care. Here's everything you need to know about delivery options and timelines.", image: U("1587654780291-39c9404d746b", 1600, 500), width: 1024 },
+  returns: { crumbs: "Home › Support › Returns", eyebrow: "Support", title: "Returns & Exchanges", subtitle: "30-day returns on unopened sets. We make it simple.", image: null, width: 896 },
+  about: { crumbs: "Home › About Us", eyebrow: "Our Story", title: "About Alpine Brick Exchange", subtitle: "", image: U("1587654780291-39c9404d746b", 1600, 500), width: 1024 },
+  designers: { crumbs: "Home › Our Designers", eyebrow: "The Team", title: "Our Designers", subtitle: "Six builders. Every set you see is the result of their combined obsession with getting it right.", image: U("1765403256661-c60b291c38ba", 1600, 500), width: 1152 },
+  careers: { crumbs: "Home › Careers", eyebrow: "Join the Studio", title: "Careers", subtitle: "We're a small team. Every hire changes the studio. We take that seriously.", image: U("1644175897056-50f4d3a9a827", 1600, 500), width: 896 },
+  press: { crumbs: "Home › Press", eyebrow: "Media & Press", title: "Press Room", subtitle: "Resources and coverage for journalists, bloggers, and media partners.", image: U("1760883786219-166f9a0398f1", 1600, 500), width: 1024 },
+  community: { crumbs: "Home › Community", eyebrow: "The Exchange", title: "Community", subtitle: "Alpine Brick Exchange is a company, but the Exchange is bigger than us. It's the builders.", image: U("1587654780291-39c9404d746b", 1600, 500), width: 1024 },
+  contact: { crumbs: "Home › Support › Contact Us", eyebrow: "Support", title: "Contact Us", subtitle: "Our team typically responds within one business day.", image: null, width: 1024 },
+  track: { crumbs: "Home › Support › Track Order", eyebrow: "Support", title: "Track Your Order", subtitle: "Enter your order number and email to get live tracking information.", image: null, width: 672 },
+};
+
+const FAQ_SECTIONS = [
+  { topic: "Orders & Shipping", items: [
+    { q: "How long does shipping take?", a: "Standard shipping takes 5–7 business days within the contiguous US. Express (2–3 days) and overnight options are available at checkout. International orders typically arrive in 10–18 business days depending on destination and customs clearance." },
+    { q: "Do you ship internationally?", a: "Yes — we ship to over 40 countries. International shipping rates and estimated delivery times are calculated at checkout based on your location. Note that customs duties and import taxes are the responsibility of the recipient." },
+    { q: "How will I know when my order has shipped?", a: "You'll receive a shipping confirmation email with a tracking number as soon as your order leaves our facility. You can also track your order anytime from the Track Order page." },
+    { q: "Can I change or cancel my order after placing it?", a: "Orders can be modified or cancelled within 2 hours of placement by contacting our support team. After that window, orders enter production fulfillment and cannot be changed. Limited edition orders are final at the time of purchase." },
+  ]},
+  { topic: "Products & Building", items: [
+    { q: "Are your sets compatible with standard LEGO bricks?", a: "Yes. All Alpine Brick sets use standard-dimension bricks that are fully compatible with official LEGO sets and any other brand using the standard stud specification." },
+    { q: "What if I'm missing a piece?", a: "Every order includes a 5% parts surplus above the listed piece count for the most commonly misplaced elements. If you're still missing something after the build, contact us with your set number and the missing part ID — we'll ship a replacement at no charge within 10 business days." },
+    { q: "How difficult are the builds?", a: "Each set is rated on a four-tier scale: Beginner (10+), Intermediate (12+), Advanced (14+), and Expert (16+). Difficulty ratings are listed on every product page and consider technique complexity, piece count, and build duration." },
+    { q: "Do the sets come with building instructions?", a: "Every set includes a printed, full-color illustrated builder's guide. Page counts range from 148 pages (Retro Space Station) to 420 pages (Dragon Fortress). Digital PDF versions are available in your account after purchase." },
+  ]},
+  { topic: "Returns & Exchanges", items: [
+    { q: "What is your return policy?", a: "We accept returns within 30 days of delivery for sets in original, unopened packaging. Opened sets can be returned if a manufacturing defect is the reason. Limited edition sets are final sale and cannot be returned." },
+    { q: "How do I start a return?", a: "Visit our Returns page or contact support@alpinebrickexchange.com with your order number and reason for return. We'll provide a prepaid return label within 1 business day. Refunds are issued within 5–7 business days of receiving the returned item." },
+    { q: "Can I exchange for a different set?", a: "Yes — exchanges are processed the same way as returns. After we receive your return, we'll ship the replacement set with priority handling at no additional shipping charge." },
+  ]},
+  { topic: "Limited Editions & Community", items: [
+    { q: "How do limited edition drops work?", a: "Limited edition sets are announced to our email subscribers first, typically 48 hours before public release. Units are strictly capped and once sold out, are not restocked. Joining the Builders Guild mailing list is the best way to secure your spot." },
+    { q: "Can I trade or sell my sets?", a: "Absolutely — that's part of what the Exchange is about. Our community forum has a dedicated buy/sell/trade section. We also run community events where builders can swap parts, complete sets, and custom builds." },
+    { q: "Do you take commission build requests?", a: "We accept a limited number of commission builds per quarter. Commissions start at $350 and require a 4–8 week production window. Fill out the commission inquiry form on our Contact page to get the conversation started." },
+  ]},
+];
+
+const COLLECTION_META = {
+  architecture: { label: "Architecture", description: "Skylines, landmarks, and urban landscapes rendered in meticulous brick detail.", image: U("1774223638287-021fed6e3b3d", 1600, 500) },
+  fantasy: { label: "Fantasy", description: "Castles, dragons, enchanted temples, and worlds that never existed — until now.", image: U("1633469924738-52101af51d87", 1600, 500) },
+  space: { label: "Space", description: "Retro orbiters to deep-future exploration rigs, inspired by humanity's reach beyond the atmosphere.", image: U("1620309668391-26ac1c90f61b", 1600, 500) },
+  ocean: { label: "Ocean", description: "Submarines, research stations, and the mysteries of the underwater world in brick.", image: U("1631106254201-ffbee2305c5b", 1600, 500) },
+  nature: { label: "Nature", description: "Mountain railways, alpine landscapes, and the quiet grandeur of the natural world.", image: U("1644175897056-50f4d3a9a827", 1600, 500) },
+  "limited-edition": { label: "Limited Edition", description: "One-of-a-kind sets produced in strictly limited runs with numbered certificates. Once gone, gone forever.", image: U("1764557257729-78a549bf2929", 1600, 500) },
+  "new-arrivals": { label: "New Arrivals", description: "The latest additions to the Alpine Brick catalog — fresh drops from our AFOL design team.", image: U("1765403256661-c60b291c38ba", 1600, 500) },
+};
+
+const COLLECTION_LIST = [
+  { slug: "architecture", label: "Architecture", description: "Skylines, landmarks, and urban landscapes rendered in meticulous brick detail. Sets that look as good on a shelf as they do in a display case.", image: U("1774223638287-021fed6e3b3d", 800, 600) },
+  { slug: "fantasy", label: "Fantasy", description: "Castles, dragons, enchanted temples, and worlds that never existed — until now. Our most ambitious builds live here.", image: U("1633469924738-52101af51d87", 800, 600) },
+  { slug: "space", label: "Space", description: "From retro golden-age orbiters to deep-future exploration rigs. Sets inspired by humanity's reach beyond the atmosphere.", image: U("1620309668391-26ac1c90f61b", 800, 600) },
+  { slug: "ocean", label: "Ocean", description: "Submarines, research stations, and the mysteries of the deep. Builds that capture the pressure and beauty of the underwater world.", image: U("1631106254201-ffbee2305c5b", 800, 600) },
+  { slug: "nature", label: "Nature", description: "Mountain railways, alpine landscapes, and the quiet grandeur of the natural world translated into brick.", image: U("1644175897056-50f4d3a9a827", 800, 600) },
+  { slug: "limited-edition", label: "Limited Edition", description: "One-of-a-kind sets produced in strictly limited runs. Once they're gone, they're gone. Collector certificates included.", image: U("1764557257729-78a549bf2929", 800, 600) },
+];
+
+const SHIPPING_OPTIONS = [
+  { id: "standard", label: "Standard Shipping", time: "5–7 Business Days", price: 0 },
+  { id: "express", label: "Express Shipping", time: "2–3 Business Days", price: 14.99 },
+  { id: "overnight", label: "Overnight", time: "Next Business Day", price: 29.99 },
+];
+
+const TEAM = [
+  { name: "Marcus Holt", role: "Co-founder & Lead Structural Designer", specialty: "Architecture · Large-scale builds", bio: "Structural engineer by training, AFOL by compulsion. Marcus designed the load-bearing viaduct in Mountain Railway Express and holds the studio record for most rebuild iterations on a single set (fourteen, Dragon Fortress).", sets: ["Millennium City Skyline", "Mountain Railway Express", "Dragon Fortress"], image: U("1587654780291-39c9404d746b", 400, 400), years: 12 },
+  { name: "Priya Nair", role: "Co-founder & Art Director", specialty: "Color systems · Stud art · Art Series", bio: "Graphic designer turned brick artist. Priya leads all color palette decisions, designed the 312-tile stud-art screen on the Game Boy Collector's Edition, and heads our ongoing Art Series collaborations.", sets: ["Retro Game Boy — Collector's Edition", "Geometric Color Study No. 7", "Enchanted Forest Temple"], image: U("1631106254201-ffbee2305c5b", 400, 400), years: 8 },
+  { name: "James Calloway", role: "Co-founder & Product Lead", specialty: "Mechanism design · Technic integration", bio: "Former toy industry product manager with 15 years of manufacturing experience. James handles production feasibility, piece sourcing, and the mechanical systems — portcullises, pistons, articulated arms.", sets: ["Deep Sea Explorer Sub", "Dragon Fortress", "Retro Space Station"], image: U("1620309668391-26ac1c90f61b", 400, 400), years: 15 },
+  { name: "Sofia Brennan", role: "Senior Build Designer", specialty: "Fantasy · Nature · Organic forms", bio: "Joined Alpine Brick in 2023 after winning back-to-back titles at BrickFair Virginia. Sofia specializes in organic shapes and living-world aesthetics — the moss-brick vine system and ancient tree in Enchanted Forest Temple are entirely hers.", sets: ["Enchanted Forest Temple", "Mountain Railway Express"], image: U("1633469924738-52101af51d87", 400, 400), years: 6 },
+  { name: "Daniel Osei", role: "Build Designer", specialty: "Space · Sci-fi · Modular systems", bio: "Astrophysics student who found bricks more satisfying than theory. Daniel designed the modular port system in Retro Space Station and is currently deep in R&D on the next Space collection entry.", sets: ["Retro Space Station"], image: U("1644175897056-50f4d3a9a827", 400, 400), years: 3 },
+  { name: "Yuki Tanaka", role: "Quality & Instruction Designer", specialty: "Builder guides · QA · Piece verification", bio: "Former technical writer who became obsessed with the craft of LEGO instruction design. Every illustrated builder's guide is Yuki's work — including the 420-page Dragon Fortress epic that multiple builders have described as 'a pleasure to read.'", sets: ["All Sets"], image: U("1631106256072-54c89defe828", 400, 400), years: 4 },
+];
+
+const MOCK_ORDER = {
+  number: "ABE-2026-08421", product: "Mountain Railway Express", placed: "August 7, 2026",
+  status: "In Transit", eta: "August 13, 2026", carrier: "UPS", tracking: "1Z999AA10123456784",
+  steps: [
+    { label: "Order Placed", date: "Aug 7, 2026", done: true },
+    { label: "Payment Confirmed", date: "Aug 7, 2026", done: true },
+    { label: "Packed & Dispatched", date: "Aug 8, 2026", done: true },
+    { label: "In Transit", date: "Aug 9, 2026", done: true },
+    { label: "Out for Delivery", date: "Est. Aug 13, 2026", done: false },
+    { label: "Delivered", date: "Est. Aug 13, 2026", done: false },
+  ],
+};
+
+const DEPARTMENTS = ["Order Support","Shipping & Tracking","Returns & Exchanges","Product Questions","Commission Build Inquiry","Press & Media","Community & Events","Other"];
+const US_STATES = ["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"];
+const COUNTRIES = ["United States","Canada","United Kingdom","Australia","Germany","France","Japan","Other"];
+
+function buildSections(page, c) {
+  const s = c.state;
+  const go = (p, extra) => () => c.go(p, extra);
+  switch (page) {
+    case "support":
+      return [
+        S("cards", { cols: 2, items: [
+          { icon: "✉", title: "FAQ", body: "Answers to the most common questions about orders, products, and the community.", go: go("faq") },
+          { icon: "▤", title: "Shipping Info", body: "Delivery options, timelines, international shipping, and what to expect.", go: go("shipping") },
+          { icon: "↺", title: "Returns & Exchanges", body: "Our 30-day return policy and step-by-step exchange process.", go: go("returns") },
+          { icon: "⌕", title: "Track Your Order", body: "Enter your order number to get live shipping and delivery updates.", go: go("track") },
+          { icon: "☏", title: "Contact Us", body: "Reach our support team directly. We respond within one business day.", go: go("contact") },
+        ]}),
+        S("callout", { body: "For press and media inquiries, visit our Press Room. For commission build requests, use the Contact form and select \u201cCommission Build Inquiry.\u201d" }),
+      ];
+    case "faq": {
+      const out = [];
+      FAQ_SECTIONS.forEach((sec) => {
+        out.push(S("heading", { title: sec.topic, accent: true, rule: true }));
+        out.push(S("accordion", { items: sec.items.map((it) => {
+          const key = sec.topic + "|" + it.q;
+          return { q: it.q, a: it.a, open: s.faqOpen === key, border: s.faqOpen === key ? "rgba(255,209,0,0.4)" : "rgba(255,255,255,0.08)",
+            rotate: s.faqOpen === key ? "rotate(180deg)" : "rotate(0deg)", color: s.faqOpen === key ? "#ffd100" : "#8a8a8a",
+            toggle: () => c.setState({ faqOpen: s.faqOpen === key ? null : key }) };
+        })}));
+      });
+      out.push(S("cta", { note: "Still have a question?", buttons: [{ label: "Contact Support", primary: true, go: go("contact") }] }));
+      return out;
+    }
+    case "shipping":
+      return [
+        S("heading", { title: "Delivery Options" }),
+        S("cards", { cols: 2, items: [
+          { icon: "▤", title: "Standard Shipping", meta1: "5–7 Business Days", meta2: "Free over $75 · $6.99 under", body: "Our default shipping method via USPS or UPS Ground. Tracking included on every order.", note: "Best for non-urgent orders." },
+          { icon: "⚡", title: "Express Shipping", meta1: "2–3 Business Days", meta2: "$14.99", body: "Priority handling and expedited carrier routing. Orders placed before 12 PM ET ship same day.", note: "Available for all domestic US addresses." },
+          { icon: "⛟", title: "Overnight", meta1: "Next Business Day", meta2: "$29.99", body: "Guaranteed next-business-day delivery for orders placed before 12 PM ET Monday–Friday.", note: "Not available for PO Boxes or certain rural routes." },
+          { icon: "◍", title: "International", meta1: "10–18 Business Days", meta2: "Calculated at checkout", body: "We ship to 40+ countries via DHL and USPS International. Rates vary by destination and package weight.", note: "Customs duties and import taxes are the recipient's responsibility." },
+        ]}),
+        S("heading", { title: "Good to Know" }),
+        S("checks", { items: [
+          "All orders are processed and shipped from our Colorado facility.",
+          "Orders placed Monday–Friday before 12 PM ET typically ship the same day.",
+          "Weekend orders are processed the following Monday.",
+          "Large sets (3,000+ pieces) may require an additional 1–2 business days for careful packaging.",
+          "Limited edition sets ship with white-glove packaging and signature confirmation.",
+          "You'll receive a tracking email the moment your order leaves our facility.",
+        ].map((label) => ({ label, negative: false, mark: "✓", markColor: "#ffd100" })) }),
+        S("cards", { cols: 2, items: [
+          { icon: "⛟", title: "Track Your Order", body: "Enter your order number to get live tracking", center: true, go: go("track") },
+          { icon: "▤", title: "Shipping Issue?", body: "Contact our team and we'll sort it out", center: true, go: go("contact") },
+        ]}),
+      ];
+    case "returns":
+      return [
+        S("heading", { title: "How It Works" }),
+        S("numbered", { items: [
+          { number: "01", title: "Initiate Your Return", body: "Email support@alpinebrickexchange.com with your order number and reason for return. You can also use the Contact form. We respond within 1 business day." },
+          { number: "02", title: "Receive Your Prepaid Label", body: "We'll email you a prepaid return shipping label. No cost to you. Print it and attach it securely to the outside of the original packaging." },
+          { number: "03", title: "Drop Off Your Package", body: "Drop the package at any USPS or UPS location. Keep your receipt — it includes a tracking number so you can confirm we've received it." },
+          { number: "04", title: "Receive Your Refund", body: "Once we receive and inspect the return (typically within 2 business days of arrival), your refund is issued to the original payment method within 5–7 business days." },
+        ]}),
+        S("split", { left: { title: "Eligible for Return", items: [
+            "Unopened sets in original packaging within 30 days of delivery",
+            "Sets with manufacturing defects (opened packaging accepted)",
+            "Wrong item received",
+            "Sets damaged in transit — contact us with photos within 72 hours",
+          ].map((label) => ({ label, mark: "✓", markColor: "#ffd100" })) },
+          right: { title: "Not Eligible", items: [
+            "Limited edition and collector's edition sets (all sales final)",
+            "Opened sets without a manufacturing defect",
+            "Sets returned after 30 days from delivery",
+            "Sets missing original packaging, certificates, or accessories",
+            "Commission builds",
+          ].map((label) => ({ label, mark: "✕", markColor: "#e3000b" })) } }),
+        S("callout", { title: "Exchanges", body: "Exchanges follow the same process as returns. Once we receive your item, we'll ship the replacement with priority handling at no additional shipping charge. If the set you want is out of stock, we'll issue a full refund or store credit — your choice." }),
+        S("cta", { buttons: [{ label: "Start a Return →", primary: true, go: go("contact") }] }),
+      ];
+    case "about":
+      return [
+        S("story", { title1: "We Built This", title2: "Because We Had To", image: U("1765403256661-c60b291c38ba", 700, 600), paras: [
+          { t: "Alpine Brick Exchange started at a kitchen table in Boulder, Colorado, in 2021. Three AFOLs — a structural engineer, a graphic designer, and a former toy industry product manager — kept buying sets that were almost what they wanted, and kept making the same decision: to build it themselves instead." },
+          { t: "The first set took eleven months. We gave away 40 copies to the local AFOL community, took their feedback, rebuilt it, and gave away 40 more. By the third iteration, people were asking where they could buy one." },
+          { t: "That's the whole origin story. No venture capital. No brand strategy. Just three builders who wanted better sets and didn't know when to stop improving them." },
+        ]}),
+        S("stats", { items: [
+          { value: "2021", label: "Founded" }, { value: "8", label: "Sets Launched" },
+          { value: "12K+", label: "Builders Worldwide" }, { value: "Boulder, CO", label: "Home Base" },
+        ]}),
+        S("heading", { title: "What We Believe" }),
+        S("cards", { cols: 2, items: [
+          { title: "Community First", body: "Every design decision starts with the same question: would an AFOL love this? Not a focus group. Not a trend report. An actual adult fan of LEGO who knows the hobby from the inside." },
+          { title: "No Compromises", body: "We don't ship sets until we're proud of them. That's meant delaying launches, scrapping near-finished designs, and restarting builds from scratch. We'd rather do it right than do it fast." },
+          { title: "Built to Last", body: "Our sets are engineered to be displayed, handled, and played with — not to sit in a cupboard. Every structural element is load-tested. Collector-grade quality isn't a marketing claim; it's an engineering standard." },
+          { title: "Transparent by Default", body: "We share our design process publicly, publish piece counts and difficulty ratings honestly, and tell you exactly what's in every box before you buy. No surprises." },
+        ]}),
+        S("cta", { buttons: [
+          { label: "Meet the Team →", primary: true, go: go("designers") },
+          { label: "Join the Community", primary: false, go: go("community") },
+        ]}),
+      ];
+    case "designers":
+      return [
+        S("team", { items: TEAM.map((m) => ({ ...m, yearsLabel: m.years + " yrs experience", tags: m.sets.map((label) => ({ label })) })) }),
+        S("callout", { boxed: true, center: true, title: "Want to Join the Team?", body: "We're a small, serious studio. When we grow, we grow carefully. Check our Careers page for current openings, or introduce yourself through the Community forum.", buttons: [{ label: "View Openings", primary: true, go: go("careers") }] }),
+      ];
+    case "careers":
+      return [
+        S("heading", { title: "Current Openings" }),
+        S("cards", { cols: 1, items: [
+          { title: "Senior Build Designer — Fantasy & Adventure", meta1: "Full-time", meta2: "Boulder, CO (on-site)", body: "We're looking for a designer with a proven track record in large-scale fantasy builds — castles, creatures, and environments. You'll own set concepts from sketch through final QA and work directly with our structural team on mechanism integration.", bulletsTitle: "What We're Looking For", bullets: ["5+ years experience designing AFOL-level builds","Strong portfolio of fantasy or historical architecture builds","Familiarity with SNOT techniques and Technic integration","Experience working within piece count and cost constraints"].map((label) => ({ label })), headerCtaLabel: "Apply →", headerCtaGo: go("contact") },
+          { title: "Instruction Designer & Technical Writer", meta1: "Full-time", meta2: "Boulder, CO or Remote", body: "You'll own the illustrated builder's guide for every new set — from build sequence logic through final print-ready layout. Our guides are a product in themselves, and this role requires equal parts technical precision and visual storytelling ability.", bulletsTitle: "What We're Looking For", bullets: ["Experience designing step-by-step build instructions","Proficiency in vector illustration and layout software","Strong written communication skills","Brick-building experience at an intermediate level or above"].map((label) => ({ label })), headerCtaLabel: "Apply →", headerCtaGo: go("contact") },
+          { title: "Community & Events Manager", meta1: "Part-time · Contract", meta2: "Remote", body: "We need someone to grow and steward our builder community — managing the forum, coordinating Discord events, running builder challenges, and representing Alpine Brick at LEGO fan conventions. This role is the public face of the Exchange community.", bulletsTitle: "What We're Looking For", bullets: ["Active AFOL community participation","Experience managing online communities (Discord, forum platforms)","Clear, engaging written communication","Ability to travel to 3–5 LEGO fan events per year"].map((label) => ({ label })), headerCtaLabel: "Apply →", headerCtaGo: go("contact") },
+        ]}),
+        S("checks", { boxed: true, cols: 2, title: "Why Work Here", items: [
+          "Full set library access — every Alpine Brick set, yours to keep",
+          "Flexible hours built around build cycles, not 9-to-5",
+          "Health, dental, and vision (full-time roles)",
+          "Annual LEGO parts budget ($500/yr, no questions asked)",
+          "Attendance at major LEGO fan conventions on Alpine Brick",
+          "Profit-sharing on sets you lead",
+        ].map((label) => ({ label, mark: "◆", markColor: "#ffd100" })) }),
+        S("callout", { title: "Don't See Your Role?", body: "We occasionally hire for roles we haven't posted yet. If you're a serious AFOL builder with a skill you think the studio needs, introduce yourself through our Contact page. We read every email.", buttons: [{ label: "Get in Touch →", primary: false, link: true, go: go("contact") }] }),
+      ];
+    case "press":
+      return [
+        S("cards", { grid: "2fr 1fr", items: [
+          { accent: true, eyebrow: "Press Contact", title: "Media Inquiries", body: "For interview requests, product review samples, and press credentials for LEGO fan events, contact our media team directly. We respond to all media inquiries within one business day.", email: "press@alpinebrickexchange.com" },
+          { icon: "⤓", center: true, title: "Press Kit", body: "Logos, photos, guidelines, and fact sheet — all in one download.", ctaLabel: "⤓ Download Kit", ctaGo: go("press") },
+        ]}),
+        S("heading", { title: "Recent Coverage" }),
+        S("rows", { boxed: false, items: [
+          { tag: "Brick Fanatics", meta: "March 2026", title: "Alpine Brick Exchange Is Making the LEGO Sets the Community Always Wanted", body: "What started in a Boulder kitchen has become one of the most talked-about names in the AFOL community. Their Dragon Fortress set has a waiting list." },
+          { tag: "The Brothers Brick", meta: "January 2026", title: "Review: Mountain Railway Express — An Expert-Grade Build Worth Every Hour", body: "The load-bearing viaduct alone is worth the price of admission. But it's the 14-grey-variant cliff face that'll stop you mid-build to simply look." },
+          { tag: "Wired", meta: "November 2025", title: "The LEGO Aftermarket Is Growing Up — And These Indie Studios Are Leading It", body: "A new generation of AFOL-founded companies is producing sets that rival — and in some ways exceed — what you'll find in any official catalog." },
+          { tag: "Toy World Magazine", meta: "December 2025", title: "Five Indie Brick Companies to Watch in 2026", body: "Alpine Brick Exchange tops our list for production quality, community engagement, and the sheer ambition of their design pipeline." },
+          { tag: "AFOL Magazine", meta: "September 2025", title: "The Art of the Builder's Guide: Yuki Tanaka on Making Instructions Worth Reading", body: "Inside the philosophy behind the most celebrated instruction booklets in the independent LEGO set market." },
+        ].map((r) => ({ ...r, hasTag: true, hasMeta: true, hasBody: true, right: "↗" })) }),
+        S("heading", { title: "Media Assets" }),
+        S("rows", { boxed: true, items: [
+          { title: "Logo Pack (SVG, PNG, Dark/Light)", sub: "2.4 MB" },
+          { title: "Product Photography — Full Catalog", sub: "118 MB" },
+          { title: "Founders Headshots", sub: "14 MB" },
+          { title: "Brand Guidelines PDF", sub: "4.1 MB" },
+          { title: "Company Fact Sheet", sub: "0.8 MB" },
+        ].map((r) => ({ ...r, hasSub: true, right: "⤓ Download" })) }),
+      ];
+    case "community":
+      return [
+        S("heading", { title: "Where We Gather" }),
+        S("cards", { cols: 2, items: [
+          { icon: "✉", title: "Community Forum", body: "The main hub for discussion, build showcases, buy/sell/trade listings, and set feedback. Over 4,200 active members.", ctaLabel: "Visit Forum →" },
+          { icon: "◍", title: "Discord Server", body: "Real-time chat for builders, dedicated channels for each set, sneak peek drops, and direct access to our design team during office hours.", ctaLabel: "Join Discord →" },
+          { icon: "♔", title: "Builder Challenges", body: "Monthly building challenges with themes chosen by the community. Winners receive store credit and early access to upcoming sets.", ctaLabel: "See Current Challenge →" },
+          { icon: "▦", title: "Events & Conventions", body: "We attend BrickFair, Bricks by the Bay, BrickWorld, and regional AFOL events throughout the year. Come find us at the table.", ctaLabel: "View Event Calendar →" },
+        ]}),
+        S("heading", { title: "Upcoming Events" }),
+        S("rows", { boxed: true, items: [
+          { title: "BrickWorld Chicago", sub: "Schaumburg, IL", tag: "Convention", meta: "September 12–14, 2026" },
+          { title: "Alpine Brick Build Night — Boulder", sub: "Boulder, CO", tag: "Local Event", meta: "August 22, 2026" },
+          { title: "Community Build Challenge #14 Deadline", sub: "Online", tag: "Challenge", meta: "August 31, 2026" },
+          { title: "BrickFair Virginia", sub: "Chantilly, VA", tag: "Convention", meta: "October 3–5, 2026" },
+        ].map((r) => ({ ...r, hasSub: true, hasTag: true, hasMeta: true, tagRight: true,
+          tagBg: r.tag === "Convention" ? "#ffd100" : r.tag === "Challenge" ? "#ffffff" : "#1e1e1e",
+          tagFg: r.tag === "Local Event" ? "#8a8a8a" : "#0f0f0f" })) }),
+        S("heading", { title: "From the Builders" }),
+        S("quotes", { cols: 3, items: [
+          { quote: "\u201cThe Dragon Fortress is the most satisfying 40 hours I've spent at a table. The secret passages took me four and a half hours to find. Worth every minute.\u201d", name: "R. Howell", handle: "@brickwright_rob", set: "Dragon Fortress" },
+          { quote: "\u201cMountain Railway Express has permanently taken up a third of my desk. My partner is very understanding. The viaduct is genuinely structural art.\u201d", name: "T. Inoue", handle: "@tinoue_builds", set: "Mountain Railway Express" },
+          { quote: "\u201cI've built sets from every major independent studio. Alpine Brick's builder guides are in a different class. Yuki's sequencing is practically meditative.\u201d", name: "C. Oduya", handle: "@coduya_afol", set: "Millennium City Skyline" },
+        ]}),
+        S("banner", { title: "Ready to Build with Us?", body: "Join 12,000+ builders in the Exchange. Free to join — just bring your enthusiasm.", buttons: [{ label: "Join the Forum →", primary: true }, { label: "Join Discord", primary: false }] }),
+      ];
+    default:
+      return [];
+  }
+}
+</script>
+</body>
+</html>

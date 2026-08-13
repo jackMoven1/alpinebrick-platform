@@ -1,0 +1,53 @@
+/* Alpine Brick Exchange — design tokens (verified against the Figma Make source) */
+:root, .dark {
+  --font-size: 16px;
+  --font-display: 'Barlow Condensed', sans-serif;
+  --font-sans: 'DM Sans', sans-serif;
+
+  --background: #0f0f0f;
+  --foreground: #f0ede8;
+  --card: #181818;
+  --card-foreground: #f0ede8;
+  --popover: #181818;
+  --popover-foreground: #f0ede8;
+  --primary: #ffd100;
+  --primary-foreground: #0f0f0f;
+  --secondary: #1e1e1e;
+  --secondary-foreground: #f0ede8;
+  --muted: #242424;
+  --muted-foreground: #8a8a8a;
+  --accent: #ffffff;
+  --accent-foreground: #0f0f0f;
+  --destructive: #e3000b;
+  --destructive-foreground: #ffffff;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: transparent;
+  --input-background: #1e1e1e;
+  --switch-background: #3a3a3a;
+  --ring: rgba(255, 209, 0, 0.5);
+  --radius: 0.125rem;
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+
+  --chart-1: #ffd100;
+  --chart-2: #e3000b;
+  --chart-3: #3b82f6;
+  --chart-4: #10b981;
+  --chart-5: #f97316;
+
+  --sidebar: #181818;
+  --sidebar-foreground: #f0ede8;
+  --sidebar-primary: #ffd100;
+  --sidebar-primary-foreground: #0f0f0f;
+  --sidebar-accent: #242424;
+  --sidebar-accent-foreground: #f0ede8;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: rgba(255, 209, 0, 0.5);
+
+  /* difficulty scale */
+  --difficulty-beginner: #4ade80;
+  --difficulty-intermediate: #ffd100;
+  --difficulty-advanced: #fb923c;
+  --difficulty-expert: #f87171;
+}
