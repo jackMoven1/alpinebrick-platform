@@ -1,16 +1,37 @@
 import { createBrowserRouter } from 'react-router'
 
-// Placeholder route table. Task 10 replaces this with the full shell and the
-// complete route set from the design handoff.
+import Root from './app/Root'
+import NotFound from './pages/NotFound'
+
+// Routes whose page component does not exist yet render NotFound rather than
+// crashing the router. They are filled in as the pages land.
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: (
-      <main className="min-h-screen bg-background text-foreground grid place-items-center">
-        <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-          Alpine Brick Exchange — storefront scaffold
-        </p>
-      </main>
-    ),
+    Component: Root,
+    errorElement: <NotFound />,
+    children: [
+      { index: true, Component: NotFound },
+
+      { path: 'product/:id', Component: NotFound },
+      { path: 'collections', Component: NotFound },
+      { path: 'collections/:slug', Component: NotFound },
+      { path: 'checkout', Component: NotFound },
+
+      { path: 'support', Component: NotFound },
+      { path: 'support/faq', Component: NotFound },
+      { path: 'support/shipping', Component: NotFound },
+      { path: 'support/returns', Component: NotFound },
+      { path: 'support/track-order', Component: NotFound },
+      { path: 'support/contact', Component: NotFound },
+
+      { path: 'about', Component: NotFound },
+      { path: 'designers', Component: NotFound },
+      { path: 'careers', Component: NotFound },
+      { path: 'press', Component: NotFound },
+      { path: 'community', Component: NotFound },
+
+      { path: '*', Component: NotFound },
+    ],
   },
 ])
