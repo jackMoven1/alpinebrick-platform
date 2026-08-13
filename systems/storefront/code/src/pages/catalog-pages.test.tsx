@@ -38,8 +38,8 @@ function product(over: Partial<Product> = {}): Product {
     description: 'Ancient stone walls.', productType: 'resale',
     releaseType: 'limited_run', status: 'published',
     images: [
-      { url: '/a.jpg', alt: 'Dragon Fortress front' },
-      { url: '/b.jpg', alt: 'Dragon Fortress rear' },
+      { storageKey: 'products/p1/a/original.jpg', alt: 'Dragon Fortress front', width: 1600, height: 1200, position: 0 },
+      { storageKey: 'products/p1/b/original.jpg', alt: 'Dragon Fortress rear', width: 1600, height: 1200, position: 1 },
     ],
     categories: ['fantasy'], pieces: 3156, difficulty: 'advanced',
     ageRecommendation: '14+', dimensions: '40 x 30 cm',

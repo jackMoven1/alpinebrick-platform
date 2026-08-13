@@ -2,6 +2,7 @@ import { Link } from 'react-router'
 import { Badge, Card, Eyebrow } from '../design-system/primitives'
 import { deriveBadge } from '../lib/badge'
 import { formatCents, minPriceCents } from '../lib/money'
+import { imageUrl, imageSrcSet, CARD_WIDTHS } from '../lib/images'
 import type { Product } from '../lib/api/types'
 
 export function ProductCard({ product }: { product: Product }) {
@@ -24,8 +25,14 @@ export function ProductCard({ product }: { product: Product }) {
         <div className="aspect-[5/4] bg-muted overflow-hidden">
           {image && (
             <img
-              src={image.url}
+              src={imageUrl(image.storageKey, { width: 900 })}
+              srcSet={imageSrcSet(image.storageKey, CARD_WIDTHS)}
+              sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
               alt={image.alt}
+              // Intrinsic size reserves layout space; without it every card
+              // reflows as images load.
+              width={image.width}
+              height={image.height}
               loading="lazy"
               className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             />

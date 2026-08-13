@@ -10,7 +10,10 @@ function make(over: Partial<Product> = {}): Product {
     id: 'p1', slug: 'dragon-fortress', name: 'Dragon Fortress',
     description: 'Ancient stone walls.', productType: 'resale',
     releaseType: 'standard', status: 'published',
-    images: [{ url: '/img/df.jpg', alt: 'Dragon Fortress front view' }],
+    images: [{
+      storageKey: 'products/p1/i1/original.jpg', alt: 'Dragon Fortress front view',
+      width: 900, height: 720, position: 0,
+    }],
     categories: ['fantasy'], pieces: 3156, difficulty: 'advanced',
     ageRecommendation: '14+', dimensions: '40 x 30 cm', longDescription: '',
     features: [], includes: [], builderNotes: '',
@@ -39,6 +42,25 @@ describe('ProductCard', () => {
   it('uses the image alt text supplied by the API', () => {
     wrap(make())
     expect(screen.getByAltText('Dragon Fortress front view')).toBeInTheDocument()
+  })
+
+  it('resolves the src from the storage key', () => {
+    wrap(make())
+    expect(screen.getByAltText('Dragon Fortress front view'))
+      .toHaveAttribute('src', expect.stringContaining('products/p1/i1/original.jpg'))
+  })
+
+  // Without intrinsic dimensions every card reflows as images load.
+  it('reserves layout space with width and height attributes', () => {
+    wrap(make())
+    const img = screen.getByAltText('Dragon Fortress front view')
+    expect(img).toHaveAttribute('width', '900')
+    expect(img).toHaveAttribute('height', '720')
+  })
+
+  it('emits a srcset so the browser can pick a size', () => {
+    wrap(make())
+    expect(screen.getByAltText('Dragon Fortress front view')).toHaveAttribute('srcset')
   })
 
   it('renders the Limited badge for a limited run', () => {

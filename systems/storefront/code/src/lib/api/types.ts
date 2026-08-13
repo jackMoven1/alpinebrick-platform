@@ -1,8 +1,14 @@
 export type Difficulty = 'beginner' | 'intermediate' | 'advanced' | 'expert';
 
 export interface ProductImage {
-  url: string;
+  /** Immutable storage key, NOT a URL. Resolve it with lib/images.ts. */
+  storageKey: string;
   alt: string;
+  /** Intrinsic pixel size. Render these so cards reserve layout space. */
+  width: number;
+  height: number;
+  /** Display order within the product; 0 is the primary image. */
+  position: number;
 }
 
 export interface Variant {

@@ -15,7 +15,9 @@
     "allowImportingTsExtensions": false,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["vitest/globals", "@testing-library/jest-dom"]
+    // vite/client declares import.meta.env, which lib/images.ts reads for the
+    // asset base URL. Without it the tests still pass and the build fails.
+    "types": ["vitest/globals", "@testing-library/jest-dom", "vite/client"]
   },
   // Only application source. vite.config.ts and vitest.config.ts are executed
   // by the bundler, not part of the app's type graph — and including them makes

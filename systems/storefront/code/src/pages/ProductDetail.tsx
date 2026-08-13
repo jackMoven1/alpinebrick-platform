@@ -5,6 +5,7 @@ import type { Availability, Product } from '../lib/api/types'
 import { Badge, Button, Eyebrow, Tabs, type Tab } from '../design-system/primitives'
 import { deriveBadge } from '../lib/badge'
 import { formatCents, minPriceCents } from '../lib/money'
+import { imageUrl, imageSrcSet, DETAIL_WIDTHS } from '../lib/images'
 import { useCart } from '../lib/cart/CartContext'
 
 interface ProductData {
@@ -72,7 +73,7 @@ export default function ProductDetail() {
       productSlug: product.slug,
       name: product.name,
       priceCents: variant.priceCents,
-      image: product.images[0]?.url ?? '',
+      imageKey: product.images[0]?.storageKey ?? '',
     })
     setAdded(true)
     window.setTimeout(() => setAdded(false), 2000)
@@ -124,13 +125,23 @@ export default function ProductDetail() {
       <div className="grid lg:grid-cols-2 gap-12">
         <div>
           <div className="aspect-[5/4] bg-muted overflow-hidden">
-            {image && <img src={image.url} alt={image.alt} className="w-full h-full object-cover" />}
+            {image && (
+              <img
+                src={imageUrl(image.storageKey, { width: 1400 })}
+                srcSet={imageSrcSet(image.storageKey, DETAIL_WIDTHS)}
+                sizes="(min-width: 1024px) 50vw, 100vw"
+                alt={image.alt}
+                width={image.width}
+                height={image.height}
+                className="w-full h-full object-cover"
+              />
+            )}
           </div>
           {product.images.length > 1 && (
             <div className="flex gap-3 mt-4">
               {product.images.map((img, i) => (
                 <button
-                  key={img.url}
+                  key={img.storageKey}
                   type="button"
                   onClick={() => setActiveImage(i)}
                   aria-label={`View ${img.alt}`}
@@ -139,7 +150,15 @@ export default function ProductDetail() {
                     i === activeImage ? 'ring-2 ring-primary' : 'opacity-60 hover:opacity-100'
                   }`}
                 >
-                  <img src={img.url} alt="" className="w-full h-full object-cover" />
+                  {/* Empty alt: the button already carries the accessible name,
+                      so announcing it twice is noise for a screen reader. */}
+                  <img
+                    src={imageUrl(img.storageKey, { width: 200 })}
+                    alt=""
+                    width={img.width}
+                    height={img.height}
+                    className="w-full h-full object-cover"
+                  />
                 </button>
               ))}
             </div>

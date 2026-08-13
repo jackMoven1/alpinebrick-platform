@@ -7,12 +7,12 @@ const wrapper = ({ children }: { children: ReactNode }) => <CartProvider>{childr
 
 const LINE_A = {
   variantId: 'v1', productId: 'p1', productSlug: 'a',
-  name: 'Set A', priceCents: 5000, image: '/a.jpg',
+  name: 'Set A', priceCents: 5000, imageKey: 'products/p1/a/original.jpg',
 }
 // Same product, different variant and price.
 const LINE_B = {
   variantId: 'v2', productId: 'p1', productSlug: 'a',
-  name: 'Set A', priceCents: 7000, image: '/a.jpg',
+  name: 'Set A', priceCents: 7000, imageKey: 'products/p1/a/original.jpg',
 }
 
 describe('cart', () => {
