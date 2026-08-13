@@ -1104,7 +1104,7 @@ Run: `cd systems/core && npx tsc --noEmit && npm run build`
 Expected: clean.
 
 Run: `cd systems/core && node dist/server.js` then in another shell
-`curl "http://localhost:3000/api/v1/catalog/products?sort=price_asc&pageSize=3"`
+`curl "http://localhost:4000/api/v1/catalog/products?sort=price_asc&pageSize=3"`
 Expected: JSON with `items`, `total`, `page`, `pageSize`, and `images` populated. **A green suite does not prove this** — it is a separate check.
 
 - [ ] **Step 8: Commit**
@@ -1194,7 +1194,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
-    proxy: { '/api': { target: 'http://localhost:3000', changeOrigin: true } },
+    // core listens on 4000 (src/server.ts: PORT ?? 4000), NOT 3000.
+    proxy: { '/api': { target: 'http://localhost:4000', changeOrigin: true } },
   },
 })
 ```
@@ -3275,7 +3276,7 @@ Visit the preview URL and confirm, by eye:
 
 - [ ] **Step 4: Rewrite the storefront READMEs**
 
-`systems/storefront/code/README.md` must replace the stale architecture entirely. The old one documents an Express proxy to `catalog-service:4001` through `affiliate-service:4004` — all removed mocks. State: the app talks to `systems/core` at `/api/v1/catalog` via the Vite dev proxy; Tailwind v4 is configured in `src/styles/globals.css`, not `tailwind.config.js`; run with core on port 3000 and `npm run dev` on 5173.
+`systems/storefront/code/README.md` must replace the stale architecture entirely. The old one documents an Express proxy to `catalog-service:4001` through `affiliate-service:4004` — all removed mocks. State: the app talks to `systems/core` at `/api/v1/catalog` via the Vite dev proxy; Tailwind v4 is configured in `src/styles/globals.css`, not `tailwind.config.js`; run with **core on port 4000** and `npm run dev` on 5173.
 
 `systems/storefront/README.md` — update the status table: Sprint 1 complete, cart/checkout deferred to sub-project C, tracking and contact to D. Remove the service-dependency list naming the four mock services.
 

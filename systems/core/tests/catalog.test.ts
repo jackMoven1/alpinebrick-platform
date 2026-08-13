@@ -11,11 +11,14 @@ afterAll(() => prisma.$disconnect())
 
 describe('catalog API', () => {
   it('lists only published products, excluding drafts', async () => {
+    const published = await prisma.product.count({ where: { status: 'published' } })
     await prisma.product.create({ data: { slug: 'draft-set', name: 'Draft Set', productType: 'own_designed', status: 'draft' } })
     const res = await request(app).get('/api/v1/catalog/products')
     expect(res.status).toBe(200)
-    expect(res.body.total).toBe(2)
-    expect(res.body.items).toHaveLength(2)
+    // Counted from the seed rather than hardcoded: this test is about drafts
+    // being excluded, not about how many products the seed happens to carry.
+    expect(res.body.total).toBe(published)
+    expect(res.body.items).toHaveLength(published)
     expect(res.body.items.map((p: any) => p.slug)).not.toContain('draft-set')
   })
 

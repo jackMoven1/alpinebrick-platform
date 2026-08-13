@@ -1,6 +1,9 @@
 # ADR-0001 — Catalog API Contract
 
 **Status:** ACCEPTED — both engineers signed off and sign-off conditions 1–6 are met (2026-06-03). Image-CDN and relevance-search remain carved out as future ADRs / Jack spend decisions.
+**AMENDED 2026-08-12 - read the amendment at the end of this file before using this contract.**
+The v1 surface below was never implemented as written; core became the source of truth.
+
 **Owners:** `catalog-engineer` (primary), `storefront-engineer` (primary), `engineering-lead` (approver).
 **Date opened:** 2026-06-03.
 
@@ -157,3 +160,65 @@ These decisions were ruled by the Engineering Lead on 2026-06-03 after the Store
 - Status values: `DRAFT`, `PROPOSED`, `ACCEPTED`, `SUPERSEDED`, `DEPRECATED`.
 - Each ADR names primary owners (which engineer agents) and an approver.
 - Superseding ADRs link back to what they replace.
+
+---
+
+## Amendment — 2026-08-12: core becomes the source of truth
+
+**Status:** ACCEPTED — ruled by Jack, 2026-08-12.
+**Contract version:** `contracts/openapi/catalog.yaml` moves to 2.0.0.
+
+The v1 surface frozen above was never implemented as written. `systems/core`
+shipped a different API: `pageSize` rather than `limit`, camelCase rather than
+snake_case, integer cents rather than float dollars, and no `category`, `sort`
+or `published` parameters. The storefront's `catalogService.js` was written
+faithfully to this document, which is exactly why it did not work against core.
+
+**Resolution: core wins on shape; this contract wins on features.**
+
+Core keeps camelCase, `pageSize`, and integer cents. Core gains the `category`
+filter, the `sort` enum, `images` as `{url, alt}`, and the
+`{code, message, fields?}` error envelope. `contracts/openapi/catalog.yaml` is
+rewritten to describe core as built.
+
+**Why not the reverse.** Core is running, tested and merged. This contract's
+only consumer was a storefront replaced in the same change, so conforming core
+to the document would have churned tested code to satisfy a specification with
+no other reader.
+
+**Integer cents is not revisitable.** This document typed price as
+`number, format: float`. Floating-point dollars accumulate representation error
+and the repository money convention forbids estimated figures. Every price in
+this system is an integer count of cents.
+
+### The sort enum widens from four values to six
+
+`home_display` and `collection_display` are added for merchandised display
+order. The four original values keep their exact semantics, so this is
+additive.
+
+### Merchandised display order
+
+Two nullable integer columns, `homePosition` and `collectionPosition`, carry the
+order in which products should be shown. The server returns products already
+ordered; **the storefront never re-sorts what it receives**, because a client
+that re-sorts disagrees with the server as soon as pagination is involved —
+page 2 would be sorted independently of page 1.
+
+There are two orderings because a product place on the home page is not its
+place inside a collection. Both sort ascending, place unranked products **last**
+(`NULLS LAST`), and break ties on `name` so pagination is stable.
+
+Nullable rather than defaulted to `0`: a new product is unmerchandised, and a
+`0` default would silently promote it to the top of the home page.
+
+**Accepted limitation.** `categories` is an array, so a product in several
+collections carries one `collectionPosition` and holds the same rank in each.
+Per-collection ranking would need a `(productId, collectionSlug, position)`
+join table. Not built — nothing needs it yet.
+
+### Still carved out and still undecided
+
+The image CDN (ADR-0002, DRAFT) and relevance search (ADR-0003, DRAFT), both
+Jack spend decisions. `{url, alt}` remains forward-compatible with adding
+`width`, `height` and `srcset` variants.
