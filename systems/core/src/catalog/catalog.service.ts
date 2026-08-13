@@ -1,15 +1,60 @@
 import { prisma } from '../prisma.js'
 
+export interface ProductImage { url: string; alt: string }
+
 export interface ProductDto {
   id: string; slug: string; name: string; description: string
   productType: string; releaseType: string; status: string
+  images: ProductImage[]
+  categories: string[]
+  pieces: number | null
+  difficulty: string | null
+  ageRecommendation: string | null
+  dimensions: string | null
+  longDescription: string
+  features: string[]
+  includes: string[]
+  builderNotes: string
+  homePosition: number | null
+  collectionPosition: number | null
+  createdAt: Date
   variants: { id: string; sku: string; priceCents: number; currency: string }[]
+}
+
+// `images` and `categories` are Json columns, so Postgres enforces nothing about
+// their shape. Validate on read and drop anything malformed: a corrupt row must
+// render without images rather than crash the grid.
+export function toImages(v: unknown): ProductImage[] {
+  if (!Array.isArray(v)) return []
+  return v.filter(
+    (i): i is ProductImage =>
+      typeof i === 'object' && i !== null &&
+      typeof (i as any).url === 'string' && typeof (i as any).alt === 'string',
+  )
+}
+
+export function toStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return []
+  return v.filter((s): s is string => typeof s === 'string')
 }
 
 function toDto(p: any): ProductDto {
   return {
     id: p.id, slug: p.slug, name: p.name, description: p.description,
     productType: p.productType, releaseType: p.releaseType, status: p.status,
+    images: toImages(p.images),
+    categories: toStringArray(p.categories),
+    pieces: p.pieces ?? null,
+    difficulty: p.difficulty ?? null,
+    ageRecommendation: p.ageRecommendation ?? null,
+    dimensions: p.dimensions ?? null,
+    longDescription: p.longDescription ?? '',
+    features: toStringArray(p.features),
+    includes: toStringArray(p.includes),
+    builderNotes: p.builderNotes ?? '',
+    homePosition: p.homePosition ?? null,
+    collectionPosition: p.collectionPosition ?? null,
+    createdAt: p.createdAt,
     variants: p.variants.map((v: any) => ({ id: v.id, sku: v.sku, priceCents: v.priceCents, currency: v.currency })),
   }
 }
