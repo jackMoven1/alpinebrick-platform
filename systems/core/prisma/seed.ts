@@ -302,7 +302,7 @@ export async function seed(): Promise<void> {
     create: { id: 'system', type: 'human', name: 'system' },
   })
   for (const p of PRODUCTS) {
-    const { variants, ...fields } = p
+    const { variants, imagesJson, ...fields } = p
     await prisma.product.upsert({
       where: { slug: p.slug },
       update: {},
@@ -316,6 +316,27 @@ export async function seed(): Promise<void> {
         },
       },
     })
+
+    // Images are rows, not JSON. Created separately so re-seeding an existing
+    // product does not duplicate them.
+    const saved = await prisma.product.findUniqueOrThrow({ where: { slug: p.slug } })
+    if ((await prisma.image.count({ where: { productId: saved.id } })) === 0) {
+      await prisma.image.createMany({
+        data: imagesJson.map((img, position) => ({
+          productId: saved.id,
+          storageKey: img.url,
+          alt: img.alt,
+          position,
+          // The real viewBox of every placeholder SVG in the storefront's
+          // public/img/placeholder directory.
+          width: 900,
+          height: 720,
+          contentType: 'image/svg+xml',
+          byteSize: 512,
+          status: 'ready' as const,
+        })),
+      })
+    }
   }
 }
 

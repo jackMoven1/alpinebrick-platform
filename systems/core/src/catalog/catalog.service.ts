@@ -1,7 +1,13 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from '../prisma.js'
 
-export interface ProductImage { url: string; alt: string }
+export interface ProductImage {
+  storageKey: string
+  alt: string
+  width: number
+  height: number
+  position: number
+}
 
 export interface ProductDto {
   id: string; slug: string; name: string; description: string
@@ -22,18 +28,11 @@ export interface ProductDto {
   variants: { id: string; sku: string; priceCents: number; currency: string }[]
 }
 
-// `images` and `categories` are Json columns, so Postgres enforces nothing about
-// their shape. Validate on read and drop anything malformed: a corrupt row must
-// render without images rather than crash the grid.
-export function toImages(v: unknown): ProductImage[] {
-  if (!Array.isArray(v)) return []
-  return v.filter(
-    (i): i is ProductImage =>
-      typeof i === 'object' && i !== null &&
-      typeof (i as any).url === 'string' && typeof (i as any).alt === 'string',
-  )
-}
-
+// `categories`, `features` and `includes` are still Json columns, so Postgres
+// enforces nothing about their shape. Validate on read and drop anything
+// malformed rather than propagating it to the client.
+//
+// Images no longer need this: they are a real table with typed columns.
 export function toStringArray(v: unknown): string[] {
   if (!Array.isArray(v)) return []
   return v.filter((s): s is string => typeof s === 'string')
@@ -43,9 +42,10 @@ function toDto(p: any): ProductDto {
   return {
     id: p.id, slug: p.slug, name: p.name, description: p.description,
     productType: p.productType, releaseType: p.releaseType, status: p.status,
-    // Still the legacy JSON column. Task 5 switches this to the Image
-    // relation; keeping it here leaves the build green in between.
-    images: toImages(p.imagesJson),
+    images: (p.images ?? []).map((i: any) => ({
+      storageKey: i.storageKey, alt: i.alt,
+      width: i.width, height: i.height, position: i.position,
+    })),
     categories: toStringArray(p.categories),
     pieces: p.pieces ?? null,
     difficulty: p.difficulty ?? null,
@@ -148,7 +148,11 @@ export async function listProducts(opts: {
   // findMany does not preserve the ordered ID list, so re-order explicitly.
   const products = await prisma.product.findMany({
     where: { id: { in: ids } },
-    include: { variants: true },
+    include: {
+      variants: true,
+      // Pending images are half-uploaded and must never reach a customer.
+      images: { where: { status: 'ready' }, orderBy: { position: 'asc' } },
+    },
   })
   const byId = new Map(products.map(p => [p.id, p]))
   const items = ids.map(id => byId.get(id)).filter(Boolean).map(toDto)
@@ -159,7 +163,11 @@ export async function listProducts(opts: {
 export async function getProduct(idOrSlug: string): Promise<ProductDto | null> {
   const p = await prisma.product.findFirst({
     where: { status: 'published', OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
-    include: { variants: true },
+    include: {
+      variants: true,
+      // Pending images are half-uploaded and must never reach a customer.
+      images: { where: { status: 'ready' }, orderBy: { position: 'asc' } },
+    },
   })
   return p ? toDto(p) : null
 }
