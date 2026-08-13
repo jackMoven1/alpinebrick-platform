@@ -222,3 +222,34 @@ join table. Not built — nothing needs it yet.
 The image CDN (ADR-0002, DRAFT) and relevance search (ADR-0003, DRAFT), both
 Jack spend decisions. `{url, alt}` remains forward-compatible with adding
 `width`, `height` and `srcset` variants.
+
+---
+
+## Amendment — 2026-08-13: images become storage keys
+
+**Status:** ACCEPTED. **Contract version:** `catalog.yaml` moves to 3.0.0.
+
+`images[].url` is replaced by `images[].storageKey`, and `width`, `height` and
+`position` are added.
+
+**This is a breaking change**, not the additive extension ADR-0002
+anticipated — that note covered *extending* `{url, alt}` with width/height/
+variants, not *replacing* `url`.
+
+A URL welds a row to one host, one directory layout and one environment. A key
+is an identifier; the host and transform grammar resolve around it at render
+time, so changing CDN provider touches configuration and two resolver functions
+and **no database rows at all**.
+
+`url` is deliberately **not** retained alongside `storageKey`. The only consumer
+is our own storefront, and carrying both invites the wrong one being used, which
+would quietly reintroduce the hard-coded host this change exists to remove.
+
+Two further guarantees now hold at the contract level:
+
+- **Keys are immutable.** Bytes are never replaced in place, so a derivative URL
+  built from a key can be cached at the edge indefinitely.
+- **Only `ready` images are returned.** A partially uploaded image is invisible
+  to the public API, so a failed upload cannot surface a broken product page.
+
+Design: `docs/superpowers/specs/2026-08-13-product-image-asset-architecture-design.md`.
