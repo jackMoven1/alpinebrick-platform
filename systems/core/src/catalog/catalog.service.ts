@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { prisma } from '../prisma.js'
 
 export interface ProductImage { url: string; alt: string }
@@ -59,19 +60,98 @@ function toDto(p: any): ProductDto {
   }
 }
 
+export type CatalogSort =
+  | 'name_asc' | 'price_asc' | 'price_desc' | 'newest'
+  | 'home_display' | 'collection_display'
+
+export const VALID_SORTS: readonly CatalogSort[] = [
+  'name_asc', 'price_asc', 'price_desc', 'newest',
+  'home_display', 'collection_display',
+]
+
+export class CatalogValidationError extends Error {
+  constructor(public field: string, message: string) {
+    super(message)
+    this.name = 'CatalogValidationError'
+  }
+}
+
 export async function listProducts(opts: {
   page?: number; pageSize?: number; search?: string
+  category?: string; sort?: CatalogSort
   status?: 'published' | 'draft' | 'archived'
 }) {
-  const page = Math.max(1, opts.page ?? 1)
-  const pageSize = Math.min(100, Math.max(1, opts.pageSize ?? 20))
-  const where: any = { status: opts.status ?? 'published' }
-  if (opts.search) where.name = { contains: opts.search, mode: 'insensitive' }
-  const [rows, total] = await Promise.all([
-    prisma.product.findMany({ where, include: { variants: true }, orderBy: { createdAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
-    prisma.product.count({ where }),
-  ])
-  return { items: rows.map(toDto), total, page, pageSize }
+  const page = opts.page ?? 1
+  const pageSize = opts.pageSize ?? 20
+  const sort = opts.sort ?? 'name_asc'
+
+  // Reject rather than clamp. A silently ignored bad parameter returns
+  // plausible wrong results, which is harder to notice than an error.
+  if (!Number.isInteger(page) || page < 1) {
+    throw new CatalogValidationError('page', 'page must be an integer >= 1')
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw new CatalogValidationError('pageSize', 'pageSize must be an integer between 1 and 100')
+  }
+  if (!VALID_SORTS.includes(sort)) {
+    throw new CatalogValidationError('sort', `sort must be one of: ${VALID_SORTS.join(', ')}`)
+  }
+
+  const status = opts.status ?? 'published'
+
+  // Built as fragments so every value stays a bound parameter.
+  const conds: Prisma.Sql[] = [Prisma.sql`p.status = ${status}::"ProductStatus"`]
+  if (opts.search) {
+    conds.push(Prisma.sql`p.name ILIKE ${'%' + opts.search + '%'}`)
+  }
+  if (opts.category) {
+    conds.push(Prisma.sql`p.categories @> ${JSON.stringify([opts.category])}::jsonb`)
+  }
+  const where = Prisma.join(conds, ' AND ')
+
+  // Raw SQL because ADR-0001 defines price sorting by a product's CHEAPEST
+  // variant, and Prisma cannot orderBy a related-record aggregate other than
+  // _count. Sorting in JS after fetching would sort only the current page.
+  //
+  // The two display sorts read merchandised position columns. NULLS LAST keeps
+  // unranked products at the end rather than the top, and every branch ends
+  // with `p.name ASC` so ties are deterministic — without it, two products
+  // sharing a position can swap between pages and pagination becomes unstable.
+  const orderBy =
+    sort === 'price_asc' ? Prisma.sql`MIN(v.price_cents) ASC NULLS LAST, p.name ASC`
+    : sort === 'price_desc' ? Prisma.sql`MIN(v.price_cents) DESC NULLS LAST, p.name ASC`
+    : sort === 'newest' ? Prisma.sql`p.created_at DESC, p.name ASC`
+    : sort === 'home_display' ? Prisma.sql`p.home_position ASC NULLS LAST, p.name ASC`
+    : sort === 'collection_display' ? Prisma.sql`p.collection_position ASC NULLS LAST, p.name ASC`
+    : Prisma.sql`p.name ASC`
+
+  const rows = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+    SELECT p.id
+    FROM products p
+    LEFT JOIN variants v ON v.product_id = p.id
+    WHERE ${where}
+    GROUP BY p.id, p.name, p.created_at, p.home_position, p.collection_position
+    ORDER BY ${orderBy}
+    LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+  `)
+
+  const countRows = await prisma.$queryRaw<{ count: bigint }[]>(Prisma.sql`
+    SELECT COUNT(*)::bigint AS count FROM products p WHERE ${where}
+  `)
+  const total = Number(countRows[0]?.count ?? 0n)
+
+  const ids = rows.map(r => r.id)
+  if (ids.length === 0) return { items: [], total, page, pageSize }
+
+  // findMany does not preserve the ordered ID list, so re-order explicitly.
+  const products = await prisma.product.findMany({
+    where: { id: { in: ids } },
+    include: { variants: true },
+  })
+  const byId = new Map(products.map(p => [p.id, p]))
+  const items = ids.map(id => byId.get(id)).filter(Boolean).map(toDto)
+
+  return { items, total, page, pageSize }
 }
 
 export async function getProduct(idOrSlug: string): Promise<ProductDto | null> {
