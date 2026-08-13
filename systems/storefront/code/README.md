@@ -1,182 +1,121 @@
 # AlpineBrick Storefront
 
-Customer-facing React web application for AlpineBrick eCommerce platform.
+Customer-facing React application for the Alpine Brick Exchange platform.
 
-## Tech Stack
+## Tech stack
 
-- **Frontend**: React 18 with Vite
-- **Styling**: Tailwind CSS
-- **HTTP**: Axios
-- **Server**: Express (API proxy + static file serving)
+- **React 18** + **TypeScript** (strict)
+- **Vite 6** for dev server and build
+- **React Router v7** — data routers, with catalog data fetched in route loaders
+- **Tailwind CSS v4** — configured **in CSS**, not `tailwind.config.js`
+- **Vitest** + **@testing-library/react** (jsdom)
+- **lucide-react** for icons
 
 ## Architecture
 
+The storefront talks to exactly one backend: **`systems/core`**.
+
 ```
-┌─────────────────┐
-│  Vite Dev       │ (port 5173, development only)
-│  React App      │
-└────────┬────────┘
-         │ /catalog
-         ↓
 ┌────────────────────┐
-│ Express Server     │ (port 3000)
-│ - API Proxy        │
-│ - Static Files     │
-└────────┬───────────┘
-         │
-    ┌────┴────┬────────┬──────────┐
-    ↓         ↓        ↓          ↓
-┌───────────────┐┌─────────────┐┌──────────────┐┌─────────────┐
-│ Catalog Svc   ││ Order Svc   ││ Inventory Svc││ Affiliate   │
-│ (4001)        ││ (4002)      ││ (4003)       ││ Svc (4004)  │
-└───────────────┘└─────────────┘└──────────────┘└─────────────┘
+│ Vite dev server    │  :5173
+│ React app          │
+└─────────┬──────────┘
+          │  /api/v1/catalog/*   (proxied by vite.config.ts)
+          ▼
+┌────────────────────┐
+│ systems/core       │  :4000
+│ Express + Prisma   │
+└─────────┬──────────┘
+          ▼
+     PostgreSQL  :5433
 ```
 
-## Development
+There is **no Express proxy in this app**, and it does **not** talk to
+`catalog-service`, `order-service`, `inventory-service` or `affiliate-service`.
+Those are pre-redesign in-memory mocks; an earlier version of this storefront
+was wired to them and could not work against core.
 
-### Prerequisites
-- Node.js 20+
-- Docker (for backend services)
+`src/lib/api/` is the only place that knows core's wire format. Pages consume
+typed domain objects and never call `fetch` directly.
 
-### Setup
+## Running it
 
-1. Install dependencies:
+Core must be running first — the storefront is useless without it.
+
 ```bash
-npm install
-```
+# 1. Postgres (from the repo root)
+docker start alpinebrick-core-db
 
-2. Start backend services:
-```bash
-cd ..
-docker-compose up
-```
+# 2. Core API on :4000
+cd systems/core
+npm run seed          # optional, but the catalog is empty without it
+npm run dev
 
-3. In one terminal, start the Express server:
-```bash
-npm run dev:server
-```
-
-4. In another terminal, start the Vite dev server (hot reload):
-```bash
+# 3. Storefront on :5173
+cd systems/storefront/code
 npm run dev
 ```
 
-5. Open browser to:
-- **Frontend**: http://localhost:5173 (Vite dev server)
-- **API**: http://localhost:3000 (Express server)
+Open http://localhost:5173.
 
-### Build
+## Scripts
 
-```bash
-npm run build
-```
+| Command | What it does |
+|---|---|
+| `npm run dev` | Vite dev server on :5173, proxying `/api` to core on :4000 |
+| `npm run build` | Typecheck (`tsc -b`) then production build to `dist/` |
+| `npm run preview` | Serve the built `dist/` locally |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm test` | Vitest, single run |
 
-This compiles React to static files in `dist/` directory.
-
-### Production
-
-```bash
-npm start
-```
-
-Starts Express server on port 3000, serving the React build from `dist/`.
-
-## File Structure
+## Layout
 
 ```
-storefront/
-├── src/
-│   ├── main.jsx                 # React entry point
-│   ├── App.jsx                  # Root component
-│   ├── server.js                # Express server
-│   ├── components/
-│   │   ├── ProductList.jsx      # Main listing page
-│   │   ├── ProductCard.jsx      # Product card component
-│   │   └── SearchBar.jsx        # Search & filter UI
-│   ├── services/
-│   │   └── catalogService.js    # Catalog API client
-│   └── styles/
-│       └── index.css            # Tailwind styles
-├── index.html                   # React root HTML
-├── package.json
-├── vite.config.js               # Vite configuration
-├── tailwind.config.js           # Tailwind configuration
-├── postcss.config.js            # PostCSS configuration
-├── Dockerfile
-└── README.md
+src/
+  main.tsx                  entry point
+  routes.tsx                route table
+  app/
+    Root.tsx                shell: nav, footer, skip link, cart provider
+    Logo.tsx
+  design-system/
+    tokens.css              the design tokens, verbatim from the handoff
+    primitives/             Button, Input, Badge, Card, Eyebrow, Accordion, Tabs
+  lib/
+    api/                    typed core client — the ONLY place that knows the wire format
+    cart/                   in-memory cart context
+    collections.ts          collection slug -> core query registry
+    money.ts                integer cents -> display string
+    badge.ts                Limited / New derivation
+  components/               ProductCard, ProductGrid, PageHeader
+  pages/                    route components
+  test/setup.ts             Vitest setup
+public/img/placeholder/     neutral placeholder product images
 ```
 
-## API Integration
+## Things that will bite you
 
-The storefront proxies requests to backend services:
+- **Tailwind v4 has no `tailwind.config.js`.** Theme mapping lives in
+  `src/styles/globals.css` under `@theme inline`. Older storefront docs that
+  reference a JS config are stale.
+- **`tsconfig.json` includes only `src`.** This app is an npm workspace member,
+  so Vite is installed both hoisted at the engineering root and locally.
+  Typechecking `vite.config.ts` compares two structurally incompatible `Plugin`
+  types and fails. The configs are executed by the bundler, not typechecked.
+- **Core listens on 4000, not 3000.** The dev proxy targets 4000.
+- **Money is always integer cents.** `priceCents`, never a float dollar amount.
+  `formatCents()` in `src/lib/money.ts` is the single conversion point.
+- **The cart keys on variant id, not product id.** Two variants of one product
+  are two cart lines at two prices, and core's order API takes `variantId`.
+- **The server owns display order.** Products arrive already ordered
+  (`home_display` / `collection_display`); components must not re-sort them, or
+  page 2 gets sorted independently of page 1.
+- **Never render `--muted-foreground` below 12px.** It is roughly 5.5:1 and
+  fails contrast under that size. `text-xs` is the floor.
+- **Product photography is placeholder.** `public/img/placeholder/` holds
+  deliberately neutral SVGs. Real photography is the largest open gap.
 
-- **Catalog** (`/catalog/*`) → catalog-service:4001
-- **Orders** (`/orders/*`) → order-service:4002
-- **Inventory** (`/inventory/*`) → inventory-service:4003
-- **Affiliates** (`/affiliates/*`) → affiliate-service:4004
+## Not built yet
 
-### Catalog Service Example
-
-```javascript
-import catalogService from './services/catalogService'
-
-// Fetch products
-const response = await catalogService.getProducts({
-  search: 'brick',
-  category: 'starter',
-  page: 1,
-  limit: 20
-})
-
-console.log(response.products)  // Array of products
-console.log(response.totalPages) // Total pages for pagination
-```
-
-## Component Architecture
-
-### ProductList
-- Manages product loading, filtering, and pagination
-- Handles search and category filtering
-- Renders grid of ProductCard components
-
-### ProductCard
-- Displays individual product with image, description, price
-- Shows categories as badges
-- "View Details" button for future product detail page
-
-### SearchBar
-- Search input for product name/description
-- Category dropdown filter
-- Clear filters button
-
-## Styling
-
-Tailwind CSS is configured for mobile-first, responsive design.
-
-Key breakpoints:
-- `sm`: 640px
-- `md`: 768px
-- `lg`: 1024px
-
-Example component with responsive grid:
-```jsx
-<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-  {products.map(product => (
-    <ProductCard key={product.id} product={product} />
-  ))}
-</div>
-```
-
-## Next Steps
-
-- [ ] Product detail page
-- [ ] Shopping cart
-- [ ] Checkout integration (Stripe)
-- [ ] Customer accounts
-- [ ] Affiliate referral tracking
-- [ ] Order history page
-- [ ] Unit and integration tests
-
-## Support
-
-Questions or blockers? Contact the Engineering Lead.
+Cart persistence, checkout (shipping, payment, confirmation), promo codes,
+order tracking, the contact form backend, and product reviews. Each is a later
+sub-project with its own spec.
