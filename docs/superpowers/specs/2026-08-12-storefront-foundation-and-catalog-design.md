@@ -55,7 +55,7 @@ or email backend, neither of which exists.
 |---|---|---|
 | Checkout steps 2–4 (shipping, payment, confirmation) | No payment provider, no shipping rates | Sub-project C |
 | Cart persistence across sessions | Needs a session or account model | Sub-project C |
-| Promo codes | No promo engine; see §3.4 on the discount trap | Sub-project C |
+| Promo codes | No promo engine; see §3.5 on the discount trap | Sub-project C |
 | Order tracking by number | Needs carrier integration | Sub-project D |
 | Contact form submission | Needs a ticketing or email backend | Sub-project D |
 | Product reviews and ratings | See §6.3 | Unscheduled |
@@ -169,7 +169,47 @@ The two derived fields:
   already exists and can drift from it.
 - **`setNumber`** — the variant SKU, which already serves this purpose.
 
-### 3.4 Discounts are not written in this build
+### 3.4 Merchandised display order, with two independent orderings
+
+**Requested by Jack, 2026-08-12.**
+
+The storefront must receive products **already in the order they should be
+displayed**, rather than sorting them itself. Merchandising sequence is a
+business decision, and a client that re-sorts what the server sent will
+disagree with it the moment pagination is involved — page 2 would be sorted
+independently of page 1.
+
+**There are two independent orderings**, because a product's place on the home
+page is not its place inside a collection:
+
+| Column | Governs |
+|---|---|
+| `homePosition` | Order of products on the home page |
+| `collectionPosition` | Order of products within a collection |
+
+Both are **nullable integers, ascending, with unranked products last**
+(`NULLS LAST`) and **ties broken by name**. Nullable rather than defaulted to
+zero: a newly created product is unmerchandised, and defaulting to `0` would
+silently promote it to the top of the home page. Sorting last is the safe
+default. The name tiebreak means two products sharing a position never return
+in arbitrary order, which would make pagination unstable.
+
+They surface as two new values on the sort enum — `home_display` and
+`collection_display` — taking it from four values to six. The home loader
+requests `home_display`; collection loaders request `collection_display`.
+Neither becomes the API-wide default: `name_asc` remains the default so a caller
+that expresses no preference gets a stable, meaningful order rather than one
+that depends on merchandising data that may not be set.
+
+**Known limitation, accepted deliberately.** `categories` is an array, so a
+product can belong to several collections while carrying only one
+`collectionPosition`. It therefore holds the same rank in every collection it
+appears in. Ranking a product differently per collection requires a
+`(productId, collectionSlug, position)` join table. That is not built, because
+nothing yet needs it — but the constraint should be understood before someone
+discovers it by surprise.
+
+### 3.5 Discounts are not written in this build
 
 No screen in scope creates a discount. `Order.discountCents` and
 `OrderLine.discountCents` exist on `main` and stay at their `0` default.
@@ -208,8 +248,17 @@ model Product {
   features           Json        @default("[]")
   includes           Json        @default("[]")
   builderNotes       String      @default("") @map("builder_notes")
+  homePosition       Int?        @map("home_position")
+  collectionPosition Int?        @map("collection_position")
+
+  @@index([homePosition])
+  @@index([collectionPosition])
 }
 ```
+
+The two position columns carry the merchandised display order described in
+§3.4. They are indexed because every home-page and collection-page query orders
+by one of them.
 
 `features` and `includes` are ordered arrays of display strings. They are JSON
 because they are variable-length editorial lists with no query requirement —
@@ -263,10 +312,16 @@ Two new options:
   case-sensitive against a human-typed value, which breaks the first time
   someone seeds `"architecture"`. Display names live in the storefront's
   collection registry (§5.4), not in the database.
-- **`sort`** — the frozen enum `name_asc` (default), `price_asc`, `price_desc`,
-  `newest`. Per ADR-0001's semantics, `price_asc`/`price_desc` sort by the
-  product's **cheapest variant**, and products with no variants sort last.
-  `newest` is `createdAt` descending, which is the current hardcoded behaviour.
+- **`sort`** — a six-value enum: `name_asc` (default), `price_asc`,
+  `price_desc`, `newest`, `home_display`, `collection_display`. Per ADR-0001's
+  semantics, `price_asc`/`price_desc` sort by the product's **cheapest
+  variant**, and products with no variants sort last. `newest` is `createdAt`
+  descending, which is the current hardcoded behaviour. The two `*_display`
+  values order by `homePosition` and `collectionPosition` respectively, both
+  ascending with `NULLS LAST` and a `name` tiebreak — see §3.4.
+
+  **This widens ADR-0001's frozen four-value enum to six.** The amendment
+  records it; the four original values keep their exact semantics.
 
 An unrecognised `sort` value is a `VALIDATION_ERROR`, not a silent fallback to
 default. Silently ignoring a bad parameter returns plausible wrong results,
@@ -358,9 +413,18 @@ registry:
 
 | Slug | Resolves to |
 |---|---|
-| `architecture`, `fantasy`, `space`, `ocean`, `nature` | `category=<slug>` |
-| `limited-edition` | `releaseType=limited_run` |
+| `architecture`, `fantasy`, `space`, `ocean`, `nature` | `category=<slug>`, `sort=collection_display` |
+| `limited-edition` | `category=limited-edition`, `sort=collection_display` |
 | `new-arrivals` | `sort=newest` |
+
+`limited-edition` resolves through a **category**, not `releaseType`. Core has
+no `releaseType` filter parameter and adding one would duplicate a distinction
+the category already expresses. `new-arrivals` keeps `newest` because "recently
+added" is intrinsically chronological — merchandising it by hand would mean
+re-ranking on every new product.
+
+The home page requests `sort=home_display`. Everything else about ordering is
+server-side; the storefront never re-sorts what it receives.
 
 A collections table would be schema for what is really a set of saved queries.
 Each entry carries its own title and blurb for the collection detail header.
