@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AlpineBrick Catalog API
-  version: 3.0.0
+  version: 3.1.0
   description: >-
     API contract for the AlpineBrick product catalog (read + availability).
 
@@ -264,6 +264,12 @@ components:
         createdAt:
           type: string
           format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+          description: >-
+            Last modification time. Additive in 3.1.0 for the admin console's
+            last-modified column.
         variants:
           type: array
           items:

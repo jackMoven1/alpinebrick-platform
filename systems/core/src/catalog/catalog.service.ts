@@ -25,6 +25,7 @@ export interface ProductDto {
   homePosition: number | null
   collectionPosition: number | null
   createdAt: Date
+  updatedAt: Date
   variants: { id: string; sku: string; priceCents: number; currency: string }[]
 }
 
@@ -58,6 +59,7 @@ function toDto(p: any): ProductDto {
     homePosition: p.homePosition ?? null,
     collectionPosition: p.collectionPosition ?? null,
     createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
     variants: p.variants.map((v: any) => ({ id: v.id, sku: v.sku, priceCents: v.priceCents, currency: v.currency })),
   }
 }
