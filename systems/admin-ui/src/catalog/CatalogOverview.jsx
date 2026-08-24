@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import mockApi from '../data/mockApi.js'
+import api from '../data/api.js'
 import Card from '../ui/Card.jsx'
 import StatCard from '../ui/StatCard.jsx'
 import Pill from '../ui/Pill.jsx'
@@ -11,7 +11,7 @@ export default function CatalogOverview() {
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    mockApi.getOverviewStats().then(setStats).catch((e) => setError(e.message))
+    api.getOverviewStats().then(setStats).catch((e) => setError(e.message))
   }, [])
 
   if (error) return <p className="text-accent">{error}</p>

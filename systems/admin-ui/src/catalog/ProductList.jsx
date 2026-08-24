@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import mockApi from '../data/mockApi.js'
+import api from '../data/api.js'
 import Card from '../ui/Card.jsx'
 import Pill from '../ui/Pill.jsx'
 import Button from '../ui/Button.jsx'
@@ -18,7 +18,7 @@ export default function ProductList() {
   const [selected, setSelected] = useState(new Set())
 
   const load = useCallback(() => {
-    mockApi.listProducts({ search, status, sort, page, limit: PAGE_SIZE }).then(setData)
+    api.listProducts({ search, status, page, limit: PAGE_SIZE }).then(setData)
   }, [search, status, sort, page])
 
   useEffect(() => { load() }, [load])
@@ -27,8 +27,10 @@ export default function ProductList() {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
   })
 
+  // Not backed in the Phase B slice; the controls below are disabled so this
+  // never runs. Kept so it goes live again when bulkSetStatus is implemented.
   const bulkPublish = async (newStatus) => {
-    await mockApi.bulkSetStatus([...selected], newStatus)
+    await api.bulkSetStatus([...selected], newStatus)
     toast.push(`${selected.size} product(s) ${newStatus}`)
     setSelected(new Set())
     load()
@@ -43,7 +45,7 @@ export default function ProductList() {
           <h1 className="text-3xl font-bold">Products</h1>
           <p className="text-gray-500">{data.total} total</p>
         </div>
-        <Link to="/products/new"><Button>+ New product</Button></Link>
+        <span className="text-xs text-gray-500">Creating products is not in this phase.</span>
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -56,16 +58,16 @@ export default function ProductList() {
           <option value="published">Published</option>
           <option value="archived">Archived</option>
         </select>
-        <select value={sort} onChange={(e) => { setSort(e.target.value); setPage(1) }}
-          className="rounded-pill border border-gray-200 px-4 py-2 text-sm">
-          <option value="name_asc">Name A–Z</option>
-          <option value="name_desc">Name Z–A</option>
+        <select value={sort} disabled title="Sorting is not in this phase"
+          onChange={(e) => { setSort(e.target.value); setPage(1) }}
+          className="rounded-pill border border-gray-200 px-4 py-2 text-sm disabled:opacity-50">
           <option value="updated_desc">Recently modified</option>
         </select>
         {selected.size > 0 && (
           <div className="ml-auto flex gap-2">
-            <Button variant="brand" onClick={() => bulkPublish('published')}>Publish ({selected.size})</Button>
-            <Button variant="ghost" onClick={() => bulkPublish('draft')}>Unpublish</Button>
+            <Button variant="brand" disabled onClick={() => bulkPublish('published')}>Publish ({selected.size})</Button>
+            <Button variant="ghost" disabled onClick={() => bulkPublish('draft')}>Unpublish</Button>
+            <span className="self-center text-xs text-gray-500">Bulk status changes are not in this phase.</span>
           </div>
         )}
       </div>
@@ -86,9 +88,9 @@ export default function ProductList() {
               <tr key={p.id} className="border-t border-gray-100">
                 <td className="p-3"><input type="checkbox" checked={selected.has(p.id)} onChange={() => toggle(p.id)} /></td>
                 <td className="p-3"><Link to={`/products/${p.id}`} className="font-semibold hover:underline">{p.name}</Link></td>
-                <td className="p-3">{p.variant_count}</td>
+                <td className="p-3">{p.variantCount}</td>
                 <td className="p-3"><Pill tone={p.status}>{p.status}</Pill></td>
-                <td className="p-3 text-gray-500">{new Date(p.updated_at).toLocaleDateString()}</td>
+                <td className="p-3 text-gray-500">{new Date(p.updatedAt).toLocaleDateString()}</td>
               </tr>
             ))}
             {data.items.length === 0 && (
