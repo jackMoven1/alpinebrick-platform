@@ -1,0 +1,98 @@
+import { AdminApiError } from './errors.js'
+
+// NOTE the argument order. The console's AdminApiError is
+// (message, code, fields) — message FIRST. Core's AdminError is
+// (code, message) — code first. They are different classes in different
+// packages and the orders are opposite, which is easy to get backwards and
+// produces an error whose code reads like a sentence.
+const BASE = '/api/v1/admin'
+const GENERIC = 'Something went wrong. Please try again.'
+
+/**
+ * Every failure leaves here as an AdminApiError with a usable `code`, so the
+ * console can branch on it. Network and parse failures carry no server
+ * envelope, so they are given INTERNAL.
+ */
+async function call(path, options = {}) {
+  let res
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      ...options,
+    })
+  } catch {
+    throw new AdminApiError(GENERIC, 'INTERNAL')
+  }
+
+  if (!res.ok) {
+    let body
+    try { body = await res.json() } catch { throw new AdminApiError(GENERIC, 'INTERNAL') }
+    throw new AdminApiError(body?.message || GENERIC, body?.code || 'INTERNAL', body?.fields)
+  }
+
+  if (res.status === 204) return null
+  try { return await res.json() } catch { throw new AdminApiError(GENERIC, 'INTERNAL') }
+}
+
+/**
+ * Phase B slice: five methods are live, eleven are not.
+ *
+ * These MUST throw rather than fall back to the mock. A mock fallback would
+ * show an edit succeeding and lose it on reload — data loss disguised as
+ * success. The UI also disables the affected controls, so this throw is a
+ * developer-facing backstop, not the user-facing message.
+ */
+function notImplemented(name) {
+  return async () => {
+    throw new AdminApiError(
+      `${name} is not implemented in the Phase B slice`,
+      'NOT_IMPLEMENTED',
+    )
+  }
+}
+
+export const api = {
+  async getOverviewStats() {
+    return call('/overview')
+  },
+
+  async listProducts(opts = {}) {
+    const params = new URLSearchParams()
+    if (opts.status) params.set('status', opts.status)
+    if (opts.search) params.set('search', opts.search)
+    if (opts.page) params.set('page', String(opts.page))
+    // The console calls it `limit`; core calls it `pageSize`.
+    if (opts.limit) params.set('pageSize', String(opts.limit))
+    const qs = params.toString()
+    return call(`/products${qs ? `?${qs}` : ''}`)
+  },
+
+  async getProduct(id) {
+    return call(`/products/${encodeURIComponent(id)}`)
+  },
+
+  async setProductStatus(id, status) {
+    return call(`/products/${encodeURIComponent(id)}/status`, {
+      method: 'POST',
+      body: JSON.stringify({ status }),
+    })
+  },
+
+  async archiveProduct(id) {
+    return api.setProductStatus(id, 'archived')
+  },
+
+  createProduct: notImplemented('createProduct'),
+  updateProduct: notImplemented('updateProduct'),
+  bulkSetStatus: notImplemented('bulkSetStatus'),
+  createVariant: notImplemented('createVariant'),
+  updateVariant: notImplemented('updateVariant'),
+  deleteVariant: notImplemented('deleteVariant'),
+  bulkCreateVariants: notImplemented('bulkCreateVariants'),
+  addImage: notImplemented('addImage'),
+  reorderImages: notImplemented('reorderImages'),
+  updateImageAlt: notImplemented('updateImageAlt'),
+  deleteImage: notImplemented('deleteImage'),
+}
+
+export default api
