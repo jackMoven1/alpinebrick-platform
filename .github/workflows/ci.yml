@@ -55,3 +55,23 @@ jobs:
       # AFTER the tests: a component can pass its tests and still fail to
       # compile, and the compile error is the more useful failure to surface.
       - run: npm run build
+
+  admin-ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: systems/admin-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: systems/admin-ui/package-lock.json
+      - run: npm ci
+      - run: npx vitest run
+      # admin-ui is JSX, not TS, so this does NOT typecheck the way the
+      # storefront's `tsc -b && vite build` does. It still catches a broken
+      # import or a module that cannot resolve -- which a passing jsdom suite
+      # will not, because vitest resolves modules its own way.
+      - run: npm run build
