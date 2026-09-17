@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import mockApi from '../data/mockApi.js'
+import api from '../data/api.js'
 import Card from '../ui/Card.jsx'
 import Pill from '../ui/Pill.jsx'
 import InfoTab from './tabs/InfoTab.jsx'
@@ -17,7 +17,7 @@ export default function ProductDetail() {
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    mockApi.getProduct(id).then(setProduct).catch((e) => setError(e.message))
+    api.getProduct(id).then(setProduct).catch((e) => setError(e.message))
   }, [id])
 
   if (error) return <p className="text-accent">{error}</p>

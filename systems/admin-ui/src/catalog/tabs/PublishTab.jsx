@@ -1,4 +1,4 @@
-import mockApi from '../../data/mockApi.js'
+import api from '../../data/api.js'
 import Pill from '../../ui/Pill.jsx'
 import Button from '../../ui/Button.jsx'
 import { useToast } from '../../ui/toast.jsx'
@@ -11,7 +11,7 @@ export default function PublishTab({ product, onUpdated }) {
   if (!product.description) warnings.push('No description')
 
   const setStatus = async (status) => {
-    const updated = await mockApi.setProductStatus(product.id, status)
+    const updated = await api.setProductStatus(product.id, status)
     onUpdated(updated)
     toast.push(`Status: ${status}`)
   }

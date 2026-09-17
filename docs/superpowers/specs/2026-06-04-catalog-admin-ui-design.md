@@ -33,6 +33,15 @@ Three independent fronts, separately buildable and deployable, no shared bundles
 | `systems/admin-ui/` *(new)* | Staff admin **console** SPA — nav shell + **Catalog** module 1 | internal admin |
 | `systems/catalog-admin/code` | Catalog **write API** backend | internal API |
 
+> **Superseded 2026-08-13 (Phase B slice design, §3).** The write API lives in
+> `systems/core`, NOT `systems/catalog-admin`. Core is now the only backend of
+> record, `catalog-admin` remains a 400-byte stub, and the image admin endpoints
+> already live in core — splitting would give two services writing one schema
+> and make the console call two backends for one workflow. Everything else in
+> this design stands: admin-ui remains a separate package on its own domain, a
+> console shell hosting modules, same libraries as the storefront but not a
+> shared codebase.
+
 **Sanctioned shared surfaces only:** the Postgres DB (catalog-admin writes what catalog-service reads) and optionally the `@imagibricks/contracts` package. Nothing else couples the apps.
 
 Note: this supersedes the SPEC's assumption (§3.2) that the frontend SPA lives inside the catalog-admin backend service. The frontend is its own package (`systems/admin-ui/`); the backend stays a separate service the console calls.

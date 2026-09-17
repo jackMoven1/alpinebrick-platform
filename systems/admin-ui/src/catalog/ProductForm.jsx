@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import mockApi from '../data/mockApi.js'
+import api from '../data/api.js'
 import { slugify } from '../lib/slug.js'
 import Card from '../ui/Card.jsx'
 import Button from '../ui/Button.jsx'
@@ -22,7 +22,7 @@ export default function ProductForm() {
     if (!valid) { setErrors({ name: 'Name is required' }); return }
     setSaving(true)
     try {
-      const p = await mockApi.createProduct({
+      const p = await api.createProduct({
         name: form.name.trim(),
         description: form.description,
         slug: form.slug || undefined,

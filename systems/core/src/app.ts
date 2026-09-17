@@ -3,6 +3,7 @@ import { catalogRouter } from './catalog/catalog.routes.js'
 import { ordersRouter } from './orders/orders.routes.js'
 import { createAssetsRouter } from './assets/assets.routes.js'
 import { createLocalStoragePort } from './ports/storage/local.adapter.js'
+import { adminCatalogRouter } from './admin/admin-catalog.routes.js'
 
 export function buildApp(): Express {
   const app = express()
@@ -18,6 +19,7 @@ export function buildApp(): Express {
     process.env.ASSET_PUBLIC_BASE_URL ?? 'http://localhost:4000/assets',
   )
   app.use('/api/v1/admin/images', createAssetsRouter(storagePort))
+  app.use('/api/v1/admin', adminCatalogRouter)
 
   return app
 }

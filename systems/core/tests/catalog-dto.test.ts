@@ -62,6 +62,11 @@ describe('catalog DTO', () => {
     expect(p?.createdAt).toBeInstanceOf(Date)
   })
 
+  it('exposes updatedAt so an admin list can show last-modified', async () => {
+    const p = await getProduct('dto-fixture')
+    expect(p?.updatedAt).toBeInstanceOf(Date)
+  })
+
   // The images coercion test that lived here is gone deliberately: images are
   // now a real table with typed columns, so there is no malformed shape for
   // Postgres to let through. categories/features/includes are still JSON.
