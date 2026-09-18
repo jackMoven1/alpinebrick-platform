@@ -2,6 +2,8 @@ import { prisma } from '../../src/prisma.js'
 
 export async function resetDb() {
   // Order matters: children before parents.
+  await prisma.adminSession.deleteMany()
+  await prisma.apiKey.deleteMany()
   await prisma.auditLog.deleteMany()
   await prisma.orderLine.deleteMany()
   await prisma.order.deleteMany()
