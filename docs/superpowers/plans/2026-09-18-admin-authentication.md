@@ -810,13 +810,37 @@ describe('admin route auth coverage', () => {
 Run: `cd systems/core && npx vitest run tests/auth-route-coverage.test.ts`
 Expected: FAIL — every admin route returns 200, not 401.
 
-- [ ] **Step 3: Implement the middleware**
+- [ ] **Step 3a: Extract the cookie reader into its own module**
+
+Task 8 needs this too. Defining it twice would be verbatim duplication of
+credential-parsing logic — the kind most likely to drift apart.
+
+```ts
+// systems/core/src/auth/cookies.ts
+
+/**
+ * Reads one cookie from a raw Cookie header without cookie-parser, so this
+ * works in tests that mount a router standalone rather than building the app.
+ */
+export function readCookie(header: string | undefined, name: string): string | undefined {
+  if (!header) return undefined
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=')
+    if (eq === -1) continue
+    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim())
+  }
+  return undefined
+}
+```
+
+- [ ] **Step 3b: Implement the middleware**
 
 ```ts
 // systems/core/src/auth/require-auth.ts
 import type { RequestHandler } from 'express'
 import { resolveSession, SESSION_COOKIE, type AuthActor } from './session.service.js'
 import { resolveApiKey } from './apikey.service.js'
+import { readCookie } from './cookies.js'
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -825,20 +849,6 @@ declare global {
       actor?: AuthActor
     }
   }
-}
-
-/**
- * Reads the session cookie without cookie-parser, so this middleware works
- * before that dependency lands and in tests that do not build the full app.
- */
-function readCookie(header: string | undefined, name: string): string | undefined {
-  if (!header) return undefined
-  for (const part of header.split(';')) {
-    const eq = part.indexOf('=')
-    if (eq === -1) continue
-    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim())
-  }
-  return undefined
 }
 
 export const requireAuth: RequestHandler = async (req, res, next) => {
@@ -883,7 +893,11 @@ Expected: 5 passing, tsc clean.
 
 - [ ] **Step 6: Fix the now-failing existing admin tests**
 
-`tests/admin-routes.test.ts`, `tests/admin-status.test.ts`, `tests/admin-overview.test.ts` and `tests/assets-routes.test.ts` all call admin endpoints with no credentials and will now get 401.
+`tests/admin-routes.test.ts` and `tests/assets-routes.test.ts` call admin endpoints over HTTP with no credentials and will now get 401.
+
+**Only those two.** `admin-status.test.ts`, `admin-overview.test.ts` and
+`admin-catalog-service.test.ts` call the services directly and never construct
+a request, so auth does not touch them. Do not add cookies there.
 
 Add this helper to each and attach the cookie to every admin request:
 
@@ -909,7 +923,7 @@ Expected: everything passes.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add systems/core/src/auth/require-auth.ts systems/core/src/app.ts systems/core/tests
+git add systems/core/src/auth/require-auth.ts systems/core/src/auth/cookies.ts systems/core/src/app.ts systems/core/tests
 git commit -m "feat(core): require authentication on every admin route
 
 Mounted on the /api/v1/admin prefix ahead of BOTH admin routers. Express
@@ -1289,9 +1303,10 @@ async function signIn(app: express.Express, code = 'ok') {
 
 describe('auth routes', () => {
   it('redirects to the provider and sets a transaction cookie', async () => {
-    const res = await request(app => app)  // placeholder replaced below
-      .get('/api/v1/auth/google/start')
+    const res = await request(appWith()).get('/api/v1/auth/google/start')
     expect(res.status).toBe(302)
+    expect(res.headers.location).toContain('state=')
+    expect((res.headers['set-cookie'] as unknown as string[])[0]).toContain('ab_oauth_tx')
   })
 
   it('signs in an allowlisted, verified email', async () => {
@@ -1368,17 +1383,6 @@ describe('auth routes', () => {
 })
 ```
 
-**Note for the implementer:** delete the first placeholder test (`redirects to the provider…` as written will not compile) and replace it with:
-
-```ts
-  it('redirects to the provider and sets a transaction cookie', async () => {
-    const res = await request(appWith()).get('/api/v1/auth/google/start')
-    expect(res.status).toBe(302)
-    expect(res.headers.location).toContain('state=')
-    expect((res.headers['set-cookie'] as unknown as string[])[0]).toContain('ab_oauth_tx')
-  })
-```
-
 - [ ] **Step 2: Run it and confirm it fails**
 
 Run: `cd systems/core && npx vitest run tests/auth-routes.test.ts`
@@ -1394,6 +1398,7 @@ import type { OidcPort } from '../ports/oidc/oidc.port.js'
 import { prisma } from '../prisma.js'
 import { createSession, revokeSession, sessionTtlMs, SESSION_COOKIE } from './session.service.js'
 import { requireAuth } from './require-auth.js'
+import { readCookie } from './cookies.js'
 import { recordAudit } from '../audit.js'
 
 const TX_COOKIE = 'ab_oauth_tx'
@@ -1408,16 +1413,6 @@ function consoleOrigin(): string {
   return (process.env.ADMIN_CONSOLE_ORIGIN ?? '').split(',')[0].trim()
 }
 
-function readCookie(header: string | undefined, name: string): string | undefined {
-  if (!header) return undefined
-  for (const part of header.split(';')) {
-    const eq = part.indexOf('=')
-    if (eq === -1) continue
-    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim())
-  }
-  return undefined
-}
-
 function s256(verifier: string): string {
   return createHash('sha256').update(verifier).digest('base64url')
 }
@@ -1430,11 +1425,8 @@ export function createAuthRouter(oidc: OidcPort): Router {
     const codeVerifier = randomBytes(32).toString('base64url')
     const tx = Buffer.from(JSON.stringify({ state, codeVerifier })).toString('base64url')
 
-    res.cookie?.(TX_COOKIE, tx, {
-      httpOnly: true, secure: true, sameSite: 'none', maxAge: TX_TTL_MS, path: '/api/v1/auth',
-    })
-    // res.cookie needs cookie-parser's companion; set the header directly so
-    // this router works standalone in tests.
+    // Header set directly rather than res.cookie(), so this router works when
+    // a test mounts it standalone without the full app's middleware.
     res.setHeader('Set-Cookie',
       `${TX_COOKIE}=${tx}; HttpOnly; Secure; SameSite=None; Path=/api/v1/auth; Max-Age=${TX_TTL_MS / 1000}`)
     res.redirect(302, oidc.authUrl({ state, codeChallenge: s256(codeVerifier) }))
@@ -1511,8 +1503,6 @@ export function createAuthRouter(oidc: OidcPort): Router {
   return router
 }
 ```
-
-**Remove the `res.cookie?.(…)` call** — it is shown above only to mark where a cookie-parser-based implementation would go. The `res.setHeader` line is the one that runs. Keeping both sets the header twice.
 
 - [ ] **Step 4: Mount in `app.ts`**
 
@@ -1682,6 +1672,29 @@ In `systems/core/src/admin/admin-catalog.routes.ts`:
 ```
 
 `req.actor` is guaranteed by `requireAuth`, which is mounted ahead of this router.
+
+- [ ] **Step 4b: Update the 12 direct callers in `admin-status.test.ts`**
+
+`tests/admin-status.test.ts` calls `setProductStatus` **directly**, not over
+HTTP, at 12 sites — all with two arguments. They will not compile.
+
+Add an actor to the existing `beforeEach` and pass its id:
+
+```ts
+let actorId: string
+
+beforeEach(async () => {
+  await resetDb()
+  const actor = await prisma.actor.create({ data: { type: 'human', name: 'test-admin' } })
+  actorId = actor.id
+})
+```
+
+Then every call becomes `setProductStatus(p.id, 'published', actorId)`.
+
+**Do not make `actorId` optional to avoid this edit.** An optional actor on an
+audited write is exactly how `actorId = 'system'` became the permanent answer
+in `orders.service.ts`. The spec requires every admin write be attributable.
 
 - [ ] **Step 5: Do the same for the image operations**
 
