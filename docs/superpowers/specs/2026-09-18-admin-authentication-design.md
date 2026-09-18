@@ -35,7 +35,7 @@ logging on the admin write paths.
 | Role / permission model | Two founders, both full operators. A role model with one role is ceremony. Revisit when someone outside the two gets access. |
 | Customer accounts | The storefront has none today. Admin identity and customer identity share nothing but the word "login"; conflating them is how a customer ends up reaching an admin route through a role-check bug. |
 | MFA beyond Google's | Sign-in inherits whatever the Google accounts already carry. Building a second factor on top would be weaker and more work. |
-| Session-management UI | The `Session` table records `userAgent`/`ip` so this can be built later. It is not needed to deploy. |
+| Session-management UI | The `AdminSession` table records `userAgent`/`ip` so this can be built later. It is not needed to deploy. |
 | Key-management UI | Keys are issued by script (§8). A console feature for two people is not yet worth building. |
 
 ## 3. Decisions taken, and by whom
@@ -48,15 +48,18 @@ Ruled by Jack, 2026-09-18, during design:
 2. **Google sign-in (OIDC)** for humans, restricted to an email allowlist. No
    password storage, no reset flow, and therefore **no email provider on the
    critical path**.
-3. **Audit logging is in scope** for admin writes. Not the orders backfill — the
-   hardcoded `actorId = 'system'` fallback in `orders.service.ts` stays as it is
-   and is out of scope here.
+3. **Audit logging is in scope** for admin writes. The *actor-identity*
+   backfill stays out: the hardcoded `actorId = 'system'` fallback in
+   `orders.service.ts` is untouched. Its *transactionality* is now in — see
+   decision 6.
 4. **The console is served from an unrelated domain**, not a subdomain of
    `alpinebrickexchange.com`. See §6 for what this buys and what it costs.
 5. **Server-side sessions with an httpOnly cookie**, over stateless JWTs and over
    verifying Google's ID token per request. Revocation is the reason: it is the
    point of a control added for security, and it must be a row delete rather
    than a denylist that reintroduces the state a JWT was meant to avoid.
+6. **The four order audit calls move inside their transactions**, accepting that
+   an audit failure now rolls back the order state change. See §7.1.
 
 ## 4. Credential model
 
@@ -67,20 +70,45 @@ in Postgres.
 **`Actor` gains:** `email` (nullable, unique), `googleSub` (nullable, unique),
 `disabled` (default false).
 
-**`Session`:** `actorId`, `tokenHash` (unique), `expiresAt`, `revokedAt`,
+**`AdminSession`:** `actorId`, `tokenHash` (unique), `expiresAt`, `revokedAt`,
 `lastSeenAt`, `userAgent`, `ip`.
 
 **`ApiKey`:** `actorId`, `name`, `prefix` (unique), `keyHash` (unique),
 `expiresAt`, `revokedAt`, `lastUsedAt`.
 
-### 4.1 We store hashes, never the credential
+### 4.1 Naming: `AdminSession`, not `Session`
 
-A dump of `sessions` yields no usable session, and a dump of `api_keys` yields no
+Ruled by Jack, 2026-09-18. The model is `AdminSession`, the table
+`admin_sessions`, the cookie `ab_admin_session`.
+
+A generic `Session` would claim the obvious name for admin identity. When
+customer accounts arrive the second table has to be `customer_sessions`, leaving
+an unprefixed `sessions` that silently means "the admin one" — the kind of
+asymmetry that reads as an oversight forever after. Naming it now costs nothing
+and the rename later would touch every call site.
+
+### 4.2 Session lifetime: 12 hours, absolute
+
+Ruled by Jack, 2026-09-18. `SESSION_TTL_HOURS` defaults to **12**, with **no
+sliding window**.
+
+The usual case for long sessions is that re-authenticating is disruptive. With
+Google SSO it is not: a live Google session makes re-auth a redirect and often
+zero clicks. Against that, the cookie is a **full-admin credential with no role
+limits**, so a stolen one is worth whatever its remaining lifetime is.
+
+Sliding windows are rejected for the same reason: they let an attacker who keeps
+a stolen cookie warm hold it indefinitely, which is precisely what expiry exists
+to prevent.
+
+### 4.3 We store hashes, never the credential
+
+A dump of `admin_sessions` yields no usable session, and a dump of `api_keys` yields no
 usable key. Key format is `abk_<prefix8>_<secret32>`; the plaintext is displayed
 exactly once at creation and is unrecoverable afterwards. The `prefix` exists so
 a key can be identified in logs and revoked without ever holding its secret.
 
-### 4.2 SHA-256, not Argon2 — and why that is not a shortcut
+### 4.4 SHA-256, not Argon2 — and why that is not a shortcut
 
 Both credentials are 256-bit random tokens, not user-chosen passwords. There is
 no dictionary and no rainbow table to defend against, so a deliberately slow KDF
@@ -94,11 +122,11 @@ One `requireAuth` middleware, two paths, both resolving to the same `req.actor`:
 
 ```
 Authorization: Bearer abk_…  →  parse prefix → lookup → constant-time compare
-session cookie                →  sha256 → lookup Session → check expiry/revocation
+session cookie                →  sha256 → lookup AdminSession → check expiry/revocation
 neither                       →  401
 ```
 
-### 5.0 Where the middleware mounts — a trap worth naming
+### 5.1 Where the middleware mounts — a trap worth naming
 
 `app.ts` mounts **two** routers under the admin prefix, images first:
 
@@ -114,7 +142,7 @@ open while the catalog routes looked protected, and looking correct in review.
 `requireAuth` therefore mounts on the `/api/v1/admin` prefix **before either
 router**, and the route-coverage test in §9 enumerates both.
 
-### 5.1 OIDC endpoints
+### 5.2 OIDC endpoints
 
 | Route | Purpose |
 |---|---|
@@ -123,7 +151,7 @@ router**, and the route-coverage test in §9 enumerates both.
 | `POST /api/v1/auth/logout` | Revoke session, clear cookie |
 | `GET /api/v1/auth/me` | Current actor — how the console knows it is signed in |
 
-### 5.2 The callback's checks, in order
+### 5.3 The callback's checks, in order
 
 1. ID token signature verifies against Google's JWKS.
 2. **`email_verified === true`.** An unverified email is not evidence of anything.
@@ -139,7 +167,7 @@ inherit an existing actor.
 **A failed check creates no `Actor`.** A rejected sign-in leaves nothing behind
 to clean up or to mistake for a provisioned account later.
 
-### 5.3 Break-glass
+### 5.4 Break-glass
 
 Google being unavailable, or the allowlist being wrong, would lock both founders
 out of their own admin.
@@ -152,6 +180,11 @@ bound to a dedicated `break-glass` actor.
 API-key path, so there is no bypass branch to get wrong — the most dangerous
 piece of an auth system being also the least exercised is how bypasses survive
 review. Every use writes an audit entry and logs at warn level.
+
+**Whether this key should exist at all is the one open question in this spec —
+see §13.** If Render offers shell access on our plan, the key is redundant with
+the Render account and this subsection is replaced by a mint-on-demand
+procedure.
 
 ## 6. The console's origin, and what it costs
 
@@ -180,15 +213,26 @@ CSRF defence. Three layers replace it:
 Bearer-key requests are exempt from layer 2 — they are not browser-driven and
 carry no `Origin`. Their protection is possession of the key.
 
-### 6.1 Verify before implementing
+### 6.1 The hostname — verified
 
-`alpinebrick-admin.onrender.com` would satisfy "unrelated domain" at zero cost
-**if `onrender.com` is on the Public Suffix List**, which is believed but **not
-verified**. If it is not, every Render customer's app shares a registrable domain
-with the console and the isolation this section exists to provide is absent.
+`onrender.com` **is** on the Public Suffix List, confirmed against the live list
+on 2026-09-18 (16,481 entries, private section):
 
-**Confirm against the live PSL before choosing the hostname.** If it is not
-listed, buy a domain.
+```
+// Render : https://render.com
+// Submitted by Anurag Goel <dev@render.com>
+onrender.com
+app.render.com
+```
+
+So `alpinebrick-admin.onrender.com` is its own registrable domain, is unrelated
+to `alpinebrickexchange.com` for every same-site computation, and costs nothing.
+**This is the hostname.**
+
+If the PSL entry were ever withdrawn, every Render customer's app would share a
+registrable domain with the console and the isolation this section exists to buy
+would silently vanish. That is unlikely and outside our control; buying a domain
+is the fallback.
 
 ## 7. Audit
 
@@ -203,6 +247,44 @@ Vocabulary: `product.status`, `image.upload.request`, `image.upload.confirm`,
 operation's transaction — a crash between the two leaves a status change with no
 record of who made it. Threading `tx` makes them atomic. This is the difference
 between an audit log that can be relied on and one that is usually right.
+
+Done on 2026-09-18: `recordAudit(input, db = prisma)` taking
+`Pick<Prisma.TransactionClient, 'auditLog'>`. Backward compatible — every
+existing call site keeps working unchanged.
+
+### 7.1 The live defect in orders, and what fixing it costs
+
+Reading the code to write this spec turned up that the problem is **already
+live**, and worse than "the audit write is not transactional". In
+`orders.service.ts` the four `recordAudit` calls sit **after** their
+`$transaction` blocks close — lines **133, 159, 177 and 200**, against
+transactions opening at 75, 152, 164 and 182 (`placeOrder`'s closes at 131, its
+audit call is at 133):
+
+```ts
+const updated = await prisma.$transaction(async (tx) => { … })
+await recordAudit({ actorId, action: 'order.paid', … })   // outside
+```
+
+So today, in production order code:
+
+- the transaction commits and the process dies before `recordAudit` → an order
+  is paid, fulfilled or cancelled with **nobody attached to it**;
+- `recordAudit` throws → the state change has **already committed**, but the
+  caller receives an error and will reasonably believe it did not.
+
+**Decision 6: move all four calls inside their transactions and pass `tx`.**
+
+The cost is real and worth stating plainly: an audit-write failure will then
+**roll back the order state change**. Fulfilment can fail because logging
+failed.
+
+That sounds worse than it is. **`audit_log` lives in the same Postgres as
+`orders`** — there is no plausible failure where the audit table is unwritable
+but the order table is fine. The failure modes are correlated, so the apparent
+trade between revenue and logging is largely illusory. Against that, an order
+that silently transitions with no record of who moved it is exactly what this
+table exists to prevent.
 
 ## 8. Issuing API keys
 
@@ -238,7 +320,7 @@ the kind of breakage a later refactor introduces by accident.
 Render env groups, separate per environment (ADR-0004):
 
 `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET` · `ADMIN_ALLOWED_EMAILS` ·
-`ADMIN_CONSOLE_ORIGIN` · `BREAK_GLASS_KEY_HASH` · `SESSION_TTL_HOURS`
+`ADMIN_CONSOLE_ORIGIN` · `BREAK_GLASS_KEY_HASH` · `SESSION_TTL_HOURS` (default **12**)
 
 Staging uses its own Google OAuth client. **Production credentials are connected
 only with Jack's explicit approval**, per the standing rule.
@@ -256,19 +338,42 @@ only with Jack's explicit approval**, per the standing rule.
 |---|---|
 | An admin route ships without auth | Route-coverage test enumerates the router, so it fails on introduction |
 | Auth creeps onto the public catalog routes | Explicit regression test |
-| `onrender.com` is not on the PSL, so the console is not actually isolated | §6.1 — verify before choosing the hostname |
-| Both founders locked out of admin | Break-glass key (§5.3), through the ordinary path so it cannot silently rot |
-| Audit gaps on crash | `recordAudit` made transactional (§7) |
+| The PSL entry for `onrender.com` is withdrawn, silently removing the console's isolation | Verified present 2026-09-18 (§6.1); outside our control, fallback is buying a domain |
+| Both founders locked out of admin | Break-glass path (§5.4), through the ordinary key path so it cannot silently rot; form still open (§13) |
+| Audit gaps on crash | `recordAudit` made transactional (§7), order call sites moved inside their transactions (§7.1) |
+| An audit-write failure blocks order fulfilment | Accepted (§7.1). `audit_log` and `orders` share a database, so the failure modes are correlated and the trade is largely illusory |
 | CORS drift silently disables CSRF defence | Layer 2 is server-side and independent of CORS |
 
 ## 13. Open questions
 
-1. **Session lifetime.** `SESSION_TTL_HOURS` is configurable; the default is not
-   chosen. 12h means signing in most days, 30d means a stolen cookie is useful
-   for a month.
-2. **Whether the break-glass key should expire.** A non-expiring emergency
-   credential is a standing liability; an expired one is useless in the
-   emergency it exists for.
-3. **Customer accounts**, when the storefront grows them, get their own spec and
-   their own tables. Recorded here so the decision is deliberate rather than
-   inherited.
+**One remains.**
+
+1. **Whether there should be a standing break-glass key at all.**
+
+   §5.4 specifies one seeded from `BREAK_GLASS_KEY_HASH`. On reflection it may
+   be redundant: setting that env var requires Render dashboard access, and
+   anyone with Render dashboard access in an emergency could instead shell into
+   the service and run `create-api-key` (§8) to mint one on the spot. If so, the
+   standing key grants **no capability its holder did not already have**, and
+   only leaves a permanent full-admin credential lying around.
+
+   On that reading the real break-glass credential is **the Render account**,
+   which already exists and carries its own MFA.
+
+   **This turns entirely on whether Render offers shell access on the plan we
+   land on, which is unverified.** If it does: no standing key, and §5.4 is
+   replaced by a written, *once-tested* mint procedure. If it does not: keep the
+   standing key with a **1-year expiry** and a calendar reminder, because expiry
+   forces the rotation that "we will rotate it" never does.
+
+   Either way the procedure is tested once before it is needed. Working out how
+   to mint a key for the first time during an outage is how break-glass plans
+   fail.
+
+**Settled since the first draft** (recorded here so the trail is legible):
+session lifetime → §4.2 · `AdminSession` naming → §4.1 · the console hostname →
+§6.1 · order audit transactionality → §7.1.
+
+**Customer accounts**, when the storefront grows them, get their own spec and
+their own tables. This is a decision, not an open question — recorded so it is
+deliberate rather than inherited.
