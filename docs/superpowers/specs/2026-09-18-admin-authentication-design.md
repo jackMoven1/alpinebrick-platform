@@ -167,24 +167,41 @@ inherit an existing actor.
 **A failed check creates no `Actor`.** A rejected sign-in leaves nothing behind
 to clean up or to mistake for a provisioned account later.
 
-### 5.4 Break-glass
+### 5.4 Break-glass — mint on demand, no standing key
 
-Google being unavailable, or the allowlist being wrong, would lock both founders
-out of their own admin.
+**Settled 2026-09-18: Render offers shell access on our plan, confirmed by
+Jack. There is therefore no standing break-glass key.**
 
-On boot, core upserts an `ApiKey` row from `BREAK_GLASS_KEY_HASH` (a hash, from
-the Render env group — the plaintext never enters the repo or the database),
-bound to a dedicated `break-glass` actor.
+Google being unavailable, or the allowlist being wrong, would lock both
+founders out of their own admin. The question was how to hold a credential for
+that case.
 
-**It is deliberately not special-cased in code.** It flows through the ordinary
-API-key path, so there is no bypass branch to get wrong — the most dangerous
-piece of an auth system being also the least exercised is how bypasses survive
-review. Every use writes an audit entry and logs at warn level.
+The answer is not to hold one. Setting `BREAK_GLASS_KEY_HASH` would require
+Render dashboard access — and anyone with Render dashboard access in an
+emergency can instead shell into the service and run `create-api-key` (§8) to
+mint one on the spot. A standing key would grant **no capability its holder did
+not already have**, while leaving a permanent full-admin credential in
+existence for the rest of the system's life.
 
-**Whether this key should exist at all is the one open question in this spec —
-see §13.** If Render offers shell access on our plan, the key is redundant with
-the Render account and this subsection is replaced by a mint-on-demand
-procedure.
+**The break-glass credential is the Render account**, which already exists,
+already carries its own MFA, and is already the thing you need in order to
+diagnose the outage.
+
+The procedure:
+
+1. Render dashboard → the `core` service → Shell.
+2. `npm run create-api-key -- break-glass emergency 1`
+   (actor name, key name, expiry in days — one day, not never).
+3. Use the printed key as `Authorization: Bearer abk_…`.
+4. Revoke it when the incident closes: set `revoked_at` on the row.
+
+**Test this once, before it is needed.** Working out how to mint a key for the
+first time during an outage is how break-glass plans fail. That is the whole
+reason this is written down rather than assumed.
+
+There is deliberately **no bypass branch in the code**. A key minted this way
+flows through the ordinary API-key path — the most dangerous piece of an auth
+system being also the least exercised is how bypasses survive review.
 
 ## 6. The console's origin, and what it costs
 
@@ -320,7 +337,9 @@ the kind of breakage a later refactor introduces by accident.
 Render env groups, separate per environment (ADR-0004):
 
 `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET` · `ADMIN_ALLOWED_EMAILS` ·
-`ADMIN_CONSOLE_ORIGIN` · `BREAK_GLASS_KEY_HASH` · `SESSION_TTL_HOURS` (default **12**)
+`ADMIN_CONSOLE_ORIGIN` · `SESSION_TTL_HOURS` (default **12**)
+
+There is no `BREAK_GLASS_KEY_HASH` — see §5.4.
 
 Staging uses its own Google OAuth client. **Production credentials are connected
 only with Jack's explicit approval**, per the standing rule.
@@ -339,41 +358,37 @@ only with Jack's explicit approval**, per the standing rule.
 | An admin route ships without auth | Route-coverage test enumerates the router, so it fails on introduction |
 | Auth creeps onto the public catalog routes | Explicit regression test |
 | The PSL entry for `onrender.com` is withdrawn, silently removing the console's isolation | Verified present 2026-09-18 (§6.1); outside our control, fallback is buying a domain |
-| Both founders locked out of admin | Break-glass path (§5.4), through the ordinary key path so it cannot silently rot; form still open (§13) |
+| Both founders locked out of admin | Mint a key over Render shell (§5.4). Tested once before it is needed, because an untested break-glass procedure is not one |
 | Audit gaps on crash | `recordAudit` made transactional (§7), order call sites moved inside their transactions (§7.1) |
 | An audit-write failure blocks order fulfilment | Accepted (§7.1). `audit_log` and `orders` share a database, so the failure modes are correlated and the trade is largely illusory |
 | CORS drift silently disables CSRF defence | Layer 2 is server-side and independent of CORS |
 
 ## 13. Open questions
 
-**One remains.**
+**None remain.** Every question raised during design has been ruled on.
 
-1. **Whether there should be a standing break-glass key at all.**
-
-   §5.4 specifies one seeded from `BREAK_GLASS_KEY_HASH`. On reflection it may
-   be redundant: setting that env var requires Render dashboard access, and
-   anyone with Render dashboard access in an emergency could instead shell into
-   the service and run `create-api-key` (§8) to mint one on the spot. If so, the
-   standing key grants **no capability its holder did not already have**, and
-   only leaves a permanent full-admin credential lying around.
-
-   On that reading the real break-glass credential is **the Render account**,
-   which already exists and carries its own MFA.
-
-   **This turns entirely on whether Render offers shell access on the plan we
-   land on, which is unverified.** If it does: no standing key, and §5.4 is
-   replaced by a written, *once-tested* mint procedure. If it does not: keep the
-   standing key with a **1-year expiry** and a calendar reminder, because expiry
-   forces the rotation that "we will rotate it" never does.
-
-   Either way the procedure is tested once before it is needed. Working out how
-   to mint a key for the first time during an outage is how break-glass plans
-   fail.
-
-**Settled since the first draft** (recorded here so the trail is legible):
-session lifetime → §4.2 · `AdminSession` naming → §4.1 · the console hostname →
-§6.1 · order audit transactionality → §7.1.
+| Settled | Where | Date |
+|---|---|---|
+| Humans + service credentials | §3.1 | 2026-09-18 |
+| Google OIDC, email allowlist | §3.2 | 2026-09-18 |
+| `AdminSession` naming | §4.1 | 2026-09-18 |
+| Session lifetime — 12h absolute | §4.2 | 2026-09-18 |
+| Console on an unrelated domain | §3.4, §6 | 2026-09-18 |
+| Hostname — `alpinebrick-admin.onrender.com` | §6.1 | 2026-09-18 |
+| Order audit transactionality | §7.1 | 2026-09-18 |
+| No standing break-glass key | §5.4 | 2026-09-18 |
 
 **Customer accounts**, when the storefront grows them, get their own spec and
 their own tables. This is a decision, not an open question — recorded so it is
 deliberate rather than inherited.
+
+**Two items are out of this spec's scope and must not be forgotten:**
+
+1. **CORS response headers.** This spec specifies Origin *validation* (§6).
+   Emitting `Access-Control-Allow-Origin` / `Access-Control-Allow-Credentials`
+   and handling preflight is not specified, because nothing is deployed
+   cross-origin yet. **It must land before the console is deployed**, or the
+   console cannot call core at all.
+2. **Expired-session sweeping.** Sessions are rejected on read but never
+   deleted. Harmless at two operators; it wants a scheduled job, alongside
+   `sweepPendingImages`, which also has no scheduler.
