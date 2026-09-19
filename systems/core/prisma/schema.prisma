@@ -182,9 +182,47 @@ model Actor {
   id        String     @id @default(cuid())
   type      ActorType
   name      String
+  email     String?        @unique
+  googleSub String?        @unique @map("google_sub")
+  disabled  Boolean        @default(false)
+  sessions  AdminSession[]
+  apiKeys   ApiKey[]
   createdAt DateTime   @default(now()) @map("created_at")
   auditLogs AuditLog[]
   @@map("actors")
+}
+
+model AdminSession {
+  id         String    @id @default(cuid())
+  actorId    String    @map("actor_id")
+  actor      Actor     @relation(fields: [actorId], references: [id])
+  tokenHash  String    @unique @map("token_hash")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  lastSeenAt DateTime? @map("last_seen_at")
+  userAgent  String?   @map("user_agent")
+  ip         String?
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([actorId])
+  @@index([expiresAt])
+  @@map("admin_sessions")
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  actorId    String    @map("actor_id")
+  actor      Actor     @relation(fields: [actorId], references: [id])
+  name       String
+  prefix     String    @unique
+  keyHash    String    @unique @map("key_hash")
+  expiresAt  DateTime? @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  lastUsedAt DateTime? @map("last_used_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([actorId])
+  @@map("api_keys")
 }
 
 model AuditLog {

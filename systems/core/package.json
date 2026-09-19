@@ -12,11 +12,14 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:generate": "prisma generate",
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx prisma/seed.ts",
+    "create-api-key": "tsx src/scripts/create-api-key.ts",
+    "create-api-key:prod": "node dist/scripts/create-api-key.js"
   },
   "dependencies": {
     "@prisma/client": "^5.18.0",
     "express": "^4.19.2",
+    "google-auth-library": "^11.1.0",
     "image-size": "^2.0.2",
     "prisma": "^5.18.0"
   },

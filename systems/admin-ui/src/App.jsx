@@ -5,11 +5,16 @@ import CatalogOverview from './catalog/CatalogOverview.jsx'
 import ProductList from './catalog/ProductList.jsx'
 import ProductForm from './catalog/ProductForm.jsx'
 import ProductDetail from './catalog/ProductDetail.jsx'
+import SignIn from './pages/SignIn.jsx'
 
 export default function App() {
   return (
     <ToastProvider>
       <Routes>
+        {/* Outside the authenticated layout: a signed-out visitor must be able
+            to reach this without ConsoleShell (or anything it renders) ever
+            mounting. */}
+        <Route path="/signin" element={<SignIn />} />
         <Route element={<ConsoleShell />}>
           <Route index element={<CatalogOverview />} />
           <Route path="products" element={<ProductList />} />

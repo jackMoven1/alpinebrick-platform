@@ -1,11 +1,17 @@
 import { AdminApiError } from './errors.js'
+import { API_BASE_URL } from '../lib/apiBase.js'
 
 // NOTE the argument order. The console's AdminApiError is
 // (message, code, fields) — message FIRST. Core's AdminError is
 // (code, message) — code first. They are different classes in different
 // packages and the orders are opposite, which is easy to get backwards and
 // produces an error whose code reads like a sentence.
-const BASE = '/api/v1/admin'
+//
+// BASE is absolute once VITE_API_BASE_URL is set, relative (unchanged)
+// otherwise -- see lib/apiBase.js. Cross-origin (the console's real
+// deployment, spec §6.1), a relative path resolves against the console's
+// own static host, which serves neither this nor /api/v1/auth.
+const BASE = `${API_BASE_URL}/api/v1/admin`
 const GENERIC = 'Something went wrong. Please try again.'
 
 /**
@@ -17,11 +23,28 @@ async function call(path, options = {}) {
   let res
   try {
     res = await fetch(`${BASE}${path}`, {
+      credentials: 'include',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       ...options,
     })
   } catch {
     throw new AdminApiError(GENERIC, 'INTERNAL')
+  }
+
+  if (res.status === 401) {
+    // Not an error the UI should render -- the session is gone or was never
+    // there, and the only useful response is to send the admin to sign in.
+    // assign() does not unload the page synchronously, so if this threw (or
+    // resolved), the caller's own .then/.catch would still run in the same
+    // tick and render "authentication required" before navigation completes.
+    // Returning a promise that never settles leaves every caller sitting in
+    // its loading state instead, which is correct: the page is on its way
+    // out. Land on /signin, not the OAuth route directly -- the console
+    // explains why the session ended before bouncing to a third party, and
+    // an automatic bounce straight to Google can loop invisibly if anything
+    // upstream is wrong.
+    window.location.assign('/signin')
+    return new Promise(() => {})
   }
 
   if (!res.ok) {

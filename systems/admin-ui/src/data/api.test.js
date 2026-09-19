@@ -91,3 +91,106 @@ describe('unimplemented methods', () => {
     await expect(api.bulkSetStatus(['p1'], 'draft')).rejects.toThrow(/not implemented/i)
   })
 })
+
+// Core sits behind session auth now. Every request must carry the session
+// cookie, and a session that is gone or was never there must send the admin
+// to sign in rather than render a 401 as if it were an ordinary error.
+describe('session handling', () => {
+  const realLocation = window.location
+
+  afterEach(() => {
+    window.location = realLocation
+  })
+
+  it('sends credentials on every request', async () => {
+    const spy = vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ items: [], total: 0, page: 1, pageSize: 20 }),
+    }))
+    vi.stubGlobal('fetch', spy)
+    await api.listProducts({})
+    expect(spy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ credentials: 'include' }),
+    )
+  })
+
+  it('redirects to /signin on 401, not the OAuth route directly', async () => {
+    const assign = vi.fn()
+    delete window.location
+    window.location = { assign, href: '' }
+    mockFetch(401, { code: 'UNAUTHENTICATED', message: 'authentication required' })
+
+    // The call intentionally never settles on a 401 (see the next test) --
+    // don't await it directly, just let the redirect fire and check it
+    // landed on the console's own sign-in screen rather than bouncing
+    // straight to Google.
+    api.listProducts({})
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(assign).toHaveBeenCalledWith('/signin')
+  })
+
+  // The regression this guards against: assign() does not unload the page
+  // synchronously, so if the call promise settled at all (resolved OR
+  // rejected), whichever component issued the request would run its own
+  // .then/.catch in the same tick and render "authentication required" on
+  // screen before the browser actually navigates away. The promise must
+  // stay pending.
+  it('never settles the call promise on 401, so no component can render an error', async () => {
+    delete window.location
+    window.location = { assign: vi.fn(), href: '' }
+    mockFetch(401, { code: 'UNAUTHENTICATED', message: 'authentication required' })
+
+    let settled = false
+    api.listProducts({}).then(() => { settled = true }, () => { settled = true })
+
+    // Race against a short real timer instead of awaiting the call directly
+    // -- a promise that (correctly) never settles would hang the test.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(settled).toBe(false)
+  })
+})
+
+// Core sits behind session auth on its own domain now (spec §6.1). A
+// relative BASE only ever worked because the Vite dev proxy hides that --
+// from the console's real deployment it would resolve against the console's
+// own static host, which serves neither /api/v1/admin nor /api/v1/auth.
+// import.meta.env is read once at module evaluation, so a fresh module
+// instance is needed per env value: reset the registry, stub the env var,
+// dynamically import.
+describe('API base URL wiring', () => {
+  beforeEach(() => vi.resetModules())
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+  })
+
+  it('uses a configured VITE_API_BASE_URL as the request origin', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.alpinebrickexchange.com')
+    const spy = vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ items: [], total: 0, page: 1, pageSize: 20 }),
+    }))
+    vi.stubGlobal('fetch', spy)
+    const { default: freshApi } = await import('./api.js')
+    await freshApi.listProducts({})
+    expect(String(spy.mock.calls[0][0])).toBe('https://api.alpinebrickexchange.com/api/v1/admin/products')
+  })
+
+  // The regression this guards: today's behaviour (a relative path,
+  // resolved by the dev proxy) must survive unchanged when the env var is
+  // unset, since nothing sets it in dev.
+  it('an empty base preserves the current relative-path behaviour', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', '')
+    const spy = vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ items: [], total: 0, page: 1, pageSize: 20 }),
+    }))
+    vi.stubGlobal('fetch', spy)
+    const { default: freshApi } = await import('./api.js')
+    await freshApi.listProducts({})
+    expect(String(spy.mock.calls[0][0])).toBe('/api/v1/admin/products')
+  })
+})

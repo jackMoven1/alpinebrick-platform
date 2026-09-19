@@ -18,4 +18,35 @@ describe('recordAudit', () => {
     expect(row?.actorId).toBe(actor.id)
     expect((row?.after as any).status).toBe('published')
   })
+
+  it('rolls back with the transaction when handed a transaction client', async () => {
+    const actor = await prisma.actor.create({ data: { type: 'agent', name: 'tx-agent' } })
+
+    await expect(prisma.$transaction(async (tx) => {
+      await recordAudit(
+        { actorId: actor.id, action: 'product.status', target: 'product:rollback' },
+        tx,
+      )
+      throw new Error('boom')
+    })).rejects.toThrow('boom')
+
+    const rows = await prisma.auditLog.findMany({ where: { target: 'product:rollback' } })
+    expect(rows).toHaveLength(0)
+  })
+
+  // Pins the hazard the tx parameter exists to remove, so the default cannot be
+  // quietly "fixed" without someone reading this. Without a transaction client
+  // the entry is written on its own connection and survives a rollback -- an
+  // audit row describing a change that never happened.
+  it('without a transaction client, the entry outlives a rolled-back change', async () => {
+    const actor = await prisma.actor.create({ data: { type: 'agent', name: 'no-tx-agent' } })
+
+    await expect(prisma.$transaction(async () => {
+      await recordAudit({ actorId: actor.id, action: 'product.status', target: 'product:orphan' })
+      throw new Error('boom')
+    })).rejects.toThrow('boom')
+
+    const rows = await prisma.auditLog.findMany({ where: { target: 'product:orphan' } })
+    expect(rows).toHaveLength(1)
+  })
 })
