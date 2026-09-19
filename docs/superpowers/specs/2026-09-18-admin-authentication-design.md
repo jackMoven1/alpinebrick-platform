@@ -260,6 +260,15 @@ Vocabulary: `product.status`, `image.upload.request`, `image.upload.confirm`,
 `image.reorder`, `image.delete`, `auth.login`, `auth.logout`, `apikey.create`,
 `apikey.revoke`.
 
+**Added post-design (final fix wave, 2026-09-18): `auth.signin.rejected`.**
+Covers an off-allowlist, unverified-email, or disabled-actor sign-in attempt.
+Written only when a real `Actor` already exists to attribute it to (the
+disabled-actor case); the off-allowlist and unverified-email cases reject
+before any `Actor` row exists, and `AuditLog.actorId` is NOT NULL and
+FK-enforced, so those two are deliberately not written rather than attributed
+to an invented or borrowed actor. See the comments at the call sites in
+`auth.routes.ts`.
+
 `recordAudit` already exists and is tested. One change beyond wiring:
 
 **`recordAudit` must accept an optional transaction client.** It currently calls
@@ -387,7 +396,7 @@ only with Jack's explicit approval**, per the standing rule.
 their own tables. This is a decision, not an open question — recorded so it is
 deliberate rather than inherited.
 
-**Two items are out of this spec's scope and must not be forgotten:**
+**Four items are out of this spec's scope and must not be forgotten:**
 
 1. **CORS response headers.** This spec specifies Origin *validation* (§6).
    Emitting `Access-Control-Allow-Origin` / `Access-Control-Allow-Credentials`
@@ -397,3 +406,18 @@ deliberate rather than inherited.
 2. **Expired-session sweeping.** Sessions are rejected on read but never
    deleted. Harmless at two operators; it wants a scheduled job, alongside
    `sweepPendingImages`, which also has no scheduler.
+3. **The admin-ui API base URL — now implemented, requires deploy-time
+   configuration.** `systems/admin-ui` reads `VITE_API_BASE_URL` (empty by
+   default, so the Vite dev proxy is unchanged) to build both the API base in
+   `src/data/api.js` and the sign-in link in `src/pages/SignIn.jsx` as
+   absolute URLs. The code is done; **the env var must be set to core's
+   origin (e.g. `https://api.alpinebrickexchange.com`) at deploy time**, or
+   the console silently reverts to relative paths that resolve against its
+   own static host and every request 404s. Nothing enforces this at build or
+   boot time — it is a deploy-checklist item, not a code guarantee.
+4. **The admin-ui service is missing from `render.yaml`.** There is no
+   `render.yaml` entry that builds and serves `systems/admin-ui`, so the
+   console has nowhere to deploy to. Deliberately not added by this fix wave
+   -- adding a service is a recurring-spend, infrastructure decision that
+   belongs to the project owner, not something to slip in alongside an
+   unrelated auth fix. Needed before the console can go live at all.
