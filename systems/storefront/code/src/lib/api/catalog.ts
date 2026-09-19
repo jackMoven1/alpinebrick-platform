@@ -1,7 +1,14 @@
 import { apiFetch } from './client';
 import type { Product, ProductListPage, Availability } from './types';
+import { API_BASE_URL } from '../apiBase.js';
 
-const BASE = '/api/v1/catalog';
+// Resolved against API_BASE_URL rather than hardcoded relative -- on Render
+// a bare relative path resolves against the storefront's own static host
+// and matches the SPA fallback rewrite in render.yaml, returning the
+// storefront's own HTML where JSON is expected. Empty API_BASE_URL (dev)
+// reproduces the old literal exactly; a set one composes with exactly one
+// slash, since API_BASE_URL already has its trailing slash stripped.
+const BASE = `${API_BASE_URL}/api/v1/catalog`;
 
 export type CatalogSort =
   | 'name_asc'

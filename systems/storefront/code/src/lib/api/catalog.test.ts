@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getProducts } from './catalog';
 
 afterEach(() => {
@@ -60,5 +60,48 @@ describe('getProducts', () => {
     const url = calls[0];
     expect(url).toContain('pageSize=');
     expect(url).not.toContain('limit=');
+  });
+});
+
+// BASE now resolves against API_BASE_URL (systems/storefront/code/src/lib/apiBase.ts)
+// instead of hardcoding a relative path -- on Render a relative path resolves
+// against the storefront's own static host and matches the SPA fallback
+// rewrite, returning HTML where JSON is expected. import.meta.env is read
+// once at module evaluation, so exercising both configurations requires a
+// fresh module instance per test: reset the module registry, stub the env
+// var, then dynamically import.
+describe('BASE resolves against API_BASE_URL', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('empty base is byte-identical to the relative path used today', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', '');
+    const { fetchMock, calls } = mockPage({ items: [], total: 0, page: 1, pageSize: 20 });
+    vi.stubGlobal('fetch', fetchMock);
+    const { getProducts: getProductsFresh } = await import('./catalog.js');
+    await getProductsFresh();
+    expect(calls[0]).toBe('/api/v1/catalog/products');
+  });
+
+  it('a set base produces a correct absolute URL with exactly one slash', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.alpinebrickexchange.com');
+    const { fetchMock, calls } = mockPage({ items: [], total: 0, page: 1, pageSize: 20 });
+    vi.stubGlobal('fetch', fetchMock);
+    const { getProducts: getProductsFresh } = await import('./catalog.js');
+    await getProductsFresh();
+    expect(calls[0]).toBe('https://api.alpinebrickexchange.com/api/v1/catalog/products');
+  });
+
+  it('a set base with a trailing slash still produces exactly one slash', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.alpinebrickexchange.com/');
+    const { fetchMock, calls } = mockPage({ items: [], total: 0, page: 1, pageSize: 20 });
+    vi.stubGlobal('fetch', fetchMock);
+    const { getProducts: getProductsFresh } = await import('./catalog.js');
+    await getProductsFresh();
+    expect(calls[0]).toBe('https://api.alpinebrickexchange.com/api/v1/catalog/products');
   });
 });
