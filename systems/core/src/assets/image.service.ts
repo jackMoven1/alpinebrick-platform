@@ -1,5 +1,6 @@
 import { prisma } from '../prisma.js'
 import type { AssetStoragePort } from '../ports/storage/storage.port.js'
+import { recordAudit } from '../audit.js'
 
 export class ImageError extends Error {
   constructor(public code: string, message: string) {
@@ -47,6 +48,7 @@ function toDto(row: {
 export async function requestUpload(
   port: AssetStoragePort,
   input: { productId: string; contentType: string; byteSize: number },
+  actorId: string,
 ): Promise<{ imageId: string; storageKey: string; uploadUrl: string; expiresAt: Date }> {
   if (!Number.isInteger(input.byteSize) || input.byteSize < 1) {
     throw new ImageError('invalid_byte_size', 'byteSize must be a positive integer')
@@ -90,6 +92,17 @@ export async function requestUpload(
   await prisma.image.update({ where: { id: created.id }, data: { storageKey } })
 
   const target = await port.createUploadTarget(storageKey, input.contentType)
+
+  // No transaction spans the rows above and the external storage call, so
+  // this is recorded on its own connection, same as the rest of this
+  // function -- there is no existing transaction to fold it into.
+  await recordAudit({
+    actorId,
+    action: 'image.upload.request',
+    target: `image:${created.id}`,
+    after: { productId: input.productId, contentType: input.contentType, byteSize: input.byteSize, storageKey },
+  })
+
   return {
     imageId: created.id,
     storageKey,
@@ -98,7 +111,7 @@ export async function requestUpload(
   }
 }
 
-export async function confirmUpload(port: AssetStoragePort, imageId: string): Promise<ImageDto> {
+export async function confirmUpload(port: AssetStoragePort, imageId: string, actorId: string): Promise<ImageDto> {
   const row = await prisma.image.findUnique({ where: { id: imageId } })
   if (!row) throw new ImageError('image_not_found', 'image not found')
 
@@ -116,6 +129,15 @@ export async function confirmUpload(port: AssetStoragePort, imageId: string): Pr
       status: 'ready',
     },
   })
+
+  await recordAudit({
+    actorId,
+    action: 'image.upload.confirm',
+    target: `image:${imageId}`,
+    before: { status: row.status },
+    after: { status: 'ready', width: stat.width, height: stat.height, byteSize: stat.byteSize },
+  })
+
   return toDto(updated)
 }
 
@@ -127,20 +149,31 @@ export async function listReadyImages(productId: string): Promise<ImageDto[]> {
   return rows.map(toDto)
 }
 
-export async function reorderImages(productId: string, orderedIds: string[]): Promise<void> {
-  const rows = await prisma.image.findMany({ where: { productId } })
+export async function reorderImages(productId: string, orderedIds: string[], actorId: string): Promise<void> {
+  const rows = await prisma.image.findMany({ where: { productId }, orderBy: { position: 'asc' } })
   const known = new Set(rows.map(r => r.id))
   if (orderedIds.length !== rows.length || orderedIds.some(id => !known.has(id))) {
     throw new ImageError('invalid_order', 'ordering must list every image of the product exactly once')
   }
   // One transaction: the position constraint is DEFERRABLE INITIALLY DEFERRED,
   // so intermediate collisions are legal and only the committed state is checked.
-  await prisma.$transaction(
-    orderedIds.map((id, position) => prisma.image.update({ where: { id }, data: { position } })),
-  )
+  // The audit row is written inside the same transaction as the reorder, so a
+  // rollback leaves neither.
+  await prisma.$transaction(async (tx) => {
+    for (const [position, id] of orderedIds.entries()) {
+      await tx.image.update({ where: { id }, data: { position } })
+    }
+    await recordAudit({
+      actorId,
+      action: 'image.reorder',
+      target: `product:${productId}`,
+      before: { order: rows.map(r => r.id) },
+      after: { order: orderedIds },
+    }, tx)
+  })
 }
 
-export async function deleteImage(port: AssetStoragePort, imageId: string): Promise<void> {
+export async function deleteImage(port: AssetStoragePort, imageId: string, actorId: string): Promise<void> {
   const row = await prisma.image.findUnique({ where: { id: imageId } })
   if (!row) throw new ImageError('image_not_found', 'image not found')
 
@@ -149,10 +182,20 @@ export async function deleteImage(port: AssetStoragePort, imageId: string): Prom
     orderBy: { position: 'asc' },
   })
 
-  await prisma.$transaction([
-    prisma.image.delete({ where: { id: imageId } }),
-    ...remaining.map((r, position) => prisma.image.update({ where: { id: r.id }, data: { position } })),
-  ])
+  // The audit row commits with the delete and the position closeup, or not at
+  // all -- same reasoning as reorderImages above.
+  await prisma.$transaction(async (tx) => {
+    await tx.image.delete({ where: { id: imageId } })
+    for (const [position, r] of remaining.entries()) {
+      await tx.image.update({ where: { id: r.id }, data: { position } })
+    }
+    await recordAudit({
+      actorId,
+      action: 'image.delete',
+      target: `image:${imageId}`,
+      before: { productId: row.productId, storageKey: row.storageKey, position: row.position },
+    }, tx)
+  })
 
   // Storage last: an orphaned object is recoverable, whereas a row pointing at
   // bytes that no longer exist is a broken product page.

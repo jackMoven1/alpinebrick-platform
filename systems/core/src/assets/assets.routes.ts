@@ -39,14 +39,14 @@ export function createAssetsRouter(port: AssetStoragePort): Router {
       return res.status(400).json({ code: 'invalid_body', message: 'productId, contentType and byteSize are required' })
     }
     try {
-      const result = await requestUpload(port, { productId, contentType, byteSize })
+      const result = await requestUpload(port, { productId, contentType, byteSize }, req.actor!.id)
       res.status(201).json(result)
     } catch (err) { fail(res, err) }
   })
 
   router.post('/:id/confirm', async (req, res) => {
     try {
-      res.json(await confirmUpload(port, req.params.id))
+      res.json(await confirmUpload(port, req.params.id, req.actor!.id))
     } catch (err) { fail(res, err) }
   })
 
@@ -56,7 +56,7 @@ export function createAssetsRouter(port: AssetStoragePort): Router {
       return res.status(400).json({ code: 'invalid_body', message: 'productId and orderedIds are required' })
     }
     try {
-      await reorderImages(productId, orderedIds)
+      await reorderImages(productId, orderedIds, req.actor!.id)
       res.json({ ok: true })
     } catch (err) { fail(res, err) }
   })
@@ -77,7 +77,7 @@ export function createAssetsRouter(port: AssetStoragePort): Router {
 
   router.delete('/:id', async (req, res) => {
     try {
-      await deleteImage(port, req.params.id)
+      await deleteImage(port, req.params.id, req.actor!.id)
       res.status(204).end()
     } catch (err) { fail(res, err) }
   })

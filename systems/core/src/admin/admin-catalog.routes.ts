@@ -2,6 +2,7 @@ import { Router, type Response } from 'express'
 import {
   adminListProducts, adminGetProduct, setProductStatus, getOverview, AdminError,
 } from './admin-catalog.service.js'
+import { scrubError } from '../auth/auth.routes.js'
 
 // Error codes here are UPPER_SNAKE, matching the catalog routes and the
 // console's existing AdminApiError. (/api/v1/admin/images uses lower_snake —
@@ -16,7 +17,13 @@ function fail(res: Response, err: unknown) {
   if (err instanceof AdminError) {
     return res.status(STATUS_BY_CODE[err.code] ?? 400).json({ code: err.code, message: err.message })
   }
-  throw err
+  // Express 4 does not catch a rejection thrown out of an async handler, so
+  // re-throwing an unknown error here (as this used to do) is the same
+  // unhandled-rejection hazard fixed in auth.routes.ts -- just harder to
+  // trigger, since it needs a genuine service error rather than a bare
+  // header. Respond instead of propagating, and scrub before logging.
+  console.error('[admin-catalog] unexpected failure', scrubError(err))
+  res.status(500).json({ code: 'INTERNAL_ERROR', message: 'internal error' })
 }
 
 function intParam(v: unknown): number | undefined {
@@ -57,7 +64,7 @@ adminCatalogRouter.post('/products/:id/status', async (req, res) => {
     return res.status(400).json({ code: 'VALIDATION_ERROR', message: 'status is required' })
   }
   try {
-    res.json(await setProductStatus(req.params.id, status))
+    res.json(await setProductStatus(req.params.id, status, req.actor!.id))
   } catch (err) { fail(res, err) }
 })
 

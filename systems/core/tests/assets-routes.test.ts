@@ -18,9 +18,16 @@ const port: AssetStoragePort = {
   delete: vi.fn(async () => {}),
 }
 
+// The route handlers now record an audit row under `req.actor.id`, guaranteed
+// non-null by `requireAuth` in the real app (mounted ahead of this router on
+// `/api/v1/admin`). This test app exercises the router standalone, so it
+// injects the actor itself rather than running the full auth flow.
+let actor: { id: string; type: 'human' | 'agent'; name: string }
+
 function buildTestApp() {
   const app = express()
   app.use(express.json())
+  app.use('/api/v1/admin/images', (req, _res, next) => { req.actor = actor; next() })
   app.use('/api/v1/admin/images', createAssetsRouter(port))
   return app
 }
@@ -30,6 +37,7 @@ const app = buildTestApp()
 beforeEach(async () => {
   await resetDb()
   for (const k of Object.keys(uploaded)) delete uploaded[k]
+  actor = await prisma.actor.create({ data: { type: 'human', name: 'routes-actor' } })
 })
 afterAll(async () => { await prisma.$disconnect() })
 

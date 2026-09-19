@@ -46,7 +46,7 @@ function isEmailConflict(err: unknown): boolean {
  * in the clear. Narrowing to this shape is the one place that policy is
  * enforced, so it only has to be gotten right once.
  */
-function scrubError(err: unknown): { message: string; code?: unknown; status?: unknown } {
+export function scrubError(err: unknown): { message: string; code?: unknown; status?: unknown } {
   // Guarded as a whole, not just the code/status reads: `'code' in err` does
   // not invoke a getter, but reading `err.code`/`err.status` (or even
   // `err.message`, or `String(err)` on a hostile non-Error) does, and this

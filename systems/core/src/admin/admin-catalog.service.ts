@@ -1,5 +1,6 @@
 import { prisma } from '../prisma.js'
 import type { ProductDto } from '../catalog/catalog.service.js'
+import { recordAudit } from '../audit.js'
 
 export class AdminError extends Error {
   constructor(public code: string, message: string) {
@@ -128,23 +129,36 @@ export const ALLOWED_TRANSITIONS: Record<string, string[]> = {
   archived: ['draft'],
 }
 
-export async function setProductStatus(id: string, target: string): Promise<ProductDto> {
+export async function setProductStatus(id: string, target: string, actorId: string): Promise<ProductDto> {
   if (!STATUSES.includes(target as Status)) {
     throw new AdminError('VALIDATION_ERROR', `status must be one of: ${STATUSES.join(', ')}`)
   }
 
-  const existing = await prisma.product.findUnique({ where: { id } })
-  if (!existing) throw new AdminError('NOT_FOUND', 'product not found')
+  // Read, validate, write and audit all inside one transaction: a rejected
+  // transition (thrown AdminError) rolls the whole thing back, so it leaves no
+  // audit row, and a committed transition always has exactly one.
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.product.findUnique({ where: { id } })
+    if (!existing) throw new AdminError('NOT_FOUND', 'product not found')
 
-  const allowed = ALLOWED_TRANSITIONS[existing.status] ?? []
-  if (!allowed.includes(target)) {
-    throw new AdminError(
-      'INVALID_TRANSITION',
-      `cannot move from ${existing.status} to ${target}; allowed: ${allowed.join(', ') || 'none'}`,
-    )
-  }
+    const allowed = ALLOWED_TRANSITIONS[existing.status] ?? []
+    if (!allowed.includes(target)) {
+      throw new AdminError(
+        'INVALID_TRANSITION',
+        `cannot move from ${existing.status} to ${target}; allowed: ${allowed.join(', ') || 'none'}`,
+      )
+    }
 
-  await prisma.product.update({ where: { id }, data: { status: target as Status } })
+    await tx.product.update({ where: { id }, data: { status: target as Status } })
+
+    await recordAudit({
+      actorId,
+      action: 'product.status',
+      target: `product:${id}`,
+      before: { status: existing.status },
+      after: { status: target },
+    }, tx)
+  })
 
   // Re-read through adminGetProduct so the response shape is identical to the
   // detail endpoint's; the console replaces its loaded product with this.
