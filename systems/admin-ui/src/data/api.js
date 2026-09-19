@@ -27,9 +27,18 @@ async function call(path, options = {}) {
 
   if (res.status === 401) {
     // Not an error the UI should render -- the session is gone or was never
-    // there, and the only useful response is to sign in again.
-    window.location.assign('/api/v1/auth/google/start')
-    throw new AdminApiError('authentication required', 'UNAUTHENTICATED')
+    // there, and the only useful response is to send the admin to sign in.
+    // assign() does not unload the page synchronously, so if this threw (or
+    // resolved), the caller's own .then/.catch would still run in the same
+    // tick and render "authentication required" before navigation completes.
+    // Returning a promise that never settles leaves every caller sitting in
+    // its loading state instead, which is correct: the page is on its way
+    // out. Land on /signin, not the OAuth route directly -- the console
+    // explains why the session ended before bouncing to a third party, and
+    // an automatic bounce straight to Google can loop invisibly if anything
+    // upstream is wrong.
+    window.location.assign('/signin')
+    return new Promise(() => {})
   }
 
   if (!res.ok) {

@@ -115,16 +115,40 @@ describe('session handling', () => {
     )
   })
 
-  it('redirects to sign-in on 401 instead of surfacing an error', async () => {
+  it('redirects to /signin on 401, not the OAuth route directly', async () => {
     const assign = vi.fn()
     delete window.location
     window.location = { assign, href: '' }
     mockFetch(401, { code: 'UNAUTHENTICATED', message: 'authentication required' })
 
-    const err = await api.listProducts({}).catch((e) => e)
+    // The call intentionally never settles on a 401 (see the next test) --
+    // don't await it directly, just let the redirect fire and check it
+    // landed on the console's own sign-in screen rather than bouncing
+    // straight to Google.
+    api.listProducts({})
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(assign).toHaveBeenCalledWith(expect.stringContaining('/api/v1/auth/google/start'))
-    expect(err).toBeInstanceOf(AdminApiError)
-    expect(err.code).toBe('UNAUTHENTICATED')
+    expect(assign).toHaveBeenCalledWith('/signin')
+  })
+
+  // The regression this guards against: assign() does not unload the page
+  // synchronously, so if the call promise settled at all (resolved OR
+  // rejected), whichever component issued the request would run its own
+  // .then/.catch in the same tick and render "authentication required" on
+  // screen before the browser actually navigates away. The promise must
+  // stay pending.
+  it('never settles the call promise on 401, so no component can render an error', async () => {
+    delete window.location
+    window.location = { assign: vi.fn(), href: '' }
+    mockFetch(401, { code: 'UNAUTHENTICATED', message: 'authentication required' })
+
+    let settled = false
+    api.listProducts({}).then(() => { settled = true }, () => { settled = true })
+
+    // Race against a short real timer instead of awaiting the call directly
+    // -- a promise that (correctly) never settles would hang the test.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(settled).toBe(false)
   })
 })
