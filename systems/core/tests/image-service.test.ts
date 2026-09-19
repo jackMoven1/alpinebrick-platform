@@ -208,6 +208,11 @@ describe('reorderImages', () => {
 
     const list = await listReadyImages(p.id)
     expect(list.map(i => i.id)).toEqual([b.imageId, a.imageId])
+
+    const rows = await prisma.auditLog.findMany({ where: { action: 'image.reorder' } })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].actorId).toBe(actorId)
+    expect(rows[0].target).toBe(`product:${p.id}`)
   })
 
   it('rejects an ordering that omits an image', async () => {
@@ -235,6 +240,11 @@ describe('deleteImage', () => {
     const list = await listReadyImages(p.id)
     expect(list.map(i => i.id)).toEqual([b.imageId])
     expect(list[0]!.position).toBe(0)
+
+    const rows = await prisma.auditLog.findMany({ where: { action: 'image.delete' } })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].actorId).toBe(actorId)
+    expect(rows[0].target).toBe(`image:${a.imageId}`)
   })
 })
 

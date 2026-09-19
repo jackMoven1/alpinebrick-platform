@@ -33,9 +33,16 @@ function fail(res: Response, err: unknown) {
 /**
  * Admin image endpoints.
  *
- * THESE HAVE NO AUTHENTICATION. Neither does the rest of core, so this is not
- * a regression -- but this is the first endpoint that causes arbitrary bytes
- * to be written, so it must not reach a public network before auth exists.
+ * PRECONDITION: this router must be mounted behind `requireAuth`. Every
+ * handler below dereferences `req.actor!.id` to attribute its audit row, and
+ * that assertion is sound only because `app.ts` mounts `requireAuth` on
+ * `/api/v1/admin` ahead of this router -- `req.actor` is never populated on
+ * its own. Mount this router bare (as a standalone test app might) and
+ * `req.actor` is `undefined`: `recordAudit` gets `actorId: undefined`, hits
+ * the `AuditLog.actorId` foreign-key constraint, and -- because `fail()`
+ * responds rather than re-throws -- that surfaces as a quiet 500 instead of a
+ * loud crash. A caller wiring this router in standalone (e.g. a test app)
+ * must inject `req.actor` itself; see `tests/assets-routes.test.ts`.
  */
 export function createAssetsRouter(port: AssetStoragePort): Router {
   const router = Router()

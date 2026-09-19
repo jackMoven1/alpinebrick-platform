@@ -172,7 +172,7 @@ describe('asset admin routes', () => {
   // resolves the request. This router's fail() must respond instead, using
   // this file's own lower_snake convention (deliberately not unified with the
   // catalog router's UPPER_SNAKE).
-  it('responds 500 rather than crashing when the storage port fails unexpectedly', async () => {
+  it('responds 500 rather than crashing when the storage port fails unexpectedly, and logs a scrubbed value', async () => {
     const p = await makeProduct()
     const failingPort: AssetStoragePort = {
       createUploadTarget: vi.fn(async () => { throw new Error('storage backend unreachable') }),
@@ -184,11 +184,23 @@ describe('asset admin routes', () => {
     failingApp.use('/api/v1/admin/images', (req, _res, next) => { req.actor = actor; next() })
     failingApp.use('/api/v1/admin/images', createAssetsRouter(failingPort))
 
-    const res = await request(failingApp)
-      .post('/api/v1/admin/images/upload-token')
-      .send({ productId: p.id, contentType: 'image/jpeg', byteSize: 100 })
-    expect(res.status).toBe(500)
-    expect(res.body.code).toBe('internal_error')
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const res = await request(failingApp)
+        .post('/api/v1/admin/images/upload-token')
+        .send({ productId: p.id, contentType: 'image/jpeg', byteSize: 100 })
+      expect(res.status).toBe(500)
+      expect(res.body.code).toBe('internal_error')
+
+      expect(spy).toHaveBeenCalledTimes(1)
+      const loggedArgs = spy.mock.calls[0]!
+      // Scrubbed, not the raw Error: no argument is an Error instance, and the
+      // logged object carries only the scrubError shape.
+      expect(loggedArgs.some(a => a instanceof Error)).toBe(false)
+      expect(loggedArgs).toContainEqual({ message: 'storage backend unreachable' })
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('deletes an image', async () => {
