@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
+import { createHash } from 'node:crypto'
 import express from 'express'
 import request from 'supertest'
 import { prisma } from '../src/prisma.js'
@@ -46,6 +47,19 @@ describe('auth routes', () => {
     expect((res.headers['set-cookie'] as unknown as string[])[0]).toContain('ab_oauth_tx')
   })
 
+  // Task 8 review, Important 3: this is the PKCE binding the whole flow
+  // exists to establish. Without it, `start` and `callback` could disagree
+  // about which secret was used and every route test above would still pass.
+  it('binds the challenge sent to the provider to the verifier carried in the tx cookie', async () => {
+    const start = await request(appWith()).get('/api/v1/auth/google/start')
+    const txCookie = (start.headers['set-cookie'] as unknown as string[])[0].split(';')[0]
+    const value = txCookie.slice(txCookie.indexOf('=') + 1)
+    const tx = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+    const url = new URL(start.headers.location)
+    const challenge = url.searchParams.get('code_challenge')
+    expect(challenge).toBe(createHash('sha256').update(tx.codeVerifier).digest('base64url'))
+  })
+
   it('signs in an allowlisted, verified email', async () => {
     const app = appWith()
     const res = await signIn(app)
@@ -74,6 +88,19 @@ describe('auth routes', () => {
     const res = await signIn(app)
     expect(res.status).toBe(403)
     expect(await prisma.actor.count()).toBe(0)
+  })
+
+  // Task 8 review, Important 1: a known email arriving under a sub the DB
+  // has never seen (account recreated/migrated, or simply a second Google
+  // account with the same address) must not lock the operator out with an
+  // opaque 500 -- it needs a distinct, actionable response.
+  it('returns a distinct conflict when the email is already linked to a different actor', async () => {
+    await prisma.actor.create({ data: { type: 'human', name: 'Jack', email: 'jack@example.com' } })
+    const app = appWith({ ...IDENTITY, sub: 'google-sub-2' })
+    const res = await signIn(app)
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('EMAIL_ALREADY_LINKED')
+    expect(await prisma.adminSession.count()).toBe(0)
   })
 
   it('refuses a mismatched state', async () => {

@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { randomBytes, createHash } from 'node:crypto'
+import { Prisma } from '@prisma/client'
 import type { OidcPort } from '../ports/oidc/oidc.port.js'
 import { prisma } from '../prisma.js'
 import { createSession, revokeSession, sessionTtlMs, SESSION_COOKIE } from './session.service.js'
@@ -23,6 +24,13 @@ function s256(verifier: string): string {
   return createHash('sha256').update(verifier).digest('base64url')
 }
 
+/** True for a Prisma unique-constraint violation on the actors.email column. */
+function isEmailConflict(err: unknown): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') return false
+  const target = err.meta?.target
+  return Array.isArray(target) ? target.includes('email') : target === 'email'
+}
+
 export function createAuthRouter(oidc: OidcPort): Router {
   const router = Router()
 
@@ -33,8 +41,15 @@ export function createAuthRouter(oidc: OidcPort): Router {
 
     // Header set directly rather than res.cookie(), so this router works when
     // a test mounts it standalone without the full app's middleware.
+    //
+    // SameSite=Lax, not None: the only request that must carry this cookie is
+    // the top-level cross-site GET redirect back from accounts.google.com,
+    // which Lax already covers. None would additionally attach it to
+    // cross-site subresource requests for no benefit. (The session cookie
+    // below genuinely needs None -- the console lives on a different origin
+    // and calls this API from script, not a top-level navigation.)
     res.setHeader('Set-Cookie',
-      `${TX_COOKIE}=${tx}; HttpOnly; Secure; SameSite=None; Path=/api/v1/auth; Max-Age=${TX_TTL_MS / 1000}`)
+      `${TX_COOKIE}=${tx}; HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth; Max-Age=${TX_TTL_MS / 1000}`)
     res.redirect(302, oidc.authUrl({ state, codeChallenge: s256(codeVerifier) }))
   })
 
@@ -61,7 +76,14 @@ export function createAuthRouter(oidc: OidcPort): Router {
       let identity
       try {
         identity = await oidc.exchange({ code, codeVerifier: tx.codeVerifier })
-      } catch {
+      } catch (err) {
+        // The one security-relevant event in this flow: a forged/tampered
+        // id_token fails signature verification here exactly the same way a
+        // transient network blip would. Both produce the same 400 to the
+        // caller (nothing about our response should hint at which), but this
+        // must not vanish from our own diagnostics -- it is the case that
+        // matters most.
+        console.error('[auth] oidc.exchange failed', err)
         return res.status(400).json({ code: 'VALIDATION_ERROR', message: 'code exchange failed' })
       }
 
@@ -74,17 +96,43 @@ export function createAuthRouter(oidc: OidcPort): Router {
         return res.status(403).json({ code: 'FORBIDDEN', message: 'email not permitted' })
       }
 
+      // Persisted lowercased: the allowlist check above already normalises
+      // case, but Postgres unique indexes are case-sensitive, so storing the
+      // raw claim would let "Jack@Example.com" and "jack@example.com" become
+      // two distinct (and independently allowlisted) Actor rows.
+      const email = identity.email.toLowerCase()
+
       // Keyed on sub -- the stable identifier. An email can be reassigned.
-      const actor = await prisma.actor.upsert({
-        where: { googleSub: identity.sub },
-        update: { email: identity.email, name: identity.name ?? identity.email },
-        create: {
-          type: 'human',
-          name: identity.name ?? identity.email,
-          email: identity.email,
-          googleSub: identity.sub,
-        },
-      })
+      let actor
+      try {
+        actor = await prisma.actor.upsert({
+          where: { googleSub: identity.sub },
+          update: { email, name: identity.name ?? email },
+          create: {
+            type: 'human',
+            name: identity.name ?? email,
+            email,
+            googleSub: identity.sub,
+          },
+        })
+      } catch (err) {
+        // Actor.email is independently unique. If this sub is new (account
+        // recreated/migrated, or first sign-in under a sub we've never seen)
+        // but the email already belongs to a different row, the upsert falls
+        // to create/update and hits that unique index. That is not "unknown
+        // server failure" -- it is a specific, operator-actionable state:
+        // nobody has told us these two identities are the same person, and
+        // we must not guess. Surface it distinctly rather than folding it
+        // into the generic 500 below.
+        if (isEmailConflict(err)) {
+          console.error('[auth] email already linked to a different googleSub', err)
+          return res.status(409).json({
+            code: 'EMAIL_ALREADY_LINKED',
+            message: 'this email is already linked to a different Google account; a manual googleSub re-link is needed',
+          })
+        }
+        throw err
+      }
       if (actor.disabled) {
         return res.status(403).json({ code: 'FORBIDDEN', message: 'actor disabled' })
       }
@@ -98,11 +146,13 @@ export function createAuthRouter(oidc: OidcPort): Router {
       res.setHeader('Set-Cookie',
         `${SESSION_COOKIE}=${token}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=${sessionTtlMs() / 1000}`)
       res.redirect(302, consoleOrigin() || '/')
-    } catch {
+    } catch (err) {
       // A DB/upsert failure (or anything else unexpected below the known
       // checks) must still produce a response rather than an unhandled
-      // rejection. Distinct from the 400/403 above: this is an unexpected
-      // server-side failure, not a rejected transaction or identity.
+      // rejection. Distinct from the 400/403/409 above: this is an
+      // unexpected server-side failure, not a rejected transaction or
+      // identity.
+      console.error('[auth] unexpected failure in google/callback', err)
       res.status(500).json({ code: 'INTERNAL_ERROR', message: 'sign-in failed' })
     }
   })
@@ -113,7 +163,8 @@ export function createAuthRouter(oidc: OidcPort): Router {
       if (token) await revokeSession(token)
       res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0`)
       res.status(204).end()
-    } catch {
+    } catch (err) {
+      console.error('[auth] unexpected failure in logout', err)
       res.status(500).json({ code: 'INTERNAL_ERROR', message: 'logout failed' })
     }
   })
