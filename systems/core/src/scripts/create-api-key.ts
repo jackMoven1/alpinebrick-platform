@@ -1,5 +1,5 @@
-import { createApiKey } from '../src/auth/apikey.service.js'
-import { prisma } from '../src/prisma.js'
+import { createApiKey } from '../auth/apikey.service.js'
+import { prisma } from '../prisma.js'
 
 async function main() {
   const [actorName, keyName, expiresDays] = process.argv.slice(2)

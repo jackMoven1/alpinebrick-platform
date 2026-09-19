@@ -13,7 +13,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:generate": "prisma generate",
     "seed": "tsx prisma/seed.ts",
-    "create-api-key": "tsx scripts/create-api-key.ts"
+    "create-api-key": "tsx src/scripts/create-api-key.ts",
+    "create-api-key:prod": "node dist/scripts/create-api-key.js"
   },
   "dependencies": {
     "@prisma/client": "^5.18.0",

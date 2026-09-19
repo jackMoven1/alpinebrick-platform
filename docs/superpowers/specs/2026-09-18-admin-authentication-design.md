@@ -190,8 +190,11 @@ diagnose the outage.
 The procedure:
 
 1. Render dashboard → the `core` service → Shell.
-2. `npm run create-api-key -- break-glass emergency 1`
-   (actor name, key name, expiry in days — one day, not never).
+2. `npm run create-api-key:prod -- break-glass emergency 1`
+   (actor name, key name, expiry in days — one day, not never). The `:prod`
+   entry point runs the compiled script under plain `node`; the plain
+   `create-api-key` script depends on `tsx`, a devDependency a production
+   install omits, so it is not present in the Render shell.
 3. Use the printed key as `Authorization: Bearer abk_…`.
 4. Revoke it when the incident closes: set `revoked_at` on the row.
 
@@ -305,9 +308,11 @@ table exists to prevent.
 
 ## 8. Issuing API keys
 
-`scripts/create-api-key.ts` — takes an actor name and optional expiry, creates
-the `Actor` (type `agent`) and `ApiKey` rows, and prints the plaintext once to
-stdout. No UI, by §2.
+`src/scripts/create-api-key.ts` — takes an actor name and optional expiry,
+creates the `Actor` (type `agent`) and `ApiKey` rows, and prints the plaintext
+once to stdout. No UI, by §2. Lives under `src/` (not a top-level `scripts/`
+directory) so the existing `tsconfig.build.json`/Dockerfile build the compiled
+script into `dist/scripts/` with no separate build config.
 
 ## 9. Testing
 
