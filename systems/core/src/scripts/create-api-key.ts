@@ -6,24 +6,39 @@ export type ParsedExpiresDays =
   | { ok: true; value: number | null }
   | { ok: false; message: string }
 
+/** Ten years. Generous for the legitimate cases (a long-lived MCP connector
+ * key), and comfortably inside `Date`'s representable range, so nothing
+ * accepted here can make the arithmetic below overflow. */
+const MAX_EXPIRES_DAYS = 3650
+
 /**
  * `expires-days` is optional -- omitted means "never expires" -- but when
- * given it must be a positive integer.
+ * given it must be a positive integer, not too large, and precise.
  *
- * A non-numeric value (or one large enough to overflow `Date`) becomes
- * `NaN`/`Invalid Date`, which at least fails loudly once it reaches Prisma.
- * A negative value does not: it is perfectly valid arithmetic, so without
- * this check `createApiKey` silently mints a key that is already expired.
- * The operator sees "API key created" and a plausible-looking timestamp, and
- * only discovers the problem later as an unexplained 401. Reject both
- * classes here, before `createApiKey` is ever called, with a one-line usage
- * error instead of letting either turn into a thrown exception.
+ * Rejects: non-numeric input (`NaN`); non-integers; zero and negatives (a
+ * negative is valid arithmetic, so without this check `createApiKey` would
+ * silently mint an already-expired key -- the operator sees "API key
+ * created" and a plausible-looking timestamp, and only discovers the
+ * problem later as an unexplained 401); values beyond
+ * `Number.MAX_SAFE_INTEGER`, where integer arithmetic stops being exact; and
+ * anything above `MAX_EXPIRES_DAYS`. That last one matters because a large
+ * but finite, perfectly integer, perfectly positive day count still
+ * overflows `Date`'s representable range once multiplied out
+ * (`Date.now() + n * 86_400_000`), producing an `Invalid Date` that reaches
+ * Prisma and throws -- the exact raw-stack-trace failure this validation
+ * exists to prevent, arrived at through a different input than the
+ * non-numeric case. All of these are rejected here, before `createApiKey`
+ * is ever called, with a one-line usage error instead of a thrown
+ * exception.
  */
 export function parseExpiresDays(raw: string | undefined): ParsedExpiresDays {
   if (raw === undefined) return { ok: true, value: null }
   const n = Number(raw)
-  if (!Number.isInteger(n) || n <= 0) {
-    return { ok: false, message: 'expires-days must be a positive integer' }
+  if (!Number.isSafeInteger(n) || n <= 0 || n > MAX_EXPIRES_DAYS) {
+    return {
+      ok: false,
+      message: `expires-days must be a positive integer no greater than ${MAX_EXPIRES_DAYS}`,
+    }
   }
   return { ok: true, value: n }
 }

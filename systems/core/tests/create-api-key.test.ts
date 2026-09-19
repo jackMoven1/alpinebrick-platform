@@ -58,4 +58,25 @@ describe('expires-days validation', () => {
   it('rejects a non-integer expiry', () => {
     expect(parseExpiresDays('1.5')).toEqual({ ok: false, message: expect.any(String) })
   })
+
+  // A large but finite integer passes Number.isInteger and is > 0, so it
+  // isn't caught by the checks above -- but Date.now() + n * 86_400_000
+  // overflows Date's representable range, producing an Invalid Date that
+  // reaches Prisma and throws. This is the same operator-facing raw stack
+  // trace the validation exists to eliminate, reached by a different input.
+  it('accepts the boundary value (3650 days, ten years)', () => {
+    expect(parseExpiresDays('3650')).toEqual({ ok: true, value: 3650 })
+  })
+
+  it('rejects a value above the cap', () => {
+    expect(parseExpiresDays('3651')).toEqual({ ok: false, message: expect.any(String) })
+  })
+
+  it('rejects a huge value that would overflow Date', () => {
+    expect(parseExpiresDays('999999999')).toEqual({ ok: false, message: expect.any(String) })
+  })
+
+  it('rejects a value beyond Number.MAX_SAFE_INTEGER', () => {
+    expect(parseExpiresDays('9007199254740993')).toEqual({ ok: false, message: expect.any(String) })
+  })
 })
