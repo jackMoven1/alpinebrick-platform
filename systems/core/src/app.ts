@@ -22,6 +22,11 @@ export function buildApp(): Express {
   // only widens the surface for nothing.
   app.use('/api/v1/catalog', createCors({ origins: allowedStorefrontOrigins, credentials: false }))
   app.use('/api/v1/catalog', catalogRouter)
+  // Deliberately no CORS handler here -- nothing calls this endpoint
+  // cross-origin yet (the storefront has no checkout wired up). When
+  // checkout lands, this needs the same catalog-shaped treatment: a
+  // createCors({ origins: allowedStorefrontOrigins, credentials: false })
+  // mount ahead of it, since orders is public the same way catalog is.
   app.use('/api/v1/orders', ordersRouter)
 
   // CORS mounts first, ahead of everything else on this prefix -- a

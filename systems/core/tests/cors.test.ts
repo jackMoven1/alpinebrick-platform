@@ -60,6 +60,58 @@ describe('preflight OPTIONS succeeds unauthenticated', () => {
   })
 })
 
+// admin-ui sends `content-type` and `accept` on every request, including
+// GETs (systems/admin-ui/src/data/api.js) -- that makes every console
+// request non-simple, so every single one is preflighted in the browser.
+// Access-Control-Allow-Methods / -Allow-Headers are therefore load-bearing
+// for 100% of admin traffic: without them the browser's preflight succeeds
+// (204) but its real follow-up request is still blocked, because the
+// browser never sees its requested method/headers echoed back as permitted.
+describe('preflight echoes the requested method and headers', () => {
+  it('admin surface', async () => {
+    const res = await request(app)
+      .options('/api/v1/admin/products')
+      .set('Origin', ADMIN_ORIGIN)
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'content-type')
+    expect(res.status).toBe(204)
+    expect(res.headers['access-control-allow-methods']).toBe('POST')
+    expect(res.headers['access-control-allow-headers']).toBe('content-type')
+  })
+
+  it('auth surface', async () => {
+    const res = await request(app)
+      .options('/api/v1/auth/logout')
+      .set('Origin', ADMIN_ORIGIN)
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'content-type')
+    expect(res.status).toBe(204)
+    expect(res.headers['access-control-allow-methods']).toBe('POST')
+    expect(res.headers['access-control-allow-headers']).toBe('content-type')
+  })
+
+  it('catalog surface', async () => {
+    const res = await request(app)
+      .options('/api/v1/catalog/products')
+      .set('Origin', STOREFRONT_ORIGIN)
+      .set('Access-Control-Request-Method', 'GET')
+      .set('Access-Control-Request-Headers', 'content-type')
+    expect(res.status).toBe(204)
+    expect(res.headers['access-control-allow-methods']).toBe('GET')
+    expect(res.headers['access-control-allow-headers']).toBe('content-type')
+  })
+
+  // Chrome's 5s default preflight cache means roughly two round trips per
+  // admin call without this, given every admin call is preflighted (above).
+  it('sets Access-Control-Max-Age on a matched preflight', async () => {
+    const res = await request(app)
+      .options('/api/v1/admin/products')
+      .set('Origin', ADMIN_ORIGIN)
+      .set('Access-Control-Request-Method', 'GET')
+    expect(res.headers['access-control-max-age']).toBe('600')
+  })
+})
+
 describe('allowlisted origin is echoed exactly; unlisted origin gets no header', () => {
   it('admin echoes the allowlisted console origin', async () => {
     const res = await request(app)
