@@ -31,6 +31,29 @@ function isEmailConflict(err: unknown): boolean {
   return Array.isArray(target) ? target.includes('email') : target === 'email'
 }
 
+/**
+ * A safe-to-log summary of an unknown error: message, plus `code`/`status`
+ * when present.
+ *
+ * Deliberately does NOT log the error object itself. The real Google adapter
+ * wraps `google-auth-library`, which wraps `gaxios` -- a failed token
+ * exchange (an expired, replayed, or tampered authorization code is the
+ * routine case, not an edge case) throws a `GaxiosError` carrying `.config`,
+ * a copy of the request including the request body: our one-time `code` and
+ * PKCE `codeVerifier`. Gaxios's own redactor strips `client_secret` and
+ * `grant_type` but NOT `code` or `code_verifier`, and `console.error(msg,
+ * err)` prints an Error's own enumerable properties -- `config` included --
+ * in the clear. Narrowing to this shape is the one place that policy is
+ * enforced, so it only has to be gotten right once.
+ */
+function scrubError(err: unknown): { message: string; code?: unknown; status?: unknown } {
+  if (!(err instanceof Error)) return { message: String(err) }
+  const out: { message: string; code?: unknown; status?: unknown } = { message: err.message }
+  if ('code' in err) out.code = (err as { code?: unknown }).code
+  if ('status' in err) out.status = (err as { status?: unknown }).status
+  return out
+}
+
 export function createAuthRouter(oidc: OidcPort): Router {
   const router = Router()
 
@@ -83,7 +106,7 @@ export function createAuthRouter(oidc: OidcPort): Router {
         // caller (nothing about our response should hint at which), but this
         // must not vanish from our own diagnostics -- it is the case that
         // matters most.
-        console.error('[auth] oidc.exchange failed', err)
+        console.error('[auth] oidc.exchange failed', scrubError(err))
         return res.status(400).json({ code: 'VALIDATION_ERROR', message: 'code exchange failed' })
       }
 
@@ -125,7 +148,7 @@ export function createAuthRouter(oidc: OidcPort): Router {
         // we must not guess. Surface it distinctly rather than folding it
         // into the generic 500 below.
         if (isEmailConflict(err)) {
-          console.error('[auth] email already linked to a different googleSub', err)
+          console.error('[auth] email already linked to a different googleSub', scrubError(err))
           return res.status(409).json({
             code: 'EMAIL_ALREADY_LINKED',
             message: 'this email is already linked to a different Google account; a manual googleSub re-link is needed',
@@ -152,7 +175,7 @@ export function createAuthRouter(oidc: OidcPort): Router {
       // rejection. Distinct from the 400/403/409 above: this is an
       // unexpected server-side failure, not a rejected transaction or
       // identity.
-      console.error('[auth] unexpected failure in google/callback', err)
+      console.error('[auth] unexpected failure in google/callback', scrubError(err))
       res.status(500).json({ code: 'INTERNAL_ERROR', message: 'sign-in failed' })
     }
   })
@@ -164,7 +187,7 @@ export function createAuthRouter(oidc: OidcPort): Router {
       res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0`)
       res.status(204).end()
     } catch (err) {
-      console.error('[auth] unexpected failure in logout', err)
+      console.error('[auth] unexpected failure in logout', scrubError(err))
       res.status(500).json({ code: 'INTERNAL_ERROR', message: 'logout failed' })
     }
   })

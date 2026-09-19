@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest'
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import express from 'express'
 import request from 'supertest'
@@ -7,6 +7,7 @@ import { resetDb } from './helpers/db.js'
 import { createAuthRouter } from '../src/auth/auth.routes.js'
 import { createFakeOidcPort } from '../src/ports/oidc/fake.adapter.js'
 import { SESSION_COOKIE } from '../src/auth/session.service.js'
+import type { OidcPort } from '../src/ports/oidc/oidc.port.js'
 
 const IDENTITY = { sub: 'google-sub-1', email: 'jack@example.com', emailVerified: true, name: 'Jack' }
 
@@ -112,6 +113,53 @@ describe('auth routes', () => {
       .set('Cookie', txCookie)
     expect(res.status).toBe(400)
     expect(await prisma.adminSession.count()).toBe(0)
+  })
+
+  // Task 8 review round 2: the exchange-failure catch must scrub the raw
+  // error before logging it. The routine failure there -- an expired,
+  // replayed, or tampered authorization code -- throws an error carrying the
+  // request's own body (code, PKCE codeVerifier, client_secret) as
+  // enumerable properties, and neither gaxios's redactor nor a bare
+  // `console.error(msg, err)` strips `code`/`code_verifier`. This proves the
+  // fix by planting both secrets in a thrown error and asserting neither
+  // reaches the log.
+  it('scrubs the raw error so a failed exchange never logs the code or PKCE verifier', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const leaky = new Error('invalid_grant') as Error & { config: unknown }
+      leaky.config = {
+        data: new URLSearchParams({
+          code: 'SECRET_CODE_123',
+          code_verifier: 'SECRET_VERIFIER_456',
+          client_secret: 'also-secret',
+          grant_type: 'authorization_code',
+        }),
+      }
+      const throwingOidc: OidcPort = {
+        authUrl: ({ state, codeChallenge }) =>
+          `https://accounts.example/fake?state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallenge)}`,
+        exchange: async () => { throw leaky },
+      }
+      const app = express()
+      app.use(express.json())
+      app.use('/api/v1/auth', createAuthRouter(throwingOidc))
+
+      const start = await request(app).get('/api/v1/auth/google/start')
+      const txCookie = (start.headers['set-cookie'] as unknown as string[])[0].split(';')[0]
+      const url = new URL(start.headers.location)
+      const state = url.searchParams.get('state')!
+      const res = await request(app)
+        .get(`/api/v1/auth/google/callback?code=whatever&state=${encodeURIComponent(state)}`)
+        .set('Cookie', txCookie)
+
+      expect(res.status).toBe(400)
+      expect(spy).toHaveBeenCalled()
+      const logged = JSON.stringify(spy.mock.calls)
+      expect(logged).not.toContain('SECRET_CODE_123')
+      expect(logged).not.toContain('SECRET_VERIFIER_456')
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   // The identity key is sub, not email: an email can be reassigned.
