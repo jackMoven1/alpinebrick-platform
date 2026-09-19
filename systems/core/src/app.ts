@@ -6,6 +6,8 @@ import { createLocalStoragePort } from './ports/storage/local.adapter.js'
 import { adminCatalogRouter } from './admin/admin-catalog.routes.js'
 import { requireAuth } from './auth/require-auth.js'
 import { requireOrigin } from './auth/require-origin.js'
+import { createAuthRouter } from './auth/auth.routes.js'
+import { createGoogleOidcPort } from './ports/oidc/google.adapter.js'
 
 export function buildApp(): Express {
   const app = express()
@@ -13,6 +15,11 @@ export function buildApp(): Express {
   app.get('/health', (_req, res) => res.json({ status: 'ok' }))
   app.use('/api/v1/catalog', catalogRouter)
   app.use('/api/v1/orders', ordersRouter)
+
+  // Mounted before the admin routers below, and deliberately NOT behind
+  // requireAuth -- sign-in has to work before there is a session. /me is the
+  // one route here that needs a session, so it applies requireAuth itself.
+  app.use('/api/v1/auth', createAuthRouter(createGoogleOidcPort()))
 
   // Local filesystem storage until a CDN provider is chosen (ADR-0002).
   // Swapping the adapter is the only change required here.
