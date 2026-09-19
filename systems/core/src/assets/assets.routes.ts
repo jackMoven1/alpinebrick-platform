@@ -3,7 +3,7 @@ import type { AssetStoragePort } from '../ports/storage/storage.port.js'
 import {
   requestUpload, confirmUpload, reorderImages, deleteImage, updateImageAlt, ImageError,
 } from './image.service.js'
-import { scrubError } from '../auth/auth.routes.js'
+import { scrubError } from '../auth/scrub.js'
 
 // Maps a service error code to the HTTP status that describes it.
 // lower_snake, deliberately not unified with the catalog router's UPPER_SNAKE.
@@ -38,11 +38,12 @@ function fail(res: Response, err: unknown) {
  * that assertion is sound only because `app.ts` mounts `requireAuth` on
  * `/api/v1/admin` ahead of this router -- `req.actor` is never populated on
  * its own. Mount this router bare (as a standalone test app might) and
- * `req.actor` is `undefined`: `recordAudit` gets `actorId: undefined`, hits
- * the `AuditLog.actorId` foreign-key constraint, and -- because `fail()`
- * responds rather than re-throws -- that surfaces as a quiet 500 instead of a
- * loud crash. A caller wiring this router in standalone (e.g. a test app)
- * must inject `req.actor` itself; see `tests/assets-routes.test.ts`.
+ * `req.actor` is `undefined`: `req.actor!.id` throws a synchronous
+ * `TypeError` before the service (and `recordAudit`) is ever reached, and --
+ * because each handler's `catch` calls `fail()`, which responds rather than
+ * re-throws -- that surfaces as a quiet 500 instead of a loud crash. A caller
+ * wiring this router in standalone (e.g. a test app) must inject `req.actor`
+ * itself; see `tests/assets-routes.test.ts`.
  */
 export function createAssetsRouter(port: AssetStoragePort): Router {
   const router = Router()

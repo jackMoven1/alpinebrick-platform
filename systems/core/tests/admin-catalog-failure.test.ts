@@ -15,6 +15,8 @@ vi.mock('../src/admin/admin-catalog.service.js', async (importOriginal) => {
   return {
     ...actual,
     setProductStatus: vi.fn(async () => { throw new Error('unexpected db failure') }),
+    adminGetProduct: vi.fn(async () => { throw new Error('unexpected db failure') }),
+    getOverview: vi.fn(async () => { throw new Error('unexpected db failure') }),
   }
 })
 
@@ -56,6 +58,46 @@ describe("admin-catalog.routes.ts's fail() on an unknown error", () => {
       // status when present) -- never the original error's other properties.
       expect(loggedArgs.some(a => a instanceof Error)).toBe(false)
       expect(loggedArgs).toContainEqual({ message: 'unexpected db failure' })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+// Task review item 4: GET /products/:id and GET /overview await their
+// service calls with no try/catch. Express 4 does not catch a rejection
+// thrown out of an async handler, and Node 20 defaults to
+// --unhandled-rejections=throw, so an unguarded await here is not just a
+// missed error response -- it is a process exit. /overview is the console's
+// landing route.
+describe('admin-catalog.routes.ts unguarded handlers', () => {
+  it('GET /products/:id responds 500 INTERNAL_ERROR rather than crashing', async () => {
+    const actor = await prisma.actor.create({ data: { type: 'human', name: 'jack' } })
+    const { token } = await createSession(actor.id)
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const res = await request(app)
+        .get('/api/v1/admin/products/whatever')
+        .set('Cookie', `${SESSION_COOKIE}=${token}`)
+      expect(res.status).toBe(500)
+      expect(res.body.code).toBe('INTERNAL_ERROR')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('GET /overview responds 500 INTERNAL_ERROR rather than crashing', async () => {
+    const actor = await prisma.actor.create({ data: { type: 'human', name: 'jack' } })
+    const { token } = await createSession(actor.id)
+
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const res = await request(app)
+        .get('/api/v1/admin/overview')
+        .set('Cookie', `${SESSION_COOKIE}=${token}`)
+      expect(res.status).toBe(500)
+      expect(res.body.code).toBe('INTERNAL_ERROR')
     } finally {
       spy.mockRestore()
     }
