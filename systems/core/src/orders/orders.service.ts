@@ -108,7 +108,7 @@ export async function placeOrder(input: PlaceOrderInput, taxPort: TaxPort = defa
       lineItems: resolved.map((l) => ({ amountCents: l.unitPriceCents * l.quantity })),
     })
 
-    return tx.order.create({
+    const created = await tx.order.create({
       data: {
         email: input.email,
         shipToState: input.shipToState.trim().toUpperCase(),
@@ -128,12 +128,15 @@ export async function placeOrder(input: PlaceOrderInput, taxPort: TaxPort = defa
       },
       include: { lines: true },
     })
+
+    await recordAudit({
+      actorId, action: 'order.place', target: `order:${created.id}`,
+      after: { status: created.status, totalCents: created.totalCents },
+    }, tx)
+
+    return created
   })
 
-  await recordAudit({
-    actorId, action: 'order.place', target: `order:${order.id}`,
-    after: { status: order.status, totalCents: order.totalCents },
-  })
   return toDto(order)
 }
 
@@ -154,9 +157,10 @@ export async function markOrderPaid(orderId: string, actorId = 'system'): Promis
     if (order.status !== 'pending') {
       throw new OrderError('invalid_transition', `cannot mark ${order.status} order as paid`)
     }
-    return tx.order.update({ where: { id: orderId }, data: { status: 'paid' }, include: { lines: true } })
+    const next = await tx.order.update({ where: { id: orderId }, data: { status: 'paid' }, include: { lines: true } })
+    await recordAudit({ actorId, action: 'order.paid', target: `order:${orderId}`, before: { status: 'pending' }, after: { status: 'paid' } }, tx)
+    return next
   })
-  await recordAudit({ actorId, action: 'order.paid', target: `order:${orderId}`, before: { status: 'pending' }, after: { status: 'paid' } })
   return toDto(updated)
 }
 
@@ -172,9 +176,10 @@ export async function fulfillOrder(orderId: string, actorId = 'system'): Promise
         WHERE variant_id = ${line.variantId} AND reserved >= ${line.quantity} AND on_hand >= ${line.quantity}`
       if (affected === 0) throw new OrderError('inventory_conflict', `cannot decrement stock for variant ${line.variantId}`)
     }
-    return tx.order.update({ where: { id: orderId }, data: { status: 'fulfilled' }, include: { lines: true } })
+    const next = await tx.order.update({ where: { id: orderId }, data: { status: 'fulfilled' }, include: { lines: true } })
+    await recordAudit({ actorId, action: 'order.fulfilled', target: `order:${orderId}`, before: { status: 'paid' }, after: { status: 'fulfilled' } }, tx)
+    return next
   })
-  await recordAudit({ actorId, action: 'order.fulfilled', target: `order:${orderId}`, before: { status: 'paid' }, after: { status: 'fulfilled' } })
   return toDto(updated)
 }
 
@@ -195,8 +200,9 @@ export async function cancelOrder(orderId: string, actorId = 'system'): Promise<
         WHERE variant_id = ${line.variantId} AND reserved >= ${line.quantity}`
       if (affected === 0) throw new OrderError('inventory_conflict', `cannot release reservation for variant ${line.variantId}`)
     }
-    return tx.order.update({ where: { id: orderId }, data: { status: 'cancelled' }, include: { lines: true } })
+    const next = await tx.order.update({ where: { id: orderId }, data: { status: 'cancelled' }, include: { lines: true } })
+    await recordAudit({ actorId, action: 'order.cancelled', target: `order:${orderId}`, after: { status: 'cancelled' } }, tx)
+    return next
   })
-  await recordAudit({ actorId, action: 'order.cancelled', target: `order:${orderId}`, after: { status: 'cancelled' } })
   return toDto(updated)
 }
