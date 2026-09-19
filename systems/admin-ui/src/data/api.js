@@ -1,11 +1,17 @@
 import { AdminApiError } from './errors.js'
+import { API_BASE_URL } from '../lib/apiBase.js'
 
 // NOTE the argument order. The console's AdminApiError is
 // (message, code, fields) — message FIRST. Core's AdminError is
 // (code, message) — code first. They are different classes in different
 // packages and the orders are opposite, which is easy to get backwards and
 // produces an error whose code reads like a sentence.
-const BASE = '/api/v1/admin'
+//
+// BASE is absolute once VITE_API_BASE_URL is set, relative (unchanged)
+// otherwise -- see lib/apiBase.js. Cross-origin (the console's real
+// deployment, spec §6.1), a relative path resolves against the console's
+// own static host, which serves neither this nor /api/v1/auth.
+const BASE = `${API_BASE_URL}/api/v1/admin`
 const GENERIC = 'Something went wrong. Please try again.'
 
 /**

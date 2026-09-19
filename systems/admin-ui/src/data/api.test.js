@@ -152,3 +152,45 @@ describe('session handling', () => {
     expect(settled).toBe(false)
   })
 })
+
+// Core sits behind session auth on its own domain now (spec §6.1). A
+// relative BASE only ever worked because the Vite dev proxy hides that --
+// from the console's real deployment it would resolve against the console's
+// own static host, which serves neither /api/v1/admin nor /api/v1/auth.
+// import.meta.env is read once at module evaluation, so a fresh module
+// instance is needed per env value: reset the registry, stub the env var,
+// dynamically import.
+describe('API base URL wiring', () => {
+  beforeEach(() => vi.resetModules())
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+  })
+
+  it('uses a configured VITE_API_BASE_URL as the request origin', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.alpinebrickexchange.com')
+    const spy = vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ items: [], total: 0, page: 1, pageSize: 20 }),
+    }))
+    vi.stubGlobal('fetch', spy)
+    const { default: freshApi } = await import('./api.js')
+    await freshApi.listProducts({})
+    expect(String(spy.mock.calls[0][0])).toBe('https://api.alpinebrickexchange.com/api/v1/admin/products')
+  })
+
+  // The regression this guards: today's behaviour (a relative path,
+  // resolved by the dev proxy) must survive unchanged when the env var is
+  // unset, since nothing sets it in dev.
+  it('an empty base preserves the current relative-path behaviour', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', '')
+    const spy = vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ items: [], total: 0, page: 1, pageSize: 20 }),
+    }))
+    vi.stubGlobal('fetch', spy)
+    const { default: freshApi } = await import('./api.js')
+    await freshApi.listProducts({})
+    expect(String(spy.mock.calls[0][0])).toBe('/api/v1/admin/products')
+  })
+})
