@@ -91,3 +91,40 @@ describe('unimplemented methods', () => {
     await expect(api.bulkSetStatus(['p1'], 'draft')).rejects.toThrow(/not implemented/i)
   })
 })
+
+// Core sits behind session auth now. Every request must carry the session
+// cookie, and a session that is gone or was never there must send the admin
+// to sign in rather than render a 401 as if it were an ordinary error.
+describe('session handling', () => {
+  const realLocation = window.location
+
+  afterEach(() => {
+    window.location = realLocation
+  })
+
+  it('sends credentials on every request', async () => {
+    const spy = vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ items: [], total: 0, page: 1, pageSize: 20 }),
+    }))
+    vi.stubGlobal('fetch', spy)
+    await api.listProducts({})
+    expect(spy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ credentials: 'include' }),
+    )
+  })
+
+  it('redirects to sign-in on 401 instead of surfacing an error', async () => {
+    const assign = vi.fn()
+    delete window.location
+    window.location = { assign, href: '' }
+    mockFetch(401, { code: 'UNAUTHENTICATED', message: 'authentication required' })
+
+    const err = await api.listProducts({}).catch((e) => e)
+
+    expect(assign).toHaveBeenCalledWith(expect.stringContaining('/api/v1/auth/google/start'))
+    expect(err).toBeInstanceOf(AdminApiError)
+    expect(err.code).toBe('UNAUTHENTICATED')
+  })
+})

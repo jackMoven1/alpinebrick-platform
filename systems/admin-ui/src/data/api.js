@@ -17,11 +17,19 @@ async function call(path, options = {}) {
   let res
   try {
     res = await fetch(`${BASE}${path}`, {
+      credentials: 'include',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       ...options,
     })
   } catch {
     throw new AdminApiError(GENERIC, 'INTERNAL')
+  }
+
+  if (res.status === 401) {
+    // Not an error the UI should render -- the session is gone or was never
+    // there, and the only useful response is to sign in again.
+    window.location.assign('/api/v1/auth/google/start')
+    throw new AdminApiError('authentication required', 'UNAUTHENTICATED')
   }
 
   if (!res.ok) {
