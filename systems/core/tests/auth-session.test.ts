@@ -69,4 +69,37 @@ describe('session service', () => {
       delete process.env.SESSION_TTL_HOURS
     }
   })
+
+  // A huge but finite, perfectly positive hour count overflows Date's
+  // representable range once multiplied out (Date.now() + hours * 3600_000),
+  // producing an Invalid Date that reaches Prisma and turns sign-in into an
+  // opaque 500 -- the same class parseExpiresDays already eliminated for the
+  // break-glass script. The cap must fall back to the default, same as any
+  // other rubbish input.
+  it('caps an absurd ttl at the default rather than producing an Invalid Date', () => {
+    try {
+      process.env.SESSION_TTL_HOURS = '99999999999999'
+      expect(sessionTtlMs()).toBe(12 * 3600_000)
+    } finally {
+      delete process.env.SESSION_TTL_HOURS
+    }
+  })
+
+  it('accepts the boundary value (24 * 365 hours, one year)', () => {
+    try {
+      process.env.SESSION_TTL_HOURS = String(24 * 365)
+      expect(sessionTtlMs()).toBe(24 * 365 * 3600_000)
+    } finally {
+      delete process.env.SESSION_TTL_HOURS
+    }
+  })
+
+  it('falls back to the default one hour past the cap', () => {
+    try {
+      process.env.SESSION_TTL_HOURS = String(24 * 365 + 1)
+      expect(sessionTtlMs()).toBe(12 * 3600_000)
+    } finally {
+      delete process.env.SESSION_TTL_HOURS
+    }
+  })
 })

@@ -9,14 +9,24 @@ export interface AuthActor {
   name: string
 }
 
+/** A year. Generous headroom for any legitimate configuration, and
+ * comfortably inside the range `Date.now() + hours * 3600_000` can represent
+ * without overflowing. Same Date-overflow class this branch already
+ * eliminated in `parseExpiresDays` (src/scripts/create-api-key.ts) -- the
+ * rule established there, validate at the input layer with a cap, had not
+ * yet been applied here. Without it, `SESSION_TTL_HOURS=99999999999999`
+ * produces an Invalid Date and sign-in fails with an opaque 500. */
+const MAX_SESSION_TTL_HOURS = 24 * 365
+
 /**
- * 12 hours, absolute, no sliding window (spec §4.2). Anything unparseable or
- * non-positive falls back to the default rather than producing a session that
- * never expires or expires instantly.
+ * 12 hours, absolute, no sliding window (spec §4.2). Anything unparseable,
+ * non-positive, or above the cap falls back to the default rather than
+ * producing a session that never expires, expires instantly, or -- via
+ * Date overflow -- fails sign-in outright.
  */
 export function sessionTtlMs(): number {
   const raw = Number(process.env.SESSION_TTL_HOURS)
-  const hours = Number.isFinite(raw) && raw > 0 ? raw : 12
+  const hours = Number.isFinite(raw) && raw > 0 && raw <= MAX_SESSION_TTL_HOURS ? raw : 12
   return hours * 3600_000
 }
 

@@ -55,6 +55,11 @@ describe('order audit atomicity', () => {
   // order is still 'pending'. If recordAudit runs after the transaction has
   // already committed, the order is left 'paid' even though the caller sees
   // a rejected promise.
+  //
+  // This test's discriminating power depends on AuditLog.actorId remaining
+  // FK-enforced (schema.prisma). If that constraint is ever relaxed, a
+  // no-such-actor write to recordAudit stops failing at all, and this test
+  // silently stops detecting the regression it exists to catch.
   it('rolls back the order state change when the audit write fails', async () => {
     const { order } = await seedPendingOrder()
     await expect(markOrderPaid(order.id, 'no-such-actor')).rejects.toThrow()
