@@ -47,11 +47,21 @@ function isEmailConflict(err: unknown): boolean {
  * enforced, so it only has to be gotten right once.
  */
 function scrubError(err: unknown): { message: string; code?: unknown; status?: unknown } {
-  if (!(err instanceof Error)) return { message: String(err) }
-  const out: { message: string; code?: unknown; status?: unknown } = { message: err.message }
-  if ('code' in err) out.code = (err as { code?: unknown }).code
-  if ('status' in err) out.status = (err as { status?: unknown }).status
-  return out
+  // Guarded as a whole, not just the code/status reads: `'code' in err` does
+  // not invoke a getter, but reading `err.code`/`err.status` (or even
+  // `err.message`, or `String(err)` on a hostile non-Error) does, and this
+  // runs at two call sites with no enclosing try -- the outer callback catch
+  // and /logout's catch. A throwing getter there must not itself become an
+  // unhandled rejection in an async Express 4 handler.
+  try {
+    if (!(err instanceof Error)) return { message: String(err) }
+    const out: { message: string; code?: unknown; status?: unknown } = { message: err.message }
+    if ('code' in err) out.code = (err as { code?: unknown }).code
+    if ('status' in err) out.status = (err as { status?: unknown }).status
+    return out
+  } catch {
+    return { message: 'unloggable error' }
+  }
 }
 
 export function createAuthRouter(oidc: OidcPort): Router {

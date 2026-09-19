@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import { createHash } from 'node:crypto'
+import { format } from 'node:util'
 import express from 'express'
 import request from 'supertest'
 import { prisma } from '../src/prisma.js'
@@ -154,7 +155,15 @@ describe('auth routes', () => {
 
       expect(res.status).toBe(400)
       expect(spy).toHaveBeenCalled()
-      const logged = JSON.stringify(spy.mock.calls)
+      // JSON.stringify cannot see this: URLSearchParams keeps its data in
+      // internal slots, not enumerable own properties, so
+      // JSON.stringify(leaky) is "{}" regardless of whether the logged value
+      // was scrubbed -- that assertion would pass even against the raw
+      // error. console.error actually formats its arguments with
+      // util.format (util.inspect under the hood), which DOES walk into a
+      // URLSearchParams and print its entries. Reproduce that formatting
+      // here so the assertion exercises the real leak vector.
+      const logged = spy.mock.calls.map(call => format(...call)).join('\n')
       expect(logged).not.toContain('SECRET_CODE_123')
       expect(logged).not.toContain('SECRET_VERIFIER_456')
     } finally {
