@@ -1,11 +1,12 @@
 import { Router, type Response } from 'express'
 import type { AssetStoragePort } from '../ports/storage/storage.port.js'
 import {
-  requestUpload, confirmUpload, reorderImages, deleteImage, ImageError,
+  requestUpload, confirmUpload, reorderImages, deleteImage, updateImageAlt, ImageError,
 } from './image.service.js'
-import { prisma } from '../prisma.js'
+import { scrubError } from '../auth/auth.routes.js'
 
 // Maps a service error code to the HTTP status that describes it.
+// lower_snake, deliberately not unified with the catalog router's UPPER_SNAKE.
 const STATUS_BY_CODE: Record<string, number> = {
   product_not_found: 404,
   image_not_found: 404,
@@ -20,7 +21,13 @@ function fail(res: Response, err: unknown) {
   if (err instanceof ImageError) {
     return res.status(STATUS_BY_CODE[err.code] ?? 400).json({ code: err.code, message: err.message })
   }
-  throw err
+  // Same unhandled-rejection class fixed in admin-catalog.routes.ts's fail():
+  // Express 4 does not catch a rejection thrown out of an async handler, so
+  // re-throwing an unknown error here left this route hanging instead of
+  // responding. Respond instead, and scrub before logging. Kept lower_snake
+  // here to match this file's existing convention.
+  console.error('[assets] unexpected failure', scrubError(err))
+  res.status(500).json({ code: 'internal_error', message: 'internal error' })
 }
 
 /**
@@ -66,13 +73,9 @@ export function createAssetsRouter(port: AssetStoragePort): Router {
     if (typeof alt !== 'string') {
       return res.status(400).json({ code: 'invalid_body', message: 'alt must be a string' })
     }
-    const existing = await prisma.image.findUnique({ where: { id: req.params.id } })
-    if (!existing) return res.status(404).json({ code: 'image_not_found', message: 'image not found' })
-    const updated = await prisma.image.update({ where: { id: req.params.id }, data: { alt } })
-    res.json({
-      id: updated.id, storageKey: updated.storageKey, alt: updated.alt,
-      position: updated.position, width: updated.width, height: updated.height,
-    })
+    try {
+      res.json(await updateImageAlt(req.params.id, alt, req.actor!.id))
+    } catch (err) { fail(res, err) }
   })
 
   router.delete('/:id', async (req, res) => {

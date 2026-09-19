@@ -67,41 +67,49 @@ export async function requestUpload(
   const product = await prisma.product.findUnique({ where: { id: input.productId } })
   if (!product) throw new ImageError('product_not_found', 'product not found')
 
-  const last = await prisma.image.findFirst({
-    where: { productId: input.productId },
-    orderBy: { position: 'desc' },
-  })
-  const position = last ? last.position + 1 : 0
+  // Row creation and the audit write are both pure database work, so they run
+  // in one transaction. The external port.createUploadTarget call below is
+  // storage I/O and deliberately sits OUTSIDE it -- a transaction spanning a
+  // network round trip pins a connection and risks timing out under load, and
+  // this port will eventually point at a real CDN rather than the local
+  // filesystem. The audit is atomic with the database change, not with the
+  // I/O that follows it.
+  const { created, storageKey } = await prisma.$transaction(async (tx) => {
+    const last = await tx.image.findFirst({
+      where: { productId: input.productId },
+      orderBy: { position: 'desc' },
+    })
+    const position = last ? last.position + 1 : 0
 
-  // The key embeds the row id, so the row must exist before the key is known.
-  // A placeholder keyed on position would collide after a delete; the id cannot.
-  const created = await prisma.image.create({
-    data: {
-      productId: input.productId,
-      storageKey: `pending:${input.productId}:${position}:${Date.now()}`,
-      position,
-      width: 0,
-      height: 0,
-      contentType: input.contentType,
-      byteSize: input.byteSize,
-      status: 'pending',
-    },
-  })
+    // The key embeds the row id, so the row must exist before the key is known.
+    // A placeholder keyed on position would collide after a delete; the id cannot.
+    const created = await tx.image.create({
+      data: {
+        productId: input.productId,
+        storageKey: `pending:${input.productId}:${position}:${Date.now()}`,
+        position,
+        width: 0,
+        height: 0,
+        contentType: input.contentType,
+        byteSize: input.byteSize,
+        status: 'pending',
+      },
+    })
 
-  const storageKey = buildStorageKey(input.productId, created.id, input.contentType)
-  await prisma.image.update({ where: { id: created.id }, data: { storageKey } })
+    const storageKey = buildStorageKey(input.productId, created.id, input.contentType)
+    await tx.image.update({ where: { id: created.id }, data: { storageKey } })
+
+    await recordAudit({
+      actorId,
+      action: 'image.upload.request',
+      target: `image:${created.id}`,
+      after: { productId: input.productId, contentType: input.contentType, byteSize: input.byteSize, storageKey },
+    }, tx)
+
+    return { created, storageKey }
+  })
 
   const target = await port.createUploadTarget(storageKey, input.contentType)
-
-  // No transaction spans the rows above and the external storage call, so
-  // this is recorded on its own connection, same as the rest of this
-  // function -- there is no existing transaction to fold it into.
-  await recordAudit({
-    actorId,
-    action: 'image.upload.request',
-    target: `image:${created.id}`,
-    after: { productId: input.productId, contentType: input.contentType, byteSize: input.byteSize, storageKey },
-  })
 
   return {
     imageId: created.id,
@@ -117,25 +125,56 @@ export async function confirmUpload(port: AssetStoragePort, imageId: string, act
 
   // Read the truth from storage. A client-supplied width that disagrees with
   // the real image reintroduces the layout shift width/height exist to prevent.
+  // This is storage I/O -- it runs BEFORE any transaction opens, same reasoning
+  // as requestUpload's external call. Only the row update and the audit write
+  // that follow are pure database work, so only those two are transactional.
   const stat = await port.stat(row.storageKey)
   if (!stat) throw new ImageError('object_missing', 'no object was uploaded for this image')
 
-  const updated = await prisma.image.update({
-    where: { id: imageId },
-    data: {
-      width: stat.width,
-      height: stat.height,
-      byteSize: stat.byteSize,
-      status: 'ready',
-    },
+  const updated = await prisma.$transaction(async (tx) => {
+    const updated = await tx.image.update({
+      where: { id: imageId },
+      data: {
+        width: stat.width,
+        height: stat.height,
+        byteSize: stat.byteSize,
+        status: 'ready',
+      },
+    })
+
+    await recordAudit({
+      actorId,
+      action: 'image.upload.confirm',
+      target: `image:${imageId}`,
+      before: { status: row.status },
+      after: { status: 'ready', width: stat.width, height: stat.height, byteSize: stat.byteSize },
+    }, tx)
+
+    return updated
   })
 
-  await recordAudit({
-    actorId,
-    action: 'image.upload.confirm',
-    target: `image:${imageId}`,
-    before: { status: row.status },
-    after: { status: 'ready', width: stat.width, height: stat.height, byteSize: stat.byteSize },
+  return toDto(updated)
+}
+
+/** Pure database work throughout, so the read, the update and the audit write
+ * all run in one transaction: a rejected update (unknown image) leaves no
+ * audit row, and a committed one always has exactly one. */
+export async function updateImageAlt(imageId: string, alt: string, actorId: string): Promise<ImageDto> {
+  const updated = await prisma.$transaction(async (tx) => {
+    const existing = await tx.image.findUnique({ where: { id: imageId } })
+    if (!existing) throw new ImageError('image_not_found', 'image not found')
+
+    const updated = await tx.image.update({ where: { id: imageId }, data: { alt } })
+
+    await recordAudit({
+      actorId,
+      action: 'image.alt',
+      target: `image:${imageId}`,
+      before: { alt: existing.alt },
+      after: { alt },
+    }, tx)
+
+    return updated
   })
 
   return toDto(updated)

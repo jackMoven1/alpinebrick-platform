@@ -141,7 +141,7 @@ describe('asset admin routes', () => {
     expect(res.body.code).toBe('invalid_order')
   })
 
-  it('updates alt text', async () => {
+  it('updates alt text and records who changed it', async () => {
     const p = await makeProduct()
     const a = await readyImage(p.id)
 
@@ -150,6 +150,45 @@ describe('asset admin routes', () => {
       .send({ alt: 'Front three-quarter view' })
     expect(res.status).toBe(200)
     expect(res.body.alt).toBe('Front three-quarter view')
+
+    const rows = await prisma.auditLog.findMany({ where: { action: 'image.alt' } })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].actorId).toBe(actor.id)
+    expect(rows[0].target).toBe(`image:${a.imageId}`)
+    expect((rows[0].after as any).alt).toBe('Front three-quarter view')
+  })
+
+  it('404s an alt-text update for an unknown image', async () => {
+    const res = await request(app)
+      .patch('/api/v1/admin/images/nope')
+      .send({ alt: 'x' })
+    expect(res.status).toBe(404)
+    expect(res.body.code).toBe('image_not_found')
+    expect(await prisma.auditLog.count({ where: { action: 'image.alt' } })).toBe(0)
+  })
+
+  // Same unhandled-rejection class fixed in admin-catalog.routes.ts's fail() --
+  // an async Express-4 handler whose catch re-throws an unknown error never
+  // resolves the request. This router's fail() must respond instead, using
+  // this file's own lower_snake convention (deliberately not unified with the
+  // catalog router's UPPER_SNAKE).
+  it('responds 500 rather than crashing when the storage port fails unexpectedly', async () => {
+    const p = await makeProduct()
+    const failingPort: AssetStoragePort = {
+      createUploadTarget: vi.fn(async () => { throw new Error('storage backend unreachable') }),
+      stat: vi.fn(async () => null),
+      delete: vi.fn(async () => {}),
+    }
+    const failingApp = express()
+    failingApp.use(express.json())
+    failingApp.use('/api/v1/admin/images', (req, _res, next) => { req.actor = actor; next() })
+    failingApp.use('/api/v1/admin/images', createAssetsRouter(failingPort))
+
+    const res = await request(failingApp)
+      .post('/api/v1/admin/images/upload-token')
+      .send({ productId: p.id, contentType: 'image/jpeg', byteSize: 100 })
+    expect(res.status).toBe(500)
+    expect(res.body.code).toBe('internal_error')
   })
 
   it('deletes an image', async () => {

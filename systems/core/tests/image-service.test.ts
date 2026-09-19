@@ -4,7 +4,7 @@ import { resetDb } from './helpers/db.js'
 import type { AssetStoragePort, StoredObject } from '../src/ports/storage/storage.port.js'
 import {
   buildStorageKey, requestUpload, confirmUpload, reorderImages,
-  deleteImage, sweepPendingImages, listReadyImages, ImageError,
+  deleteImage, sweepPendingImages, listReadyImages, updateImageAlt, ImageError,
 } from '../src/assets/image.service.js'
 
 function fakePort(objects: Record<string, StoredObject> = {}): AssetStoragePort {
@@ -60,6 +60,19 @@ describe('requestUpload', () => {
     expect(row.status).toBe('pending')
   })
 
+  // The row creation and the audit write are both pure database work, done in
+  // one transaction -- the external port.createUploadTarget call happens only
+  // after that transaction has committed (see the confirmUpload analog below).
+  it('audits the request with the actor and the storage key', async () => {
+    const p = await makeProduct()
+    const r = await requestUpload(fakePort(), { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
+    const rows = await prisma.auditLog.findMany({ where: { action: 'image.upload.request' } })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].actorId).toBe(actorId)
+    expect(rows[0].target).toBe(`image:${r.imageId}`)
+    expect((rows[0].after as any).storageKey).toBe(r.storageKey)
+  })
+
   it('appends at the end of the existing positions', async () => {
     const p = await makeProduct()
     const port = fakePort()
@@ -109,6 +122,23 @@ describe('confirmUpload', () => {
     expect(row.byteSize).toBe(5000)
   })
 
+  // port.stat() is storage I/O and runs BEFORE any transaction opens; the
+  // transaction wraps only the row update and the audit write, which run
+  // together. So the audit row must exist only on the success path.
+  it('audits the confirmation only after storage is verified', async () => {
+    const p = await makeProduct()
+    const port = fakePort()
+    const r = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
+    await confirmUpload(fakePort({ [r.storageKey]: OBJ }), r.imageId, actorId)
+
+    const rows = await prisma.auditLog.findMany({ where: { action: 'image.upload.confirm' } })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].actorId).toBe(actorId)
+    expect(rows[0].target).toBe(`image:${r.imageId}`)
+    expect((rows[0].before as any).status).toBe('pending')
+    expect((rows[0].after as any).status).toBe('ready')
+  })
+
   // The whole reason `pending` exists.
   it('refuses to confirm when the bytes never arrived', async () => {
     const p = await makeProduct()
@@ -117,10 +147,36 @@ describe('confirmUpload', () => {
     await expect(confirmUpload(port, r.imageId, actorId)).rejects.toThrow(ImageError)
     const row = await prisma.image.findUniqueOrThrow({ where: { id: r.imageId } })
     expect(row.status).toBe('pending')
+    // stat() failed before any transaction opened, so no audit row either.
+    expect(await prisma.auditLog.count({ where: { action: 'image.upload.confirm' } })).toBe(0)
   })
 
   it('rejects an unknown image id', async () => {
     await expect(confirmUpload(fakePort(), 'nope', actorId)).rejects.toThrow(ImageError)
+  })
+})
+
+describe('updateImageAlt', () => {
+  it('updates the alt text and audits before/after', async () => {
+    const p = await makeProduct()
+    const port = fakePort()
+    const r = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    await confirmUpload(fakePort({ [r.storageKey]: OBJ }), r.imageId, actorId)
+
+    const dto = await updateImageAlt(r.imageId, 'Front three-quarter view', actorId)
+    expect(dto.alt).toBe('Front three-quarter view')
+
+    const rows = await prisma.auditLog.findMany({ where: { action: 'image.alt' } })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].actorId).toBe(actorId)
+    expect(rows[0].target).toBe(`image:${r.imageId}`)
+    expect((rows[0].before as any).alt).toBe('')
+    expect((rows[0].after as any).alt).toBe('Front three-quarter view')
+  })
+
+  it('rejects an unknown image id and writes no audit row', async () => {
+    await expect(updateImageAlt('nope', 'x', actorId)).rejects.toThrow(ImageError)
+    expect(await prisma.auditLog.count({ where: { action: 'image.alt' } })).toBe(0)
   })
 })
 
