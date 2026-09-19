@@ -1,8 +1,21 @@
 import type { RequestHandler } from 'express'
 
+function parseOriginList(raw: string | undefined): string[] {
+  return (raw ?? '').split(',').map(s => s.trim()).filter(Boolean)
+}
+
 export function allowedOrigins(): string[] {
-  return (process.env.ADMIN_CONSOLE_ORIGIN ?? '')
-    .split(',').map(s => s.trim()).filter(Boolean)
+  return parseOriginList(process.env.ADMIN_CONSOLE_ORIGIN)
+}
+
+/**
+ * The storefront's own allowlist, kept separate from `allowedOrigins()`
+ * (the console's) on purpose -- see createCors in ./cors.ts. The two must
+ * never be interchangeable: the storefront being permitted to call admin
+ * endpoints is precisely what the auth work exists to prevent.
+ */
+export function allowedStorefrontOrigins(): string[] {
+  return parseOriginList(process.env.STOREFRONT_ORIGIN)
 }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])

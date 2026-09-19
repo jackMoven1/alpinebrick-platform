@@ -89,6 +89,19 @@ envVarGroups:
         value: https://marketplace.walmartapis.com
       - key: WALMART_SYNC_ENABLED
         value: "false" # flipped to true only at Walmart go-live
+      # CORS allowlists for the two response-header factories in
+      # systems/core/src/auth/cors.ts -- comma-separated, same parsing as
+      # ADMIN_CONSOLE_ORIGIN already used for origin validation. Kept as two
+      # separate keys on purpose: the storefront must never be permitted to
+      # call admin endpoints, which is exactly what the auth work exists to
+      # prevent. Values below are the confirmed production origins (see the
+      # Domains table in CLAUDE.md); the staging hostnames are still
+      # unconfirmed there, so they are not guessed at here -- add them,
+      # comma-separated, once confirmed.
+      - key: ADMIN_CONSOLE_ORIGIN
+        value: https://alpinebrick-admin.onrender.com
+      - key: STOREFRONT_ORIGIN
+        value: https://www.alpinebrickexchange.com
       # Secrets are NEVER declared here. Set these in the Render dashboard,
       # per environment, entered by Jack:
       #   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
