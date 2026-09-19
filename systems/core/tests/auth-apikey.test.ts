@@ -58,4 +58,17 @@ describe('api key service', () => {
     await new Promise(r => setTimeout(r, 50))
     expect((await prisma.apiKey.findUnique({ where: { id } }))!.lastUsedAt).not.toBeNull()
   })
+
+  // Minting happens during an incident -- exactly when it matters most to
+  // know who did what. No signed-in operator exists at this call site (the
+  // break-glass CLI script runs with no admin session), so the row
+  // attributes the mint to the key's own new agent Actor rather than
+  // inventing an operator identity.
+  it('records an audit row attributing the mint to the new agent actor', async () => {
+    const { actorId, id } = await createApiKey({ actorName: 'svc', keyName: 'k' })
+    const rows = await prisma.auditLog.findMany({ where: { action: 'apikey.create' } })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].actorId).toBe(actorId)
+    expect(rows[0].target).toBe(`apikey:${id}`)
+  })
 })

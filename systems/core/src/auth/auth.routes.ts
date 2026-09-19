@@ -3,10 +3,11 @@ import { randomBytes, createHash } from 'node:crypto'
 import { Prisma } from '@prisma/client'
 import type { OidcPort } from '../ports/oidc/oidc.port.js'
 import { prisma } from '../prisma.js'
-import { createSession, revokeSession, sessionTtlMs, SESSION_COOKIE } from './session.service.js'
+import { createSession, resolveSession, revokeSession, sessionTtlMs, SESSION_COOKIE } from './session.service.js'
 import { requireAuth } from './require-auth.js'
 import { readCookie } from './cookies.js'
 import { recordAudit } from '../audit.js'
+import { scrubError } from './scrub.js'
 
 const TX_COOKIE = 'ab_oauth_tx'
 const TX_TTL_MS = 10 * 60_000
@@ -29,39 +30,6 @@ function isEmailConflict(err: unknown): boolean {
   if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') return false
   const target = err.meta?.target
   return Array.isArray(target) ? target.includes('email') : target === 'email'
-}
-
-/**
- * A safe-to-log summary of an unknown error: message, plus `code`/`status`
- * when present.
- *
- * Deliberately does NOT log the error object itself. The real Google adapter
- * wraps `google-auth-library`, which wraps `gaxios` -- a failed token
- * exchange (an expired, replayed, or tampered authorization code is the
- * routine case, not an edge case) throws a `GaxiosError` carrying `.config`,
- * a copy of the request including the request body: our one-time `code` and
- * PKCE `codeVerifier`. Gaxios's own redactor strips `client_secret` and
- * `grant_type` but NOT `code` or `code_verifier`, and `console.error(msg,
- * err)` prints an Error's own enumerable properties -- `config` included --
- * in the clear. Narrowing to this shape is the one place that policy is
- * enforced, so it only has to be gotten right once.
- */
-export function scrubError(err: unknown): { message: string; code?: unknown; status?: unknown } {
-  // Guarded as a whole, not just the code/status reads: `'code' in err` does
-  // not invoke a getter, but reading `err.code`/`err.status` (or even
-  // `err.message`, or `String(err)` on a hostile non-Error) does, and this
-  // runs at two call sites with no enclosing try -- the outer callback catch
-  // and /logout's catch. A throwing getter there must not itself become an
-  // unhandled rejection in an async Express 4 handler.
-  try {
-    if (!(err instanceof Error)) return { message: String(err) }
-    const out: { message: string; code?: unknown; status?: unknown } = { message: err.message }
-    if ('code' in err) out.code = (err as { code?: unknown }).code
-    if ('status' in err) out.status = (err as { status?: unknown }).status
-    return out
-  } catch {
-    return { message: 'unloggable error' }
-  }
 }
 
 export function createAuthRouter(oidc: OidcPort): Router {
@@ -122,6 +90,20 @@ export function createAuthRouter(oidc: OidcPort): Router {
 
       // Order matters, and a failure creates NO actor: signature (verified by
       // exchange above), then email_verified, then the allowlist.
+      //
+      // Both rejections below are audit-worthy (spec §7 vocabulary added
+      // auth.signin.rejected for exactly this), but neither writes a row:
+      // `AuditLog.actorId` is NOT NULL and FK-enforced, and no Actor exists
+      // yet at this point in the flow -- the comment above is the reason.
+      // The codebase does have a sentinel actor for "no specific actor
+      // applies" ('system', seeded by prisma/seed.ts and defaulted to in
+      // orders.service.ts), but it is provisioned by a manual `npm run
+      // seed` step, not guaranteed present in every environment the way a
+      // migration would guarantee it -- reusing it here would either risk an
+      // FK violation turning a correct 403 into a confusing 500, or produce
+      // an audit trail that looks complete but silently isn't. Skipping the
+      // row is the honest option; see the disabled-actor rejection below,
+      // where a real Actor exists and the row is written.
       if (!identity.emailVerified) {
         return res.status(403).json({ code: 'FORBIDDEN', message: 'email not verified' })
       }
@@ -167,6 +149,10 @@ export function createAuthRouter(oidc: OidcPort): Router {
         throw err
       }
       if (actor.disabled) {
+        // Unlike the two rejections above, a real Actor exists here -- the
+        // upsert already ran -- so this rejection can be attributed
+        // honestly, and is.
+        await recordAudit({ actorId: actor.id, action: 'auth.signin.rejected', target: `actor:${actor.id}` })
         return res.status(403).json({ code: 'FORBIDDEN', message: 'actor disabled' })
       }
 
@@ -193,7 +179,20 @@ export function createAuthRouter(oidc: OidcPort): Router {
   router.post('/logout', async (req, res) => {
     try {
       const token = readCookie(req.headers.cookie, SESSION_COOKIE)
-      if (token) await revokeSession(token)
+      if (token) {
+        // Resolve the actor BEFORE revoking: resolveSession refuses a
+        // revoked session, so revoking first would leave no actor to
+        // attribute the audit row to.
+        const actor = await resolveSession(token)
+        await revokeSession(token)
+        if (actor) {
+          await recordAudit({ actorId: actor.id, action: 'auth.logout', target: `actor:${actor.id}` })
+        }
+      }
+      // res.setHeader REPLACES rather than appends. A second Set-Cookie
+      // call here (e.g. to also clear ab_oauth_tx) would silently drop this
+      // one instead of adding to it -- pass an array of cookie strings if
+      // more than one is ever needed.
       res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0`)
       res.status(204).end()
     } catch (err) {

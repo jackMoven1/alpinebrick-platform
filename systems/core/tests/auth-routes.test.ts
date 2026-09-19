@@ -99,10 +99,25 @@ describe('auth routes', () => {
   it('returns a distinct conflict when the email is already linked to a different actor', async () => {
     await prisma.actor.create({ data: { type: 'human', name: 'Jack', email: 'jack@example.com' } })
     const app = appWith({ ...IDENTITY, sub: 'google-sub-2' })
-    const res = await signIn(app)
-    expect(res.status).toBe(409)
-    expect(res.body.code).toBe('EMAIL_ALREADY_LINKED')
-    expect(await prisma.adminSession.count()).toBe(0)
+    // Only un-spied console.error path on this router until now -- adopt the
+    // sibling spy-and-assert pattern (see "scrubs the raw error" below) so
+    // the suite stops writing to stderr AND this scrubbing is actually
+    // verified rather than merely exercised.
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const res = await signIn(app)
+      expect(res.status).toBe(409)
+      expect(res.body.code).toBe('EMAIL_ALREADY_LINKED')
+      expect(await prisma.adminSession.count()).toBe(0)
+
+      expect(spy).toHaveBeenCalledTimes(1)
+      const loggedArgs = spy.mock.calls[0]!
+      expect(loggedArgs[0]).toBe('[auth] email already linked to a different googleSub')
+      expect(loggedArgs.some(a => a instanceof Error)).toBe(false)
+      expect(loggedArgs[1]).toMatchObject({ code: 'P2002' })
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('refuses a mismatched state', async () => {
@@ -189,6 +204,60 @@ describe('auth routes', () => {
     await request(app).post('/api/v1/auth/logout').set('Cookie', session).expect(204)
     const row = await prisma.adminSession.findFirst()
     expect(row?.revokedAt).not.toBeNull()
+  })
+
+  // The actor must be resolved BEFORE the session is revoked -- resolving
+  // after would find nothing (a revoked session resolves to null) and no row
+  // would be written at all.
+  it('logout records an audit row for the actor who signed out', async () => {
+    const app = appWith()
+    const res = await signIn(app)
+    const session = (res.headers['set-cookie'] as unknown as string[])
+      .find(c => c.startsWith(SESSION_COOKIE))!.split(';')[0]
+    const actor = await prisma.actor.findFirst({ where: { googleSub: 'google-sub-1' } })
+
+    await request(app).post('/api/v1/auth/logout').set('Cookie', session).expect(204)
+
+    const rows = await prisma.auditLog.findMany({ where: { action: 'auth.logout' } })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].actorId).toBe(actor!.id)
+    expect(rows[0].target).toBe(`actor:${actor!.id}`)
+  })
+
+  // No session cookie at all -- nothing to resolve, nothing to record, and
+  // still a clean 204 (matches the pre-existing no-op behaviour).
+  it('logout with no session cookie writes no audit row', async () => {
+    const app = appWith()
+    await request(app).post('/api/v1/auth/logout').expect(204)
+    expect(await prisma.auditLog.count()).toBe(0)
+  })
+
+  // Task 12 review, item 3: an off-allowlist or unverified-email rejection
+  // creates no Actor (see the "Order matters" comment in auth.routes.ts), so
+  // no row can be attributed without inventing one -- decided to skip those
+  // rather than borrow the codebase's 'system' sentinel actor, which is
+  // provisioned by a manual `npm run seed` step and not guaranteed present.
+  // A disabled-actor rejection is different: the Actor already exists by
+  // that point, so it IS recorded.
+  it('records a rejected sign-in when the actor is disabled, since an Actor already exists', async () => {
+    const app = appWith()
+    await signIn(app)
+    const actor = await prisma.actor.findFirst({ where: { googleSub: 'google-sub-1' } })
+    await prisma.actor.update({ where: { id: actor!.id }, data: { disabled: true } })
+
+    const res = await signIn(app)
+    expect(res.status).toBe(403)
+
+    const rows = await prisma.auditLog.findMany({ where: { action: 'auth.signin.rejected' } })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].actorId).toBe(actor!.id)
+    expect(rows[0].target).toBe(`actor:${actor!.id}`)
+  })
+
+  it('writes no audit row for an unverified-email or off-allowlist rejection, since no Actor exists yet', async () => {
+    await signIn(appWith({ ...IDENTITY, emailVerified: false }))
+    await signIn(appWith({ ...IDENTITY, email: 'stranger@example.com' }))
+    expect(await prisma.auditLog.count()).toBe(0)
   })
 
   it('me returns the signed-in actor and 401 without a session', async () => {
