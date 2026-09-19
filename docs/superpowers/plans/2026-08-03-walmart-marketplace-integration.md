@@ -695,7 +695,7 @@ git commit -m "feat(core): walmart anti-corruption mappers (order, item feed 5.x
 - Produces:
   - `function registerHandler(type: string, handler: (payload: any) => Promise<void>): void`
   - `function clearHandlers(): void` — test helper.
-  - `function enqueueJob(type: string, payload: unknown, opts?: { dedupeKey?: string; runAfter?: Date }): Promise<{ id: string } | null>` — returns `null` if `dedupeKey` already queued (unique constraint swallowed).
+  - `function enqueueJob(type: string, payload: unknown, opts?: { dedupeKey?: string; runAfter?: Date }): Promise<{ id: string } | null>` — returns `null` while a job with that `dedupeKey` is still **`pending`**. Once the existing job leaves `pending` the key is **released** (cleared on the old row) and the new job is created. **This release is not optional:** `dedupe_key` is `@unique` across the whole table, not scoped to status, so without it a key is spent permanently the moment its job completes — recurring inventory (Task 7) and price (Task 8) pushes would run exactly once each and then stop. Because this returns `null` rather than throwing, that halt is silent and `processDueJobs` keeps reporting `{processed: 0, failed: 0}`.
   - `function processDueJobs(now?: Date): Promise<{ processed: number; failed: number }>` — runs every `pending` job with `runAfter <= now`; success → `done`; failure → `attempts+1`, `lastError`, `runAfter = now + 2^attempts minutes`; after 5 attempts → `dead` (the dead-letter state; surfaced later via admin query).
 
 - [ ] **Step 1: Write the failing test**
@@ -751,6 +751,20 @@ describe('walmart outbox', () => {
     expect(r.processed).toBe(0)
     expect(r.failed).toBe(1)
   })
+
+  it('allows re-enqueue after a deduped job completes', async () => {
+    registerHandler('t', async () => {})
+    await enqueueJob('t', {}, { dedupeKey: 'k2' })
+    await processDueJobs()
+    expect(await enqueueJob('t', {}, { dedupeKey: 'k2' })).not.toBeNull()
+  })
+
+  it('still dedupes while the existing job is pending', async () => {
+    registerHandler('t', async () => {})
+    await enqueueJob('t', {}, { dedupeKey: 'k3' })
+    expect(await enqueueJob('t', {}, { dedupeKey: 'k3' })).toBeNull()
+    expect(await prisma.channelJob.count()).toBe(1)
+  })
 })
 ```
 
@@ -777,13 +791,34 @@ export function clearHandlers(): void {
   handlers.clear()
 }
 
+/**
+ * Enqueue a job.
+ *
+ * `dedupeKey` collapses bursts: while a job with that key is still `pending`,
+ * further enqueues return null. Once it leaves `pending` the key is released,
+ * so recurring work (inventory and price pushes) can be queued again.
+ *
+ * The release matters more than it looks. `dedupe_key` is UNIQUE across the
+ * whole table, not scoped to status, so without it a key is spent permanently
+ * the moment its job completes -- and because this returns null rather than
+ * throwing, the halt is silent.
+ */
 export async function enqueueJob(
   type: string,
   payload: unknown,
   opts: { dedupeKey?: string; runAfter?: Date } = {},
 ): Promise<{ id: string } | null> {
+  return createJob(type, payload, opts, false)
+}
+
+async function createJob(
+  type: string,
+  payload: unknown,
+  opts: { dedupeKey?: string; runAfter?: Date },
+  retried: boolean,
+): Promise<{ id: string } | null> {
   try {
-    const job = await prisma.channelJob.create({
+    return await prisma.channelJob.create({
       data: {
         type,
         payload: payload as Prisma.InputJsonValue,
@@ -792,10 +827,18 @@ export async function enqueueJob(
       },
       select: { id: true },
     })
-    return job
   } catch (e: any) {
-    if (e?.code === 'P2002') return null // dedupeKey already queued
-    throw e
+    if (e?.code !== 'P2002') throw e
+    if (!opts.dedupeKey) throw e
+    // Retry at most once. A second P2002 means another writer won the race and
+    // its job is pending, which is exactly the burst this key exists to collapse.
+    if (retried) return null
+    const existing = await prisma.channelJob.findUnique({ where: { dedupeKey: opts.dedupeKey } })
+    if (existing && existing.status !== 'pending') {
+      await prisma.channelJob.update({ where: { id: existing.id }, data: { dedupeKey: null } })
+      return createJob(type, payload, opts, true)
+    }
+    return null
   }
 }
 
@@ -837,7 +880,7 @@ export async function processDueJobs(now: Date = new Date()): Promise<{ processe
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/walmart-outbox.test.ts`
-Expected: PASS (4 tests).
+Expected: PASS (6 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1356,7 +1399,9 @@ export function registerInventoryHandlers(client: WalmartClient = getWalmartClie
 Simplify the buffer line if the reviewer prefers: `const buffer = onHand > 0 && pct > 0 ? Math.max(1, Math.ceil((onHand * pct) / 100)) : 0`.
 
 Then wire the call sites:
-- In `src/orders/orders.service.ts`: after the transaction in `placeOrder`, `fulfillOrder`, and `cancelOrder`, add `for (const line of <order lines>) await enqueueInventoryPush(line.variantId)` (import from `../channels/walmart/inventory.sync.js`). The dedupeKey makes bursts collapse; a `done` job does not block a fresh enqueue because dedupe only guards `pending` — **to get that behavior, extend `enqueueJob`'s catch**: on `P2002`, if the existing job with that dedupeKey is NOT `pending`, clear its `dedupeKey` and retry the create once. Add this to `outbox.ts` now, with a test in `tests/walmart-outbox.test.ts`:
+- In `src/orders/orders.service.ts`: after the transaction in `placeOrder`, `fulfillOrder`, and `cancelOrder`, add `for (const line of <order lines>) await enqueueInventoryPush(line.variantId)` (import from `../channels/walmart/inventory.sync.js`). The dedupeKey makes bursts collapse; a `done` job does not block a fresh enqueue because dedupe only guards `pending`.
+
+> **Amended 2026-09-17 — this landed in Task 4; do not add it again.** This paragraph used to carry the `enqueueJob` catch extension as a Task 7 step. That was an ordering defect: Task 4 ships the code that needs it, so executing Task 4 as written left a window where a completed `dedupeKey` blocked every later enqueue — silently, because `enqueueJob` returns `null` rather than throwing. The guarded catch and its two tests are now part of Task 4. The snippets below are kept for reference only:
 
 ```ts
   it('allows re-enqueue after a deduped job completes', async () => {
