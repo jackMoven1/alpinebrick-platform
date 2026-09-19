@@ -5,6 +5,7 @@ import { createAssetsRouter } from './assets/assets.routes.js'
 import { createLocalStoragePort } from './ports/storage/local.adapter.js'
 import { adminCatalogRouter } from './admin/admin-catalog.routes.js'
 import { requireAuth } from './auth/require-auth.js'
+import { requireOrigin } from './auth/require-origin.js'
 
 export function buildApp(): Express {
   const app = express()
@@ -24,6 +25,7 @@ export function buildApp(): Express {
   // the catalog router alone would leave image reorder and delete open while
   // looking correct in review. See spec 5.1.
   app.use('/api/v1/admin', requireAuth)
+  app.use('/api/v1/admin', requireOrigin)
   app.use('/api/v1/admin/images', createAssetsRouter(storagePort))
   app.use('/api/v1/admin', adminCatalogRouter)
 

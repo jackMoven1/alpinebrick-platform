@@ -6,6 +6,7 @@ import { resetDb } from './helpers/db.js'
 import { createSession, SESSION_COOKIE } from '../src/auth/session.service.js'
 
 const app = buildApp()
+const ORIGIN = 'https://alpinebrick-admin.onrender.com'
 
 async function make(slug: string, status: 'draft' | 'published' | 'archived') {
   return prisma.product.create({
@@ -22,8 +23,14 @@ async function authCookie(): Promise<string> {
   return `${SESSION_COOKIE}=${token}`
 }
 
-beforeEach(async () => { await resetDb() })
-afterAll(async () => { await prisma.$disconnect() })
+beforeEach(async () => {
+  await resetDb()
+  process.env.ADMIN_CONSOLE_ORIGIN = ORIGIN
+})
+afterAll(async () => {
+  delete process.env.ADMIN_CONSOLE_ORIGIN
+  await prisma.$disconnect()
+})
 
 describe('admin catalog routes', () => {
   it('lists every status', async () => {
@@ -64,7 +71,7 @@ describe('admin catalog routes', () => {
   it('publishes a draft', async () => {
     const p = await make('to-publish', 'draft')
     const res = await request(app)
-      .post(`/api/v1/admin/products/${p.id}/status`).set('Cookie', await authCookie()).send({ status: 'published' })
+      .post(`/api/v1/admin/products/${p.id}/status`).set('Cookie', await authCookie()).set('Origin', ORIGIN).send({ status: 'published' })
     expect(res.status).toBe(200)
     expect(res.body.status).toBe('published')
   })
@@ -72,14 +79,14 @@ describe('admin catalog routes', () => {
   it('409s an illegal transition', async () => {
     const p = await make('arch', 'archived')
     const res = await request(app)
-      .post(`/api/v1/admin/products/${p.id}/status`).set('Cookie', await authCookie()).send({ status: 'published' })
+      .post(`/api/v1/admin/products/${p.id}/status`).set('Cookie', await authCookie()).set('Origin', ORIGIN).send({ status: 'published' })
     expect(res.status).toBe(409)
     expect(res.body.code).toBe('INVALID_TRANSITION')
   })
 
   it('400s a missing status in the body', async () => {
     const p = await make('nobody', 'draft')
-    const res = await request(app).post(`/api/v1/admin/products/${p.id}/status`).set('Cookie', await authCookie()).send({})
+    const res = await request(app).post(`/api/v1/admin/products/${p.id}/status`).set('Cookie', await authCookie()).set('Origin', ORIGIN).send({})
     expect(res.status).toBe(400)
   })
 
