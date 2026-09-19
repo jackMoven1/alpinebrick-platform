@@ -22,7 +22,9 @@ function mountedAdminRoutes(): { method: string; path: string }[] {
   const walk = (stack: any[], prefix: string) => {
     for (const layer of stack) {
       if (layer.route) {
-        for (const m of Object.keys(layer.route.methods)) {
+        // `router.all(...)` adds a literal `_all` key alongside the real
+        // verbs; it isn't a supertest method and must not be walked.
+        for (const m of Object.keys(layer.route.methods).filter(k => k !== '_all')) {
           out.push({ method: m, path: prefix + layer.route.path })
         }
       } else if (layer.name === 'router' && layer.handle?.stack) {
@@ -75,5 +77,16 @@ describe('admin route auth coverage', () => {
 
   it('leaves health unauthenticated', async () => {
     expect((await request(app).get('/health')).status).toBe(200)
+  })
+
+  // Regression: a malformed percent-escape in the session cookie must not
+  // crash decodeURIComponent inside requireAuth. Unauthenticated, pre-auth,
+  // no DB access -- a bare 401, not a hang or a process crash.
+  it('rejects a malformed cookie value instead of throwing', async () => {
+    const res = await request(app)
+      .get('/api/v1/admin/products')
+      .set('Cookie', `${SESSION_COOKIE}=%zz`)
+    expect(res.status).toBe(401)
+    expect(res.body.code).toBe('UNAUTHENTICATED')
   })
 })

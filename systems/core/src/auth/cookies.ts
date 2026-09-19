@@ -7,7 +7,17 @@ export function readCookie(header: string | undefined, name: string): string | u
   for (const part of header.split(';')) {
     const eq = part.indexOf('=')
     if (eq === -1) continue
-    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim())
+    if (part.slice(0, eq).trim() === name) {
+      const raw = part.slice(eq + 1).trim()
+      // A malformed percent-escape (e.g. `%zz`) throws URIError. Fall back to
+      // the raw value -- same behaviour as the `cookie` package -- rather
+      // than letting a client-supplied header crash the request.
+      try {
+        return decodeURIComponent(raw)
+      } catch {
+        return raw
+      }
+    }
   }
   return undefined
 }
