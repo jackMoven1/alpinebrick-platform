@@ -30,7 +30,7 @@ describe('origin validation', () => {
       .post('/api/v1/admin/products/nope/status')
       .set('Cookie', await cookie()).set('Origin', ORIGIN)
       .send({ status: 'published' })
-    expect(res.status).not.toBe(403)   // 404 for the missing product is fine
+    expect(res.status).toBe(404)   // missing product; not blocked by CSRF
   })
 
   it('rejects a cookie POST from another origin', async () => {
@@ -57,11 +57,30 @@ describe('origin validation', () => {
       .post('/api/v1/admin/products/nope/status')
       .set('Authorization', `Bearer ${plaintext}`)
       .send({ status: 'published' })
-    expect(res.status).not.toBe(403)
+    expect(res.status).toBe(404)   // missing product; not blocked by CSRF
   })
 
   it('does not gate GET requests', async () => {
     const res = await request(app).get('/api/v1/admin/products').set('Cookie', await cookie())
     expect(res.status).toBe(200)
+  })
+
+  // requireOrigin also covers /api/v1/auth now (item 6): /logout is its only
+  // non-GET route, and it carries the same cross-site CSRF exposure as the
+  // admin writes -- the session cookie is SameSite=None there too.
+  it('gates POST /api/v1/auth/logout the same way', async () => {
+    const actor = await prisma.actor.create({ data: { type: 'human', name: 'jack' } })
+    const { token: tokenNoOrigin } = await createSession(actor.id)
+    const withoutOrigin = await request(app)
+      .post('/api/v1/auth/logout')
+      .set('Cookie', `${SESSION_COOKIE}=${tokenNoOrigin}`)
+    expect(withoutOrigin.status).toBe(403)
+    expect(withoutOrigin.body.code).toBe('FORBIDDEN_ORIGIN')
+
+    const { token: tokenWithOrigin } = await createSession(actor.id)
+    const withOrigin = await request(app)
+      .post('/api/v1/auth/logout')
+      .set('Cookie', `${SESSION_COOKIE}=${tokenWithOrigin}`).set('Origin', ORIGIN)
+    expect(withOrigin.status).toBe(204)
   })
 })
