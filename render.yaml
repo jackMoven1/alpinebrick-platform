@@ -47,8 +47,18 @@ services:
         source: /*
         destination: /index.html
     envVars:
+      # sync: false -- NOT a fixed value. This same file builds the production
+      # Blueprint instance, the staging instance, and every automatic PR
+      # preview (see `previews:` above); a hardcoded absolute URL here would
+      # point the staging storefront and every preview at the *production*
+      # catalog API, and previews would additionally get CORS-blocked since
+      # their .onrender.com origins are never in STOREFRONT_ORIGIN below.
+      # Set per instance in the Render dashboard before that instance's first
+      # deploy. Left empty, the storefront falls back to a relative path
+      # (today's dev-proxy behaviour) -- loud and obviously wrong rather than
+      # silently pointed at the wrong environment.
       - key: VITE_API_BASE_URL
-        value: https://api.alpinebrickexchange.com
+        sync: false
 
   # ------------------------------------------------------------ core-worker
   # DELIBERATELY COMMENTED OUT.
@@ -89,6 +99,39 @@ envVarGroups:
         value: https://marketplace.walmartapis.com
       - key: WALMART_SYNC_ENABLED
         value: "false" # flipped to true only at Walmart go-live
+      # CORS allowlists for the two response-header factories in
+      # systems/core/src/auth/cors.ts -- comma-separated, same parsing as
+      # each other. Kept as two separate keys on purpose: the storefront must
+      # never be permitted to call admin endpoints, which is exactly what the
+      # auth work exists to prevent.
+      #
+      # Both sync: false, deliberately NOT a fixed value in this file. This
+      # group is shared -- note 4 below already flagged it as unverified
+      # whether Render scopes envVarGroups per Blueprint instance, and these
+      # two keys are exactly where that ambiguity turns into a real bug if
+      # guessed wrong:
+      #   - ADMIN_CONSOLE_ORIGIN is not CORS-only -- require-origin.ts also
+      #     403s admin writes against it, and auth.routes.ts uses it as the
+      #     post-login OAuth redirect target. Pinned to one value across
+      #     environments, a staging core would 403 the staging console's own
+      #     writes and redirect staging logins to the *production* console.
+      #   - STOREFRONT_ORIGIN pinned to production would silently CORS-block
+      #     every staging or PR-preview storefront's catalog calls.
+      # Set per instance in the Render dashboard before that instance's first
+      # deploy. An empty ADMIN_CONSOLE_ORIGIN fails closed (every admin write
+      # 403s); an empty STOREFRONT_ORIGIN means no catalog CORS headers at
+      # all. Both are loud and obviously broken until configured -- that is
+      # the deliberate trade against the silent cross-environment bleed a
+      # shared hardcoded value would cause.
+      - key: ADMIN_CONSOLE_ORIGIN
+        sync: false
+      # When this is set in the dashboard, list only www.alpinebrickexchange.com
+      # (production) -- the apex (alpinebrickexchange.com) still resolves to
+      # the live Shopify store (see bootstrap step 5 below), so it cannot be
+      # added to the allowlist until the Phase 5 cutover repoints it. Add it,
+      # comma-separated, at that point.
+      - key: STOREFRONT_ORIGIN
+        sync: false
       # Secrets are NEVER declared here. Set these in the Render dashboard,
       # per environment, entered by Jack:
       #   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
