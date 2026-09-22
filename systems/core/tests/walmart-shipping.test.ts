@@ -186,14 +186,18 @@ describe('walmart shipping', () => {
   // Final fix wave B2: Walmart line numbers are derived by POSITION, so the
   // handlers must read order lines in the order ingest created them. Without
   // an orderBy, Postgres returns rows in whatever physical order it finds
-  // them -- and an ordinary UPDATE of a line (which writes a new row version
-  // elsewhere in the heap) is enough to move that line to the end. Here the
-  // first-ingested line is touched after ingest; the ship and cancel pushes
-  // must still report it as lineNumber '1' with its own quantity.
+  // them, which ordinary writes (an UPDATE's new row version, VACUUM, space
+  // reuse) change. To make that deterministic here, the variants are created
+  // in REVERSE of the order's line order and order_lines is then CLUSTERed on
+  // its variant_id index, which physically rewrites the table as L3, L2, L1.
+  // (A single UPDATE of line 1 was tried first; it only sometimes moved the
+  // row, so it could not prove anything reliably.) The ship and cancel
+  // pushes must still report L1 as lineNumber '1' with its own quantity.
   async function seedAndIngestThreeLines() {
     const skus = ['ABE-L1', 'ABE-L2', 'ABE-L3']
-    for (const [i, sku] of skus.entries()) {
-      const p = await prisma.product.create({ data: { slug: `l${i}`, name: `L${i}`, productType: 'own_designed', status: 'published' } })
+    // Reverse creation order: L3's variant gets the lowest cuid.
+    for (const sku of [...skus].reverse()) {
+      const p = await prisma.product.create({ data: { slug: sku.toLowerCase(), name: sku, productType: 'own_designed', status: 'published' } })
       const v = await prisma.variant.create({ data: { productId: p.id, sku, priceCents: 1000 } })
       await prisma.inventory.create({ data: { variantId: v.id, onHand: 10 } })
       await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: `${sku}-W`, status: 'live' } })
@@ -211,9 +215,8 @@ describe('walmart shipping', () => {
       },
     }
     const { orderId } = await ingestWalmartOrder(payload, 'poll')
-    // Touch the first-ingested line so its row version moves in the heap.
-    const first = await prisma.orderLine.findFirstOrThrow({ where: { orderId: orderId!, sku: 'ABE-L1' } })
-    await prisma.orderLine.update({ where: { id: first.id }, data: { discountCents: 0 } })
+    // Physically reorder order_lines by variant_id: L3, L2, L1.
+    await prisma.$executeRawUnsafe('CLUSTER order_lines USING order_lines_variant_id_idx')
     return orderId!
   }
 
@@ -221,7 +224,7 @@ describe('walmart shipping', () => {
     return Object.fromEntries(orderLines.map((l) => [l.lineNumber, l.orderLineStatuses.orderLineStatus[0].statusQuantity.amount]))
   }
 
-  it('B2: ship push numbers lines in ingest order, even after a line row was updated', async () => {
+  it('B2: ship push numbers lines in ingest order, whatever the physical row order', async () => {
     const orderId = await seedAndIngestThreeLines()
     const calls: any[] = []
     registerShippingHandlers({ request: async (m, path, opts) => { calls.push({ m, path, opts }); return {} } })
@@ -231,7 +234,7 @@ describe('walmart shipping', () => {
     expect(lineQuantities(ship.opts.body.orderShipment.orderLines.orderLine)).toEqual({ 1: '1', 2: '2', 3: '3' })
   })
 
-  it('B2: cancel push numbers lines in ingest order, even after a line row was updated', async () => {
+  it('B2: cancel push numbers lines in ingest order, whatever the physical row order', async () => {
     const orderId = await seedAndIngestThreeLines()
     const calls: any[] = []
     registerShippingHandlers({ request: async (m, path, opts) => { calls.push({ m, path, opts }); return {} } })
