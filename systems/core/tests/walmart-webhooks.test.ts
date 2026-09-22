@@ -39,6 +39,31 @@ describe('walmart webhook endpoint', () => {
     expect(res.body).toEqual({ error: 'unauthorized' })
   })
 
+  // WALMART_WEBHOOK_SECRET is set once at module load for the whole file
+  // (see the top of this file), so every other test in here only exercises
+  // "wrong secret", never "no secret configured at all". A misconfigured
+  // deploy -- the env var genuinely unset -- is the case the fail-closed
+  // guard matters most for, and until now it was only verified by reading
+  // the code, not by a test. Restored in `finally` so an unset env var can't
+  // leak into any other test in this worker (vitest.config.ts runs test
+  // files sequentially -- fileParallelism: false -- but not test-run order
+  // within a file, and other files in this same process read
+  // process.env.WALMART_WEBHOOK_SECRET too).
+  it('fails closed when WALMART_WEBHOOK_SECRET is unset, regardless of what header is sent', async () => {
+    const saved = process.env.WALMART_WEBHOOK_SECRET
+    try {
+      delete process.env.WALMART_WEBHOOK_SECRET
+      const res = await request(buildApp())
+        .post('/api/v1/channels/walmart/webhooks')
+        .set('x-webhook-secret', 'test-secret') // the value that would have matched
+        .send({ eventType: 'ORDER_CREATED', payload: walmartOrderFixture })
+      expect(res.status).toBe(401)
+      expect(res.body).toEqual({ error: 'unauthorized' })
+    } finally {
+      process.env.WALMART_WEBHOOK_SECRET = saved
+    }
+  })
+
   // Walmart calls this endpoint with no session cookie and no Origin header
   // at all. It must not land behind requireAuth/requireOrigin/CORS the way
   // /api/v1/admin does -- asserting that with a bare supertest call (no

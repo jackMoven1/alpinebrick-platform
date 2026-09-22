@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { ingestWalmartOrder, ChannelError } from './orders.ingest.js'
-import { hashesEqual } from '../../auth/tokens.js'
+import { hashesEqual, hashToken } from '../../auth/tokens.js'
+import { asyncHandler } from '../../lib/async-handler.js'
 
 // Mounted at /api/v1/channels/walmart/webhooks in app.ts, a prefix
 // deliberately separate from /api/v1/admin and /api/v1/auth. Walmart sends
@@ -11,15 +12,26 @@ import { hashesEqual } from '../../auth/tokens.js'
 // session cookie" test.
 export const walmartWebhookRouter = Router()
 
-walmartWebhookRouter.post('/', async (req, res) => {
+walmartWebhookRouter.post('/', asyncHandler(async (req, res) => {
   const provided = req.get('x-webhook-secret')
   const expected = process.env.WALMART_WEBHOOK_SECRET
-  // Constant-time comparison via hashesEqual (src/auth/tokens.ts) -- a plain
-  // === on a shared secret leaks length and prefix through timing. Guard the
-  // undefined cases explicitly rather than falling into hashesEqual with a
-  // missing value: hashesEqual requires two strings, and an unset
-  // WALMART_WEBHOOK_SECRET must never make every request pass.
-  if (!expected || !provided || !hashesEqual(provided, expected)) {
+  // Fail closed on either side being absent BEFORE ever calling hashesEqual
+  // -- it requires two strings, and an unset WALMART_WEBHOOK_SECRET must
+  // never make every request pass.
+  //
+  // Hash both sides to a fixed-length (sha256 hex) digest with hashToken
+  // before comparing, rather than calling hashesEqual(provided, expected)
+  // directly. hashesEqual's own doc comment says its constant-time guarantee
+  // holds "for equal-length inputs" -- it short-circuits to `false` on a
+  // raw length mismatch (see tokens.ts), which is correct when comparing two
+  // digests of a known fixed length, but WALMART_WEBHOOK_SECRET is a raw
+  // variable-length shared secret compared directly. Without hashing first,
+  // an attacker probing with different header lengths can distinguish
+  // "wrong length" from "right length, wrong content" by timing, narrowing
+  // brute force to the correct length before attacking its content. Hashing
+  // first makes both operands always the same length, so timingSafeEqual
+  // does the real work instead of being bypassed by the length check.
+  if (!expected || !provided || !hashesEqual(hashToken(provided), hashToken(expected))) {
     return res.status(401).json({ error: 'unauthorized' })
   }
 
@@ -46,6 +58,11 @@ walmartWebhookRouter.post('/', async (req, res) => {
       // insufficient stock) is resolved.
       return res.status(422).json({ error: e.code })
     }
+    // Not a ChannelError -- a genuine unexpected failure (e.g. a raw Prisma
+    // error). Re-thrown here, but this handler is wrapped in asyncHandler
+    // above, so the rejection reaches errorHandler (error-handler.ts) via
+    // next(err) instead of becoming an unhandled rejection that crashes the
+    // process. See lib/async-handler.ts's doc comment.
     throw e
   }
-})
+}))

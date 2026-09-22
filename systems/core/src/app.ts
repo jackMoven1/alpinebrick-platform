@@ -11,6 +11,7 @@ import { createAuthRouter } from './auth/auth.routes.js'
 import { createGoogleOidcPort } from './ports/oidc/google.adapter.js'
 import { createCors } from './auth/cors.js'
 import { walmartWebhookRouter } from './channels/walmart/webhooks.routes.js'
+import { errorHandler } from './error-handler.js'
 
 export function buildApp(): Express {
   const app = express()
@@ -76,6 +77,16 @@ export function buildApp(): Express {
   app.use('/api/v1/admin', requireJsonContentType)
   app.use('/api/v1/admin/images', createAssetsRouter(storagePort))
   app.use('/api/v1/admin', adminCatalogRouter)
+
+  // Terminal error-handling middleware -- MUST be mounted last, after every
+  // router. It is the backstop for asyncHandler-wrapped routes (and for
+  // requireAuth, which already calls next(err) itself): Express 4 does not
+  // catch a rejection thrown out of an async handler, so without this and
+  // without asyncHandler, an unexpected error anywhere crashes the whole
+  // process -- catalog, orders and admin traffic included, not just
+  // whichever route happened to throw. See error-handler.ts and
+  // lib/async-handler.ts.
+  app.use(errorHandler)
 
   return app
 }

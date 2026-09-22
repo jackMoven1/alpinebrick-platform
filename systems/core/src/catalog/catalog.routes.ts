@@ -3,6 +3,7 @@ import {
   listProducts, getProduct, getAvailability,
   CatalogValidationError, VALID_SORTS, type CatalogSort,
 } from './catalog.service.js'
+import { asyncHandler } from '../lib/async-handler.js'
 
 // Returns undefined when absent, null when present-but-invalid, so the caller
 // can tell "not supplied" from "supplied as garbage" and reject the latter.
@@ -23,7 +24,7 @@ function validationError(res: Response, field: string, message: string) {
 
 export const catalogRouter = Router()
 
-catalogRouter.get('/products', async (req, res) => {
+catalogRouter.get('/products', asyncHandler(async (req, res) => {
   const page = intParam(req.query.page)
   if (page === null) return validationError(res, 'page', 'page must be an integer >= 1')
   const pageSize = intParam(req.query.pageSize)
@@ -46,18 +47,20 @@ catalogRouter.get('/products', async (req, res) => {
     if (err instanceof CatalogValidationError) {
       return validationError(res, err.field, err.message)
     }
+    // See lib/async-handler.ts -- wrapped, so this reaches error-handler.ts
+    // via next(err) instead of crashing the process.
     throw err
   }
-})
+}))
 
-catalogRouter.get('/products/:idOrSlug', async (req, res) => {
+catalogRouter.get('/products/:idOrSlug', asyncHandler(async (req, res) => {
   const p = await getProduct(req.params.idOrSlug)
   if (!p) return notFound(res)
   res.json(p)
-})
+}))
 
-catalogRouter.get('/products/:idOrSlug/availability', async (req, res) => {
+catalogRouter.get('/products/:idOrSlug/availability', asyncHandler(async (req, res) => {
   const a = await getAvailability(req.params.idOrSlug)
   if (!a) return notFound(res)
   res.json(a)
-})
+}))
