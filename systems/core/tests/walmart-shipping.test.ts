@@ -159,7 +159,7 @@ describe('walmart shipping', () => {
     const { orderId, variantId } = await seedAndIngest()
     registerShippingHandlers({ request: async () => ({}) })
     await cancelChannelOrder(orderId)
-    await expect(cancelChannelOrder(orderId)).rejects.toThrow()
+    await expect(cancelChannelOrder(orderId)).rejects.toMatchObject({ code: 'invalid_transition' })
     const inv = await prisma.inventory.findUniqueOrThrow({ where: { variantId } })
     expect(inv).toMatchObject({ onHand: 10, reserved: 0 })
   })

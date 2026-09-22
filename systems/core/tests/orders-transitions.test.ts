@@ -64,6 +64,36 @@ describe('order transitions', () => {
     expect(inv.reserved).toBe(1) // untouched, and never driven negative
   })
 
+  // Mirrors 'refuses to cancel when the reservation has drifted below the
+  // line quantity' above, for the fulfilment side. fulfillOrder's own status
+  // guard makes a caller-driven double-fulfil impossible (see
+  // orders-transitions tests above and walmart-shipping.test.ts's repeat-call
+  // tests, which are intercepted by their own pre-checks before ever
+  // reaching this guard) -- so nothing in this service, or in the Walmart
+  // channel code that calls it, can reach fulfillOrder's affected-row check
+  // through a normal call sequence. It stands in for external corruption (a
+  // manual edit, a partially-applied earlier failure, drift from a bug
+  // elsewhere) the same way the cancel test above does. Without this guard,
+  // Walmart's 2-day ship SLA path would silently no-op the stock decrement
+  // instead of failing loudly, leaving on_hand wrong with no error raised.
+  it('refuses to fulfill when the reservation has drifted below the line quantity', async () => {
+    const order = await place('BBS-STD', 3) // reserved 3
+    await markOrderPaid(order.id)
+    const inv0 = await prisma.inventory.findFirstOrThrow({ where: { variant: { sku: 'BBS-STD' } } })
+
+    // Simulate a drifted hold: reserved is now less than this order's line quantity.
+    await prisma.inventory.update({ where: { id: inv0.id }, data: { reserved: 1 } })
+
+    await expect(fulfillOrder(order.id)).rejects.toMatchObject({ code: 'inventory_conflict' })
+
+    // The whole transition rolls back: the order stays fulfillable rather
+    // than becoming fulfilled with on_hand never actually decremented.
+    expect((await getOrder(order.id))?.status).toBe('paid')
+    const inv = await prisma.inventory.findFirstOrThrow({ where: { variant: { sku: 'BBS-STD' } } })
+    expect(inv.reserved).toBe(1) // untouched
+    expect(inv.onHand).toBe(inv0.onHand) // untouched -- never decremented
+  })
+
   it('writes audit rows for each transition', async () => {
     const order = await place('BBS-STD', 1)
     await markOrderPaid(order.id)
