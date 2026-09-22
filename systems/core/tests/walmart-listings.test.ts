@@ -69,7 +69,14 @@ describe('walmart listings', () => {
       request: async (method, path) => {
         calls.push({ method, path })
         if (path.startsWith('/v3/feeds') && method === 'POST') return { feedId: 'FEED-1' }
-        return { feedStatus: 'PROCESSED' }
+        // A bare `{ feedStatus: 'PROCESSED' }` with no per-item confirmation
+        // must NOT be enough to go live -- that was the original brief
+        // defect. This mock carries Walmart's own explicit per-SKU SUCCESS,
+        // which is what actually earns `live`.
+        return {
+          feedStatus: 'PROCESSED',
+          itemDetails: { itemIngestionStatus: [{ sku: 'ABE-C-W', ingestionStatus: 'SUCCESS' }] },
+        }
       },
     }
     const { feedId } = await submitItemFeed([l.id], client)
@@ -298,5 +305,90 @@ describe('walmart listings', () => {
 
     expect((await prisma.channelListing.findUniqueOrThrow({ where: { id: lSysErr.id } })).status).toBe('rejected')
     expect((await prisma.channelListing.findUniqueOrThrow({ where: { id: lUnknown.id } })).status).toBe('rejected')
+  })
+
+  // Same defect a third time: falling back to the FEED-level status when a
+  // listing has NO per-SKU entry at all is exactly the original brief bug
+  // ("feed processed means live"), just relocated to the one path that
+  // predated the fail-closed fixes above. No confirmation must never mean
+  // live -- regardless of whether the feed itself is still settling or has
+  // already settled.
+  it('leaves a listing unchanged when it is absent from the response and the feed is still in progress', async () => {
+    const v = await seedVariant()
+    const l = await createListing(v.id, 'ABE-C-W')
+    const client: WalmartClient = {
+      // Feed-level status is not terminal -- Walmart hasn't finished with
+      // the feed at all, so it certainly hasn't reported on this SKU.
+      request: async (method) => (method === 'POST' ? { feedId: 'FEED-7' } : { feedStatus: 'RECEIVED' }),
+    }
+    await submitItemFeed([l.id], client)
+
+    const beforePoll = await prisma.channelListing.findUniqueOrThrow({ where: { id: l.id } })
+    expect(beforePoll.status).toBe('submitted')
+
+    expect(await checkFeedStatus('FEED-7', client)).toBe('submitted')
+
+    // State identity, not just "not live" -- the same standard the
+    // INPROGRESS test above holds itself to.
+    const afterPoll = await prisma.channelListing.findUniqueOrThrow({ where: { id: l.id } })
+    expect(afterPoll.status).toBe(beforePoll.status)
+    expect(afterPoll.status).toBe('submitted')
+  })
+
+  it('rejects a listing absent from the response on a settled feed, recording that no outcome was reported', async () => {
+    const v = await seedVariant()
+    const l = await createListing(v.id, 'ABE-C-W')
+    const client: WalmartClient = {
+      request: async (method) =>
+        method === 'POST'
+          ? { feedId: 'FEED-8' }
+          : {
+              // Feed is terminal (PROCESSED) and Walmart DID send
+              // itemDetails -- just not an entry for this SKU. Walmart
+              // accepted a feed containing it and said nothing back.
+              feedStatus: 'PROCESSED',
+              itemDetails: { itemIngestionStatus: [{ sku: 'SOME-OTHER-SKU', ingestionStatus: 'SUCCESS' }] },
+            },
+    }
+    await submitItemFeed([l.id], client)
+    expect(await checkFeedStatus('FEED-8', client)).toBe('processed')
+
+    const listing = await prisma.channelListing.findUniqueOrThrow({ where: { id: l.id } })
+    expect(listing.status).toBe('rejected')
+
+    const feed = await prisma.channelFeed.findUniqueOrThrow({ where: { feedId: 'FEED-8' } })
+    expect(JSON.stringify(feed.errors)).toContain('no_item_outcome_reported')
+    expect(JSON.stringify(feed.errors)).toContain('ABE-C-W')
+  })
+
+  // Pins a deliberate, non-obvious rule: an item can carry BOTH an
+  // in-progress status AND a populated errors array (Walmart flagging a
+  // problem before fully finishing with the item). Errors always win --
+  // this must resolve to rejected, not in_progress -- but nothing enforced
+  // that without a test, and both readings are arguable to a future editor.
+  it('rejects (does not leave in progress) when INPROGRESS is combined with a populated ingestionErrors array', async () => {
+    const v = await seedVariant()
+    const l = await createListing(v.id, 'ABE-C-W')
+    const client: WalmartClient = {
+      request: async (method) =>
+        method === 'POST'
+          ? { feedId: 'FEED-9' }
+          : {
+              feedStatus: 'PROCESSED',
+              itemDetails: {
+                itemIngestionStatus: [
+                  {
+                    sku: 'ABE-C-W',
+                    ingestionStatus: 'INPROGRESS',
+                    ingestionErrors: { ingestionError: [{ description: 'flagged mid-processing' }] },
+                  },
+                ],
+              },
+            },
+    }
+    await submitItemFeed([l.id], client)
+    expect(await checkFeedStatus('FEED-9', client)).toBe('processed')
+    const listing = await prisma.channelListing.findUniqueOrThrow({ where: { id: l.id } })
+    expect(listing.status).toBe('rejected')
   })
 })

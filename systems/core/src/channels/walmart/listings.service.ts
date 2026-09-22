@@ -180,11 +180,19 @@ function itemOutcomesBySku(itemDetails: unknown): Map<string, ItemOutcome> {
  * not wipe out a previously-captured rejection reason -- that reason is
  * most of what makes a rejection investigable rather than just a status
  * flip nobody can explain.
+ *
+ * `noOutcomeSkus` are listings the caller rejected because Walmart's
+ * response, on a SETTLED feed, never mentioned them at all -- a synthetic
+ * `no_item_outcome_reported` marker is recorded for each so the rejection
+ * has a stated reason instead of nothing, but only when nothing better is
+ * already on file for that sku (same "never overwrite with something
+ * emptier" rule as the rest of this function).
  */
 function mergeFeedErrors(
   existingErrors: unknown,
   res: { itemDetails?: unknown },
   feedLevelStatus: 'processed' | 'error',
+  noOutcomeSkus: string[] = [],
 ): Record<string, unknown> | null {
   const isRecord = (v: unknown): v is Record<string, unknown> =>
     typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -209,6 +217,12 @@ function mergeFeedErrors(
     // and nothing has ever been captured for this feed -- fall back to the
     // raw response rather than recording nothing.
     merged.__feed = res
+  }
+
+  for (const sku of noOutcomeSkus) {
+    if (merged[sku] === undefined) {
+      merged[sku] = { sku, reason: 'no_item_outcome_reported' }
+    }
   }
 
   return Object.keys(merged).length > 0 ? merged : null
@@ -236,6 +250,7 @@ export async function checkFeedStatus(
 
   const liveIds: string[] = []
   const rejectedIds: string[] = []
+  const noOutcomeSkus: string[] = []
   for (const listing of listings) {
     const outcome = outcomes.get(listing.walmartSku)
     // A listing goes live only when ITS OWN item reports explicit success.
@@ -244,15 +259,23 @@ export async function checkFeedStatus(
     // eligible for the next poll. This is what makes a mixed feed settle
     // correctly: the live/rejected items decided in THIS SAME poll are
     // written immediately, without waiting for the in-progress ones to
-    // reach a terminal state too. When Walmart's response carries no
-    // per-item detail for this sku at all, fall back to the feed-level
-    // status -- but an item explicitly reported as failed is NEVER live,
-    // regardless of the feed's overall status. This is the distinction the
-    // whole task exists to enforce: a "processed" feed can still carry
-    // rejected items.
+    // reach a terminal state too.
     if (outcome === 'in_progress') continue
-    const isLive = outcome === undefined ? feedLevelStatus === 'processed' : outcome === 'live'
-    ;(isLive ? liveIds : rejectedIds).push(listing.id)
+    if (outcome === undefined) {
+      // No per-SKU entry at all for this listing, on a feed we already know
+      // is SETTLED (feedLevelStatus is always terminal by this point -- the
+      // early return above handles "feed still in progress" for every
+      // listing at once, before we ever get here). Walmart accepted a feed
+      // containing this sku and reported nothing back about it -- that's
+      // genuinely anomalous, not a quiet success. Falling back to the
+      // feed-level status here was the original brief defect ("processed
+      // feed means live") surviving in the one path the earlier fail-closed
+      // fixes didn't touch: no confirmation must never mean live.
+      rejectedIds.push(listing.id)
+      noOutcomeSkus.push(listing.walmartSku)
+      continue
+    }
+    ;(outcome === 'live' ? liveIds : rejectedIds).push(listing.id)
   }
 
   // Flip the feed and its listings together: a crash between separate writes
@@ -265,7 +288,9 @@ export async function checkFeedStatus(
       where: { feedId },
       data: {
         status: feedLevelStatus,
-        errors: (mergeFeedErrors(feed.errors, res, feedLevelStatus) as Prisma.InputJsonValue | null) ?? Prisma.JsonNull,
+        errors:
+          (mergeFeedErrors(feed.errors, res, feedLevelStatus, noOutcomeSkus) as Prisma.InputJsonValue | null) ??
+          Prisma.JsonNull,
       },
     }),
     ...(liveIds.length > 0
