@@ -88,6 +88,25 @@ enum ChannelJobStatus {
 enum ChannelSettlementStatus {
   matched
   unmatched
+  // A row matched to a real order whose reconstructed expected amount does
+  // NOT equal amountCents (discrepancyCents is non-null and non-zero). Not
+  // "matched" (the amount is wrong) and not "unmatched" (an order was
+  // found) -- a distinct third state so an operator filtering on `status`
+  // alone finds it, and so @@index([status]) below actually narrows a
+  // `discrepant` query instead of splitting an almost-all-one-value column.
+  discrepant
+  // Review round 3, finding B3: a row matched to a real order whose amount
+  // was NEVER COMPARED -- transactionType isn't the sale type, or is empty
+  // (e.g. a column-name mismatch against a future report shape), or no
+  // order_created ChannelEvent exists to reconstruct an expected figure
+  // from -- or (review round 4) the row, or its order's itemised Sale group,
+  // contains a row with no identity, an in-report identity collision, or a
+  // positive commission (listed in the import audit row's `anomalies`).
+  // Round 2 filed all of these as `matched`, indistinguishable from a
+  // row that was compared and genuinely matched -- a bookkeeper reading
+  // `matched` had no way to tell "verified zero" from "never checked."
+  // `matched` now means ONLY "compared, and the amount was exactly right."
+  unreconciled
 }
 
 model Product {
@@ -281,6 +300,11 @@ model ChannelFeed {
   type        ChannelFeedType
   status      ChannelFeedStatus @default(submitted)
   errors      Json?
+  // The ChannelListing ids this feed covers, written once at submission time
+  // by submitItemFeed. checkFeedStatus reads it back to know which listings
+  // to update on a status transition -- the feed has no FK to listings
+  // (a feed can cover several) so this Json array is the only linkage.
+  listingIds  Json              @default("[]") @map("listing_ids")
   submittedAt DateTime          @default(now()) @map("submitted_at")
   updatedAt   DateTime          @updatedAt @map("updated_at")
   @@map("channel_feeds")
@@ -291,6 +315,12 @@ model ChannelEvent {
   source      ChannelEventSource
   externalId  String             @map("external_id")
   eventType   String             @map("event_type")
+  // The payload exactly as received, before any mapping/filtering (e.g. the
+  // Walmart order mapper drops SHIPPING charges when it builds canonical
+  // lines). Nullable: existing rows predate this column and events that
+  // never carried a meaningful payload don't need one. Mirrors
+  // ChannelSettlement.raw -- same idea, inbound side.
+  raw         Json?
   processedAt DateTime           @default(now()) @map("processed_at")
   @@unique([externalId, eventType])
   @@map("channel_events")
@@ -305,6 +335,13 @@ model ChannelJob {
   runAfter  DateTime         @default(now()) @map("run_after")
   lastError String?          @map("last_error")
   dedupeKey String?          @unique @map("dedupe_key")
+  /// True only for jobs enqueued via enqueueJob (recurring inventory/price
+  /// pushes): processDueJobs releases their dedupeKey at pickup so a change
+  /// arriving mid-run queues a fresh job. False (the default) for one-shot
+  /// keys from enqueueIdempotentJob (ack:/ship:/cancel:) and for any row
+  /// written by a path that does not set it -- those keep their key, because
+  /// a released one-shot key lets a replay double-ship. See outbox.ts.
+  recurring Boolean          @default(false)
   createdAt DateTime         @default(now()) @map("created_at")
   updatedAt DateTime         @updatedAt @map("updated_at")
   @@index([status, runAfter])
@@ -315,14 +352,95 @@ model ChannelSettlement {
   id              String                  @id @default(cuid())
   reportDate      DateTime                @map("report_date")
   externalOrderId String                  @map("external_order_id")
+  // Walmart's own per-row transaction classification (recon report
+  // "Transaction Type" column) -- documented values are `Sale` (a customer
+  // order/payment) and `PaymentSummary` (settlement/payout activity); see
+  // SALE_TRANSACTION_TYPE's doc comment in settlement.ts for the citation
+  // (review round 2 corrected this from `PaymentWithdrawn`, an invented
+  // placeholder that appears nowhere in Walmart's documentation). The gate
+  // on whether `discrepancyCents` is even attempted: Walmart emits multiple
+  // transaction rows per PO, and a single sale itself arrives as several
+  // itemised `Sale` rows -- comparing a non-sale row's amount against the
+  // order's expected gross is comparing two things that were never meant
+  // to match.
+  transactionType String                  @map("transaction_type")
   amountCents     Int                     @map("amount_cents")
   feeCents        Int                     @map("fee_cents")
+  // amountCents + feeCents -- what actually lands in the bank for this row
+  // (feeCents is already signed negative for a commission deduction). Cheap
+  // to store now, from data already on the row, so a later bank
+  // reconciliation doesn't have to re-derive it. Deliberately NOT what
+  // `discrepancyCents` is checked against -- see that column's comment.
+  netCents        Int                     @map("net_cents")
   currency        String                  @default("USD")
   orderId         String?                 @map("order_id")
   status          ChannelSettlementStatus @default(unmatched)
+  // Signed: the order's itemised Sale-row aggregate (see
+  // importSettlementRowsAttempt in settlement.ts) minus the order's expected GROSS
+  // value reconstructed from ChannelEvent.raw (Task 12) -- positive means
+  // Walmart's Sale rows sum to MORE than expected, negative means LESS,
+  // zero is an exact match. Compared against GROSS only (review round 3,
+  // finding B2): refunds do NOT net into this figure -- a `Sale` row is
+  // gross by Walmart's own documented model, and a refund is its own,
+  // separate settlement row. This reconciles REVENUE RECOGNITION, not cash:
+  // feeCents/commission deliberately never enters the formula (no expected
+  // commission rate exists anywhere in this codebase to check Walmart's
+  // stated commission against; inventing one would be "estimating a
+  // figure"), so a wrong commission hides perfectly inside a matching
+  // amountCents -- this column cannot catch that, only a real bank/cash
+  // reconciliation against `netCents` can.
+  //
+  // WARNING: this figure is an ORDER-LEVEL result written to EVERY `Sale`
+  // row in the order's itemised group (review round 2's aggregation) --
+  // `SUM(discrepancy_cents)` over multiple rows of the same group
+  // over-reports by a factor of the group's row count. Read one row per
+  // group, never sum across a group. (Review round 3, finding B4: the
+  // group is scoped to one import call's own rows and is NOT re-stamped
+  // when a later call adds sibling rows for the same order -- see
+  // the BLOCKER FOR TASK 13 note in settlement.ts for the known
+  // limitation and the task report for why this was left as a deliberate
+  // stop rather than a rushed fix.)
+  //
+  // Null when there is nothing comparable to compute against: `orderId` is
+  // null (no order), the row's `transactionType` isn't the sale type this
+  // reconciliation understands, or no order_created ChannelEvent.raw is on
+  // file to reconstruct an expected figure from (this codebase never falls
+  // back to Order.totalCents for that -- a figure known to exclude shipping
+  // is not a safe stand-in, see settlement.ts). Null discrepancyCents pairs
+  // with `status: 'unreconciled'` (review round 3, finding B3) -- NOT
+  // `'matched'`, which now means only "compared, and exactly right."
+  // `status: 'discrepant'` is the queryable signal that a real, non-zero
+  // comparison was made and failed. See src/channels/walmart/settlement.ts
+  // for the computation.
+  //
+  // UNVERIFIED AGAINST REAL WALMART DATA -- see the prominent warning at
+  // the top of settlement.ts. Every fact this column depends on (the recon
+  // report's wire format, its Transaction Type/Amount Type values, whether
+  // Sale rows are truly gross) is reasoned from one fetched documentation
+  // page, not a live Walmart report. No figure here should be acted on
+  // until Task 13's sandbox end-to-end check confirms the report shape.
+  discrepancyCents Int?                   @map("discrepancy_cents")
   raw             Json
   createdAt       DateTime                @default(now()) @map("created_at")
+  // Idempotency key -- an IDENTITY, not a value (review round 3, finding B1;
+  // tightened in round 4, finding 1). Prefixed forms: `tk:` (Walmart's
+  // Transaction Key + Transaction Type + line # + Amount Type), `po:` (no
+  // Transaction Key: PO + Transaction Type + line # + Amount Type + report
+  // date), `raw:` (no identity at all: report date + a hash of the raw row;
+  // such rows are never compared), each with a `#N` suffix when the same key
+  // recurs within one import. `legacy:<id>` only on rows backfilled by the
+  // 20260922170000 migration. See baseLedgerKey in settlement.ts for the
+  // uniqueness assumption this rests on.
+  ledgerKey       String                  @unique @map("ledger_key")
+  // Provenance of `status` / `discrepancyCents` (review round 4, finding 5):
+  // which reconciliation model produced them. `'unverified'` means the
+  // comparison logic is reasoned from Walmart documentation, NOT checked
+  // against a real Walmart report -- treat `discrepant`/`matched` on such a
+  // row as provisional. Task 13's sandbox check is what may introduce a
+  // verified value; rows written before it keep `'unverified'`.
+  reconciliationModel String              @default("unverified") @map("reconciliation_model")
   @@index([externalOrderId])
+  @@index([status])
   @@map("channel_settlements")
 }
 

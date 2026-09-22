@@ -8,6 +8,30 @@ export function toCents(dollars: number): number {
   return Math.round(dollars * 100)
 }
 
+/**
+ * The one outbound conversion boundary: integer cents (our side) -> decimal
+ * dollars (Walmart's `amount`/`price` fields). Mirrors `toCents` in the
+ * other direction; every outbound payload builder in this file calls this
+ * instead of dividing inline.
+ *
+ * Built on BigInt integer arithmetic and a single string->Number parse
+ * rather than `cents / 100` -- not because the division is wrong (it isn't:
+ * both paths round the same exact rational to the same double, always, for
+ * any integer `cents`), but so correctness doesn't rest on that fact staying
+ * true unnoticed. The integer check below is the part that earns its keep.
+ */
+export function centsToDollars(cents: number): number {
+  if (!Number.isInteger(cents)) {
+    throw new TypeError(`centsToDollars: priceCents must be an integer, got ${cents}`)
+  }
+  const negative = cents < 0
+  const abs = BigInt(Math.abs(cents))
+  const dollars = abs / 100n
+  const remainder = abs % 100n
+  const decimal = `${negative ? '-' : ''}${dollars.toString()}.${remainder.toString().padStart(2, '0')}`
+  return Number(decimal)
+}
+
 export interface CanonicalChannelOrder {
   externalOrderId: string
   email: string
@@ -52,7 +76,7 @@ export function toItemFeed(items: { walmartSku: string; name: string; descriptio
         sku: i.walmartSku,
         productIdentifiers: { productIdType: 'SKU', productId: i.walmartSku },
         productName: i.name,
-        price: i.priceCents / 100,
+        price: centsToDollars(i.priceCents),
         ShippingWeight: 1,
       },
       Visible: {
@@ -67,7 +91,7 @@ export function toInventoryPayload(walmartSku: string, quantity: number): unknow
 }
 
 export function toPricePayload(walmartSku: string, priceCents: number): unknown {
-  return { sku: walmartSku, pricing: [{ currentPriceType: 'BASE', currentPrice: { currency: 'USD', amount: priceCents / 100 } }] }
+  return { sku: walmartSku, pricing: [{ currentPriceType: 'BASE', currentPrice: { currency: 'USD', amount: centsToDollars(priceCents) } }] }
 }
 
 export function toShipPayload(input: { lineNumbers: string[]; quantityByLine: Record<string, number>; carrier: string; trackingNumber: string; trackingUrl?: string; shipDateIso: string }): unknown {

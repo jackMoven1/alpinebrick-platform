@@ -63,14 +63,26 @@ services:
   # ------------------------------------------------------------ core-worker
   # DELIBERATELY COMMENTED OUT.
   #
-  # The deployment architecture specifies a background worker running
-  # `node dist/worker.js` for the Walmart outbox processor and pollers
-  # (Walmart plan, Task 13). That code does not exist yet — there is no
-  # src/worker.ts in systems/core.
+  # The entrypoint now exists: `systems/core/src/worker.ts` (built to
+  # `dist/worker.js` by `npm run build`, same as the web process). It is the
+  # Walmart outbox processor + pollers (Walmart plan, Task 13) — see
+  # `systems/core/README.md`'s "Walmart channel" section for what it runs
+  # and how to run it locally.
   #
-  # Enabling this now would provision a paid service that starts, finds no
-  # entrypoint, and crash-loops. Uncomment as part of the Walmart integration
-  # plan, once src/worker.ts is real.
+  # Still commented out because uncommenting provisions a paid Render
+  # service, which is Jack's call, not something this task does on its own.
+  # Before uncommenting, per-instance config needs setting (dashboard-side,
+  # like the other secrets below — never declared in this file):
+  #   - WALMART_SYNC_ENABLED=true. ONLY provision this service with it set.
+  #     Without it the worker logs that sync is disabled and exits 0 --
+  #     and Render restarts a worker that exits, so it crash-loops (start,
+  #     exit, restart) as a paid service doing nothing.
+  #   - WALMART_CLIENT_ID / WALMART_CLIENT_SECRET (real Walmart credentials)
+  # WALMART_SETTLEMENT_ENABLED stays "false" (core-env's default) until the
+  # sandbox gate (Task 13 brief, Step 6) and the B4 cross-call re-stamping
+  # defect (settlement.ts, the `BLOCKER FOR PRODUCTION LAUNCH` comment above
+  # importSettlementRowsAttempt)
+  # are both resolved — see the README section for detail.
   #
   # - type: worker
   #   name: core-worker

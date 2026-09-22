@@ -8,6 +8,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "start": "node dist/server.js",
+    "worker": "tsx src/worker.ts",
+    "start:worker": "node dist/worker.js",
     "test": "vitest run",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",

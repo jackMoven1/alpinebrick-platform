@@ -1,7 +1,9 @@
+import type { Prisma } from '@prisma/client'
 import { prisma } from '../prisma.js'
 import { recordAudit } from '../audit.js'
 import type { TaxPort } from '../ports/tax/tax.port.js'
 import { createFlatRateTaxPort } from '../ports/tax/flat-rate.adapter.js'
+import { enqueueInventoryPush } from '../channels/walmart/inventory.sync.js'
 
 export class OrderError extends Error {
   constructor(public code: string, message: string) {
@@ -42,6 +44,47 @@ export interface PlaceOrderInput {
 }
 
 const defaultTaxPort = createFlatRateTaxPort()
+
+/**
+ * Options for a status transition that a channel needs to extend atomically.
+ *
+ * `inTransaction` runs INSIDE the transition's `$transaction`, after the
+ * stock UPDATEs, the status change and the audit row -- so whatever it
+ * writes commits or rolls back together with them, and a throw from it rolls
+ * the whole transition back. Walmart's ship/cancel paths (shipping.ts) use it
+ * to enqueue their outbound job in the same transaction as the status change
+ * (final fix wave A1): enqueued after commit, a crash in between left a
+ * fulfilled/cancelled order with no job, and the status guard refused the
+ * retry. Anything written through `tx` must not raise on an expected
+ * condition -- Postgres aborts the whole transaction on the first statement
+ * error (see enqueueIdempotentJob in channels/walmart/outbox.ts).
+ */
+export interface TransitionOptions {
+  inTransaction?: (tx: Prisma.TransactionClient) => Promise<void>
+}
+
+/**
+ * Post-commit Walmart inventory pushes. The transaction has already
+ * committed when this runs, so a failure to ENQUEUE a push must not surface
+ * as a failure of the order operation: the order exists and stock moved,
+ * and an error here would turn a successful checkout into an HTTP 500 (and
+ * invite a duplicate order), or make a ship/cancel look failed when a retry
+ * is refused by the status guard. The push is recurring and recovers via the
+ * hourly reconcile (final fix wave B4), so it is logged instead. Each line is
+ * attempted even if an earlier one fails.
+ */
+async function enqueueInventoryPushesAfterCommit(
+  variantIds: string[],
+  context: string,
+): Promise<void> {
+  for (const variantId of variantIds) {
+    try {
+      await enqueueInventoryPush(variantId)
+    } catch (e) {
+      console.error(`orders: post-commit inventory push enqueue failed (${context}, variant ${variantId}):`, e)
+    }
+  }
+}
 
 export function orderNumber(n: number): string {
   return `ABE-${String(n).padStart(6, '0')}`
@@ -137,6 +180,8 @@ export async function placeOrder(input: PlaceOrderInput, taxPort: TaxPort = defa
     return created
   })
 
+  await enqueueInventoryPushesAfterCommit(order.lines.map((l) => l.variantId), `order.place order:${order.id}`)
+
   return toDto(order)
 }
 
@@ -164,7 +209,7 @@ export async function markOrderPaid(orderId: string, actorId = 'system'): Promis
   return toDto(updated)
 }
 
-export async function fulfillOrder(orderId: string, actorId = 'system'): Promise<OrderDto> {
+export async function fulfillOrder(orderId: string, actorId = 'system', opts: TransitionOptions = {}): Promise<OrderDto> {
   const updated = await prisma.$transaction(async (tx) => {
     const order = await loadOrderForUpdate(tx, orderId)
     if (order.status !== 'paid') {
@@ -178,12 +223,14 @@ export async function fulfillOrder(orderId: string, actorId = 'system'): Promise
     }
     const next = await tx.order.update({ where: { id: orderId }, data: { status: 'fulfilled' }, include: { lines: true } })
     await recordAudit({ actorId, action: 'order.fulfilled', target: `order:${orderId}`, before: { status: 'paid' }, after: { status: 'fulfilled' } }, tx)
+    if (opts.inTransaction) await opts.inTransaction(tx)
     return next
   })
+  await enqueueInventoryPushesAfterCommit(updated.lines.map((l: { variantId: string }) => l.variantId), `order.fulfilled order:${orderId}`)
   return toDto(updated)
 }
 
-export async function cancelOrder(orderId: string, actorId = 'system'): Promise<OrderDto> {
+export async function cancelOrder(orderId: string, actorId = 'system', opts: TransitionOptions = {}): Promise<OrderDto> {
   const updated = await prisma.$transaction(async (tx) => {
     const order = await loadOrderForUpdate(tx, orderId)
     if (order.status !== 'pending' && order.status !== 'paid') {
@@ -202,7 +249,9 @@ export async function cancelOrder(orderId: string, actorId = 'system'): Promise<
     }
     const next = await tx.order.update({ where: { id: orderId }, data: { status: 'cancelled' }, include: { lines: true } })
     await recordAudit({ actorId, action: 'order.cancelled', target: `order:${orderId}`, after: { status: 'cancelled' } }, tx)
+    if (opts.inTransaction) await opts.inTransaction(tx)
     return next
   })
+  await enqueueInventoryPushesAfterCommit(updated.lines.map((l: { variantId: string }) => l.variantId), `order.cancelled order:${orderId}`)
   return toDto(updated)
 }

@@ -144,6 +144,25 @@ per core convention.
 - **Settlement:** scheduled report pull → `ChannelSettlement` → auto-match →
   review queue for mismatches.
 
+  > **Unverified against real Walmart data (added 2026-09-22, Task 12 review
+  > round 4).** The reconciliation built in Task 12 — which rows are compared,
+  > how itemised `Sale` rows are grouped, and every `discrepancyCents` /
+  > `status: 'discrepant'` / `status: 'matched'` it writes — is reasoned from
+  > one Walmart documentation page (`developer.walmart.com/us-marketplace/docs/recon-report-json`),
+  > not from a live report or sandbox response. Four review rounds each found
+  > a further wrong assumption about the report's shape. **No settlement
+  > figure is to be acted on — by engineering, bookkeeping, or anyone
+  > chasing Walmart for money — until Task 13's sandbox end-to-end check
+  > confirms the report shape.** The data carries this: every
+  > `channel_settlements` row has `reconciliation_model = 'unverified'`, and
+  > every import's audit row has `reconciliationModel: 'unverified'`.
+  > Known open items Task 13 must close: the wire format (the documented
+  > example is JSON, the code parses CSV); the `Amount Type` enumeration;
+  > whether commission lines ride on `Sale` rows; the grain of `Transaction
+  > Key`; and finding B4 — re-reconciling an order whose itemised rows arrive
+  > across more than one import, deliberately deferred until the real shape
+  > is known. See `systems/core/src/channels/walmart/settlement.ts`.
+
 ## Error handling
 
 - Every outbound push is a retryable job: exponential backoff, then a

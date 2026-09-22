@@ -10,6 +10,8 @@ import { requireJsonContentType } from './auth/require-json-content-type.js'
 import { createAuthRouter } from './auth/auth.routes.js'
 import { createGoogleOidcPort } from './ports/oidc/google.adapter.js'
 import { createCors } from './auth/cors.js'
+import { walmartWebhookRouter } from './channels/walmart/webhooks.routes.js'
+import { errorHandler } from './error-handler.js'
 
 export function buildApp(): Express {
   const app = express()
@@ -28,6 +30,15 @@ export function buildApp(): Express {
   // createCors({ origins: allowedStorefrontOrigins, credentials: false })
   // mount ahead of it, since orders is public the same way catalog is.
   app.use('/api/v1/orders', ordersRouter)
+
+  // Walmart calls this endpoint directly with no session cookie and no
+  // Origin header -- its own x-webhook-secret header (checked inside the
+  // router) is the only auth layer. Deliberately its own prefix, separate
+  // from /api/v1/admin and /api/v1/auth below, and mounted with nothing
+  // ahead of it on this path: requireAuth, requireOrigin,
+  // requireJsonContentType and CORS must NOT apply here, or Walmart's
+  // deliveries would 401/403 before ever reaching the router.
+  app.use('/api/v1/channels/walmart/webhooks', walmartWebhookRouter)
 
   // CORS mounts first, ahead of everything else on this prefix -- a
   // preflight OPTIONS carries no cookie, so if auth-adjacent middleware ran
@@ -66,6 +77,16 @@ export function buildApp(): Express {
   app.use('/api/v1/admin', requireJsonContentType)
   app.use('/api/v1/admin/images', createAssetsRouter(storagePort))
   app.use('/api/v1/admin', adminCatalogRouter)
+
+  // Terminal error-handling middleware -- MUST be mounted last, after every
+  // router. It is the backstop for asyncHandler-wrapped routes (and for
+  // requireAuth, which already calls next(err) itself): Express 4 does not
+  // catch a rejection thrown out of an async handler, so without this and
+  // without asyncHandler, an unexpected error anywhere crashes the whole
+  // process -- catalog, orders and admin traffic included, not just
+  // whichever route happened to throw. See error-handler.ts and
+  // lib/async-handler.ts.
+  app.use(errorHandler)
 
   return app
 }
