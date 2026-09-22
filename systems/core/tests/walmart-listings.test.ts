@@ -178,4 +178,71 @@ describe('walmart listings', () => {
     process.env.ASSET_PUBLIC_BASE_URL = ''
     await expect(submitItemFeed([l.id])).rejects.toMatchObject({ code: 'asset_base_url_unset' })
   })
+
+  // Fail-closed: an item outcome we don't recognise must never become a
+  // live listing. Walmart's own published ingestion statuses are
+  // SUCCESS | INPROGRESS | DATA_ERROR | SYSTEM_ERROR | TIMEOUT_ERROR
+  // (https://developer.walmart.com/doc/us/mp/us-mp-feeds/) -- only an
+  // explicit SUCCESS may go live. This entry has no populated
+  // `ingestionErrors` array at all, so a check that only looks for errors
+  // (rather than requiring an explicit success) would wrongly call it live.
+  it('rejects a listing whose item reports a non-success status with no errors array', async () => {
+    const v = await seedVariant()
+    const l = await createListing(v.id, 'ABE-C-W')
+    const client: WalmartClient = {
+      request: async (method) =>
+        method === 'POST'
+          ? { feedId: 'FEED-4' }
+          : {
+              feedStatus: 'PROCESSED',
+              itemDetails: { itemIngestionStatus: [{ sku: 'ABE-C-W', ingestionStatus: 'SYSTEM_ERROR' }] },
+            },
+    }
+    await submitItemFeed([l.id], client)
+    expect(await checkFeedStatus('FEED-4', client)).toBe('processed')
+    const listing = await prisma.channelListing.findUniqueOrThrow({ where: { id: l.id } })
+    expect(listing.status).toBe('rejected')
+    expect(listing.status).not.toBe('live')
+  })
+
+  it('preserves an earlier rejection reason when a later poll of the same feed returns less detail', async () => {
+    const v = await seedVariant()
+    const l = await createListing(v.id, 'ABE-C-W')
+    let pollCount = 0
+    const client: WalmartClient = {
+      request: async (method) => {
+        if (method === 'POST') return { feedId: 'FEED-5' }
+        pollCount++
+        if (pollCount === 1) {
+          return {
+            feedStatus: 'ERROR',
+            itemDetails: {
+              itemIngestionStatus: [
+                {
+                  sku: 'ABE-C-W',
+                  ingestionStatus: 'DATA_ERROR',
+                  ingestionErrors: { ingestionError: [{ description: 'invalid gtin' }] },
+                },
+              ],
+            },
+          }
+        }
+        // A later poll of the same (already-settled) feed, with Walmart
+        // returning no item-level detail this time.
+        return { feedStatus: 'ERROR' }
+      },
+    }
+    await submitItemFeed([l.id], client)
+
+    expect(await checkFeedStatus('FEED-5', client)).toBe('error')
+    const afterFirstPoll = await prisma.channelFeed.findUniqueOrThrow({ where: { feedId: 'FEED-5' } })
+    expect(JSON.stringify(afterFirstPoll.errors)).toContain('invalid gtin')
+
+    expect(await checkFeedStatus('FEED-5', client)).toBe('error')
+    const afterSecondPoll = await prisma.channelFeed.findUniqueOrThrow({ where: { feedId: 'FEED-5' } })
+    expect(JSON.stringify(afterSecondPoll.errors)).toContain('invalid gtin')
+
+    const listing = await prisma.channelListing.findUniqueOrThrow({ where: { id: l.id } })
+    expect(listing.status).toBe('rejected')
+  })
 })

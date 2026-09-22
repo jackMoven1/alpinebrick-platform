@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client'
 import { prisma } from '../../prisma.js'
 import { type WalmartClient, getWalmartClient } from './client.js'
 import { toItemFeed } from './mappers.js'
@@ -100,11 +101,32 @@ export async function submitItemFeed(
   return { feedId: res.feedId }
 }
 
+// Walmart's own published item ingestion statuses --
+// https://developer.walmart.com/doc/us/mp/us-mp-feeds/ -- confirmed before
+// enumerating rather than assumed: SUCCESS is the only value that means the
+// item actually listed. INPROGRESS/DATA_ERROR/SYSTEM_ERROR/TIMEOUT_ERROR (and
+// anything not in this list) are not live.
+const WALMART_ITEM_SUCCESS_STATUS = 'SUCCESS'
+
+function hasIngestionErrors(entry: unknown): boolean {
+  const errors = (entry as any)?.ingestionErrors?.ingestionError
+  return Array.isArray(errors) && errors.length > 0
+}
+
 /**
  * Per-SKU outcome extracted from Walmart's `itemDetails.itemIngestionStatus`
  * (present when the feed status check is called with `includeDetails=true`).
- * An entry with a non-empty `ingestionErrors.ingestionError` failed; anything
- * else reported for that sku is treated as success.
+ *
+ * Fails closed: a listing only goes live on Walmart's own, EXPLICIT success
+ * value for that sku (`ingestionStatus === 'SUCCESS'`) with no populated
+ * `ingestionErrors`. A different or unrecognised status string, a missing
+ * status, or a populated `ingestionErrors` regardless of status -- ALL of
+ * these are treated as failure. The earlier version of this function only
+ * checked for a populated errors array, which meant an entry like
+ * `{ sku, ingestionStatus: 'SYSTEM_ERROR' }` (no `ingestionErrors` populated)
+ * was indistinguishable from success and went live -- exactly the
+ * "unrecognised outcome becomes a live product" failure mode this task
+ * exists to prevent, one layer below the feed-level version of the same bug.
  */
 function itemOutcomesBySku(itemDetails: unknown): Map<string, boolean> {
   const outcomes = new Map<string, boolean>()
@@ -113,11 +135,52 @@ function itemOutcomesBySku(itemDetails: unknown): Map<string, boolean> {
   for (const entry of entries) {
     const sku = entry?.sku
     if (typeof sku !== 'string') continue
-    const errors = entry?.ingestionErrors?.ingestionError
-    const failed = Array.isArray(errors) && errors.length > 0
-    outcomes.set(sku, !failed)
+    const ok = !hasIngestionErrors(entry) && entry?.ingestionStatus === WALMART_ITEM_SUCCESS_STATUS
+    outcomes.set(sku, ok)
   }
   return outcomes
+}
+
+/**
+ * Merges this poll's `itemDetails` into whatever diagnostic detail is
+ * already stored on the feed, keyed by sku. Never lets a later, emptier
+ * response erase an earlier, more informative one: Walmart returning less
+ * detail on a later poll of an already-settled feed (or none at all) must
+ * not wipe out a previously-captured rejection reason -- that reason is
+ * most of what makes a rejection investigable rather than just a status
+ * flip nobody can explain.
+ */
+function mergeFeedErrors(
+  existingErrors: unknown,
+  res: { itemDetails?: unknown },
+  feedLevelStatus: 'processed' | 'error',
+): Record<string, unknown> | null {
+  const isRecord = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v)
+
+  const merged: Record<string, unknown> = isRecord(existingErrors) ? { ...existingErrors } : {}
+  const entries = (res.itemDetails as any)?.itemIngestionStatus
+
+  if (Array.isArray(entries)) {
+    for (const entry of entries) {
+      const sku = entry?.sku
+      if (typeof sku !== 'string') continue
+      const existingEntry = merged[sku]
+      // Don't replace an entry that already carries ingestion errors with
+      // one that doesn't -- that would be trading known detail for nothing.
+      if (isRecord(existingEntry) && hasIngestionErrors(existingEntry) && !hasIngestionErrors(entry)) {
+        continue
+      }
+      merged[sku] = entry
+    }
+  } else if (feedLevelStatus === 'error' && Object.keys(merged).length === 0) {
+    // Walmart reported the feed as ERROR but sent no per-item detail at all,
+    // and nothing has ever been captured for this feed -- fall back to the
+    // raw response rather than recording nothing.
+    merged.__feed = res
+  }
+
+  return Object.keys(merged).length > 0 ? merged : null
 }
 
 export async function checkFeedStatus(
@@ -164,7 +227,7 @@ export async function checkFeedStatus(
       where: { feedId },
       data: {
         status: feedLevelStatus,
-        errors: res.itemDetails ?? (feedLevelStatus === 'error' ? res : null),
+        errors: (mergeFeedErrors(feed.errors, res, feedLevelStatus) as Prisma.InputJsonValue | null) ?? Prisma.JsonNull,
       },
     }),
     ...(liveIds.length > 0
