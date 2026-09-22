@@ -23,12 +23,14 @@ export interface SettlementRow {
   amountCents: number
   feeCents: number
   currency: string
-  // Walmart's recon report "Transaction Type" column (e.g. `PaymentWithdrawn`
-  // for a sale settlement, `Adjustment` for something else). Beyond the
-  // brief's original interface: needed as a first-class field, not just
-  // something buried in `raw`, for the transaction-type gate and the
-  // idempotency key below -- see reconstructOrderGrossCents/expectedNetCents'
-  // doc comments and ChannelSettlement.transactionType in schema.prisma.
+  // Walmart's recon report "Transaction Type" column -- documented values
+  // are `Sale` (a customer order/payment) and `PaymentSummary` (settlement/
+  // payout activity): see SALE_TRANSACTION_TYPE's doc comment for the
+  // citation. Beyond the brief's original interface: needed as a
+  // first-class field, not just something buried in `raw`, for the
+  // transaction-type gate and the idempotency key below -- see
+  // reconstructOrderGrossCents/expectedNetCents' doc comments and
+  // ChannelSettlement.transactionType in schema.prisma.
   transactionType: string
   raw: Record<string, string>
 }
@@ -75,25 +77,28 @@ export function parseSettlementCsv(csv: string): SettlementRow[] {
 
 /**
  * Walmart's recon report emits more than one transaction row per PO --
- * the brief's own fixture has `PaymentWithdrawn` (a sale settlement) and
- * `Adjustment` side by side for different POs, and in practice a Sale row
- * and a later Refund row both arrive for the SAME PO. Comparing any row's
- * `amountCents` against the order's whole-lifetime expected net only makes
- * sense for the row that represents the actual sale settlement -- comparing
- * a partial/adjustment/refund row the same way manufactures a large false
- * discrepancy on both sides (the sale row looks overpaid, the refund row
- * looks like a near-total shortfall), and neither is real.
+ * in practice a Sale row and a later Refund row both arrive for the SAME
+ * PO, and (see `saleAmountSumByOrder` below) a single sale itself arrives
+ * as more than one `Sale`-type row. Comparing any row's `amountCents`
+ * against the order's whole-lifetime expected net only makes sense for the
+ * row(s) that represent the actual sale settlement -- comparing an
+ * adjustment/refund row the same way manufactures a large false discrepancy
+ * on both sides (the sale total looks overpaid, the refund row looks like a
+ * near-total shortfall), and neither is real.
  *
- * ASSUMPTION, not verified against Walmart documentation -- reasoned from
- * the brief's own fixture, which is the only real Walmart shape available
- * before Task 13: `'PaymentWithdrawn'` is treated as the sale/settlement
- * type; every other `transactionType` is recorded (matched/unmatched by
- * order existence, same as before) but `discrepancyCents` is left `null`
- * rather than compared. If Task 13's real sandbox report uses different
- * type strings, or splits a sale across more than one `PaymentWithdrawn`
- * row, this constant and the assumption above are what need correcting.
+ * VERIFIED against Walmart's published documentation (review round 2 --
+ * round 1's `'PaymentWithdrawn'` was an invented placeholder from the
+ * brief's own fixture, not a real Walmart value; it appears nowhere in the
+ * docs, and would have made every real Sale row fail this gate, silently
+ * skipping ALL discrepancy computation in production while every test
+ * stayed green, because the fixture invented the same value it was checked
+ * against): https://developer.walmart.com/us-marketplace/docs/recon-report-json
+ * documents `"Transaction Type": "Sale"` (customer orders/payments) and
+ * `"Transaction Type": "PaymentSummary"` (settlement/payout activity) as
+ * the two values shown in its example `reportData` records. `'Sale'` is
+ * the one that represents a real sale settlement.
  */
-const SALE_TRANSACTION_TYPE = 'PaymentWithdrawn'
+const SALE_TRANSACTION_TYPE = 'Sale'
 
 /**
  * Fact 1 + fact 2, resolved: the gross order value Walmart itself computed,
@@ -303,12 +308,12 @@ function isConcurrentImportRace(err: unknown): boolean {
  * the row itself, no order needed). If an `Order` with that
  * `externalOrderId` exists, link `orderId`; if the row's `transactionType`
  * is the sale type (`SALE_TRANSACTION_TYPE`) AND `expectedNetCents` can
- * compute a real figure, set `discrepancyCents = amountCents -
- * expectedNetCents` and `status: 'discrepant'` when that is non-zero,
- * `'matched'` when it's exactly zero. Every other case -- no order, a
- * non-sale transaction type, or `expectedNetCents` returning `null` --
- * leaves `discrepancyCents` null; `status` is `'unmatched'` only when there
- * is genuinely no order.
+ * compute a real figure, set `discrepancyCents` (see `saleAmountSumByOrder`
+ * below for what it's computed FROM) and `status: 'discrepant'` when that
+ * is non-zero, `'matched'` when it's exactly zero. Every other case -- no
+ * order, a non-sale transaction type, or `expectedNetCents` returning
+ * `null` -- leaves `discrepancyCents` null; `status` is `'unmatched'` only
+ * when there is genuinely no order.
  *
  * A summary audit row (`walmart_settlement_imported`) is written once per
  * call, inside the same transaction, recording `reportDate`, the input row
@@ -324,6 +329,47 @@ export async function importSettlementRows(
   return importSettlementRowsAttempt(reportDate, rows, false)
 }
 
+/**
+ * Review round 2: Walmart's recon report carries an `"Amount Type"` column
+ * (documented example: `"Amount Type": "Product Price"`) alongside
+ * `"Transaction Type"`. A field that only ever took one value would be
+ * pointless, and every comparable marketplace settlement format (Amazon,
+ * eBay, Etsy) itemises a sale into separate Product/Shipping/Tax lines --
+ * strong circumstantial evidence, though the fetched documentation excerpt
+ * does not itself enumerate every `Amount Type` or explicitly confirm
+ * multiple `Sale` rows share one order, that a single sale settlement
+ * arrives as SEVERAL `Sale`-type rows per PO, not one. Comparing any one of
+ * those rows' `amountCents` against the whole order's expected gross (what
+ * round 1 did) compares a fragment ("Product Price": $99.98) against the
+ * whole ($118.68 including shipping and tax) and manufactures a false
+ * discrepancy on every itemised sale -- the same "verified against itself"
+ * failure shape as the transaction-type bug, just one level deeper.
+ *
+ * Fix: sum every `Sale`-type row's `amountCents` **per `externalOrderId`,
+ * within this call's own `rows` array** before comparing, and use that sum
+ * -- not any individual row's `amountCents` -- as the actual figure checked
+ * against `expectedNetCents`. Every row is still created and still stores
+ * its own true, individually-received `amountCents`/`raw` ("record each row
+ * as received"); only the COMPARISON is aggregated, and the resulting
+ * `discrepancyCents` is written to every `Sale` row in the group (they
+ * share one order-level answer, not N independent ones) -- `reconcile at
+ * the order level` without moving `discrepancyCents` off the row: no schema
+ * change, no new table, a bounded edit to this file.
+ *
+ * Scoped to THIS CALL's `rows`, deliberately not a DB-wide sum across every
+ * previously-imported row for that order: a DB-wide sum would double-count
+ * on a genuine correction. Round 1's idempotency key (issue 4) preserves a
+ * corrected re-delivery as a NEW row alongside the old one specifically so
+ * a human sees both -- if aggregation summed across the whole table, an
+ * old, superseded itemised line and its correction would both be counted,
+ * inflating the total and manufacturing exactly the false discrepancy this
+ * fix exists to remove. Scoping to one call's own rows sidesteps that: a
+ * report is pulled and parsed as one coherent `rows` array in one call, so
+ * the itemised lines for one sale are expected to arrive together within
+ * it. If that assumption is wrong -- if Walmart ever splits one sale's
+ * itemised lines across separate report pulls/dates -- this needs revisiting;
+ * flagged in the task report rather than guessed around further.
+ */
 async function importSettlementRowsAttempt(
   reportDate: Date,
   rows: SettlementRow[],
@@ -334,6 +380,13 @@ async function importSettlementRowsAttempt(
   let matched = 0
   let unmatched = 0
   let discrepant = 0
+
+  const saleAmountSumByOrder = new Map<string, number>()
+  for (const row of rows) {
+    if (row.transactionType === SALE_TRANSACTION_TYPE) {
+      saleAmountSumByOrder.set(row.externalOrderId, (saleAmountSumByOrder.get(row.externalOrderId) ?? 0) + row.amountCents)
+    }
+  }
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -357,7 +410,14 @@ async function importSettlementRowsAttempt(
         let discrepancyCents: number | null = null
         if (order && order.externalOrderId && row.transactionType === SALE_TRANSACTION_TYPE) {
           const expected = await expectedNetCents(tx, order.externalOrderId, normalizedDate)
-          if (expected !== null) discrepancyCents = row.amountCents - expected
+          if (expected !== null) {
+            // The order-level aggregate (see saleAmountSumByOrder's doc
+            // comment above `importSettlementRowsAttempt`), not this row's
+            // own amountCents alone -- an itemised row's individual amount
+            // is not comparable to the whole order's expected gross.
+            const groupAmountCents = saleAmountSumByOrder.get(row.externalOrderId)!
+            discrepancyCents = groupAmountCents - expected
+          }
         }
 
         let status: 'matched' | 'unmatched' | 'discrepant'

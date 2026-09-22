@@ -48,9 +48,9 @@ async function backdateReturn(returnOrderId: string, processedAt: Date) {
 
 const csv = [
   'Purchase Order #,Amount,Commission Amount,Currency,Transaction Type',
-  'PO-1001,105.98,-15.90,USD,PaymentWithdrawn',
-  'PO-9999,49.99,-7.50,USD,PaymentWithdrawn',
-  ',0.00,0.00,USD,Adjustment',
+  'PO-1001,105.98,-15.90,USD,Sale',
+  'PO-9999,49.99,-7.50,USD,Sale',
+  ',0.00,0.00,USD,PaymentSummary',
 ].join('\n')
 
 describe('walmart settlement', () => {
@@ -60,13 +60,24 @@ describe('walmart settlement', () => {
   })
   afterAll(() => prisma.$disconnect())
 
-  // --- Brief Step 1, verbatim -------------------------------------------
+  // --- Brief Step 1, structurally verbatim; VALUES corrected (review round 2)
+  //
+  // The brief's own literal fixture used 'PaymentWithdrawn'/'Adjustment' for
+  // "Transaction Type" -- invented placeholders, not real Walmart values.
+  // developer.walmart.com/us-marketplace/docs/recon-report-json documents
+  // 'Sale' and 'PaymentSummary' as the actual values (see
+  // SALE_TRANSACTION_TYPE's doc comment in settlement.ts). That invented
+  // value is exactly how the transaction-type gate's bug (comparing against
+  // a constant equal to the fixture's own made-up value) survived a green
+  // suite: "verified against itself." Deliberately deviating from the
+  // brief's literal string here per explicit instruction, disclosed in the
+  // task report.
 
   it('parses csv rows to cents and skips rows without a PO', () => {
     const rows = parseSettlementCsv(csv)
     expect(rows).toHaveLength(2)
     expect(rows[0]).toMatchObject({ externalOrderId: 'PO-1001', amountCents: 10598, feeCents: -1590, currency: 'USD' })
-    expect(rows[0].raw['Transaction Type']).toBe('PaymentWithdrawn')
+    expect(rows[0].raw['Transaction Type']).toBe('Sale')
   })
 
   it('imports rows and matches them to orders by external id', async () => {
@@ -91,7 +102,7 @@ describe('walmart settlement', () => {
 
   it('preserves the fee sign convention: a negative Commission Amount stays negative, a positive one stays positive', () => {
     const rows = parseSettlementCsv(
-      ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1,10.00,-1.50,USD,PaymentWithdrawn', 'PO-2,10.00,1.50,USD,Adjustment'].join('\n'),
+      ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1,10.00,-1.50,USD,Sale', 'PO-2,10.00,1.50,USD,PaymentSummary'].join('\n'),
     )
     expect(rows[0].feeCents).toBe(-150)
     expect(rows[1].feeCents).toBe(150)
@@ -126,7 +137,7 @@ describe('walmart settlement', () => {
     it('exact match: settlement amount equals the reconstructed order gross -> discrepancyCents is 0, status stays matched', async () => {
       await seedIngestedOrder()
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,105.98,-15.90,USD,PaymentWithdrawn'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,105.98,-15.90,USD,Sale'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -137,7 +148,7 @@ describe('walmart settlement', () => {
     it('mismatch by one cent is recorded exactly, with sign, and flips status to discrepant', async () => {
       await seedIngestedOrder()
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,105.97,-15.90,USD,PaymentWithdrawn'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,105.97,-15.90,USD,Sale'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -157,7 +168,7 @@ describe('walmart settlement', () => {
       // Order.totalCents is still 10598 (PRODUCT only); Walmart's true gross is 11868.
       expect((await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).totalCents).toBe(10598)
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,118.68,-17.50,USD,PaymentWithdrawn'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,118.68,-17.50,USD,Sale'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -182,7 +193,7 @@ describe('walmart settlement', () => {
       // Walmart's remittance for this PO after the partial refund: gross
       // (105.98) - refunded (40.00) = 65.98.
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,65.98,-9.90,USD,PaymentWithdrawn'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,65.98,-9.90,USD,Sale'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -203,7 +214,7 @@ describe('walmart settlement', () => {
       await backdateReturn('RO-EARLY', new Date('2026-07-20'))
       expect((await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe('paid') // unchanged
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,65.98,-9.90,USD,PaymentWithdrawn'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,65.98,-9.90,USD,Sale'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -222,7 +233,7 @@ describe('walmart settlement', () => {
       // Report is dated BEFORE the refund happened; Walmart's Sale row for
       // that date is the full, unrefunded gross.
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,105.98,-15.90,USD,PaymentWithdrawn'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,105.98,-15.90,USD,Sale'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -237,7 +248,7 @@ describe('walmart settlement', () => {
       const orderId = await seedIngestedOrder()
       await prisma.order.update({ where: { id: orderId }, data: { status: 'refunded' } })
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,65.98,-9.90,USD,PaymentWithdrawn'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,65.98,-9.90,USD,Sale'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -260,7 +271,7 @@ describe('walmart settlement', () => {
       // a -1270 "discrepancy" here (exactly the shipping charge). The fix
       // refuses instead.
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-2002,118.68,-17.50,USD,PaymentWithdrawn'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-2002,118.68,-17.50,USD,Sale'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-2002' } })
@@ -270,7 +281,7 @@ describe('walmart settlement', () => {
 
     it('a settlement row for an order we have never seen: unmatched, discrepancyCents stays null (nothing to compare)', async () => {
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-GHOST,10.00,-1.50,USD,PaymentWithdrawn'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-GHOST,10.00,-1.50,USD,Sale'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-GHOST' } })
@@ -281,7 +292,7 @@ describe('walmart settlement', () => {
     it('a fee that exceeds the amount: feeCents/netCents are stored exactly and do not corrupt the amount-based discrepancy', async () => {
       await seedIngestedOrder()
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,10.00,-150.00,USD,PaymentWithdrawn'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,10.00,-150.00,USD,Sale'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -294,25 +305,75 @@ describe('walmart settlement', () => {
       expect(row.netCents).toBe(-14000)
     })
 
-    it('transaction-type gate: a Sale row is reconciled, a same-PO non-sale row (e.g. a separate Refund line) is recorded but never compared', async () => {
+    it('transaction-type gate: a Sale row is reconciled, a same-PO row of the OTHER documented type (PaymentSummary) is recorded but never compared', async () => {
       await seedIngestedOrder() // gross 10598, no refund on file
       const rows = parseSettlementCsv(
         [
           'Purchase Order #,Amount,Commission Amount,Currency,Transaction Type',
-          'PO-1001,105.98,-15.90,USD,PaymentWithdrawn',
-          'PO-1001,40.00,0.00,USD,Refund',
+          'PO-1001,105.98,-15.90,USD,Sale',
+          'PO-1001,40.00,0.00,USD,PaymentSummary',
         ].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
-      const sale = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001', transactionType: 'PaymentWithdrawn' } })
+      const sale = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001', transactionType: 'Sale' } })
       expect(sale.discrepancyCents).toBe(0)
       expect(sale.status).toBe('matched')
-      const refundRow = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001', transactionType: 'Refund' } })
+      const summaryRow = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001', transactionType: 'PaymentSummary' } })
       // NOT compared -- a naive whole-order-lifetime comparison would report
       // this row as a ~10198-cent "shortfall" (40.00 vs the 105.98 gross),
-      // which is not a real discrepancy: it's just not a sale row.
-      expect(refundRow.discrepancyCents).toBeNull()
-      expect(refundRow.status).toBe('matched') // still linked to a real order
+      // which is not a real discrepancy: it's just not a Sale row.
+      expect(summaryRow.discrepancyCents).toBeNull()
+      expect(summaryRow.status).toBe('matched') // still linked to a real order
+    })
+
+    // --- Amount Type itemisation (review round 2) -------------------------
+    //
+    // developer.walmart.com/us-marketplace/docs/recon-report-json's example
+    // Sale row carries "Amount Type": "Product Price" alongside "Amount":
+    // "14.98" -- evidence a single sale settlement arrives as SEVERAL Sale
+    // rows per PO (one per Amount Type: product, shipping, tax), not one row
+    // carrying the whole order's total. See saleAmountSumByOrder's doc
+    // comment in settlement.ts for the full reasoning and the aggregation
+    // fix. This fixture is shaped like the documented example: three Sale
+    // rows for the same PO, one per Amount Type, summing to the order's true
+    // gross (including the SHIPPING charge the order mapper itself drops --
+    // fact 1 all over again, one level deeper).
+    it('itemised Sale rows (Amount Type: Product Price / Shipping / Tax) aggregate to the order gross, not compared row by row', async () => {
+      const withShipping = structuredClone(walmartOrderFixture) as any
+      withShipping.orderLines.orderLine[0].charges.charge.push({
+        chargeType: 'SHIPPING',
+        chargeAmount: { currency: 'USD', amount: 5.99 },
+        tax: { taxName: 'Tax1', taxAmount: { currency: 'USD', amount: 0.36 } },
+      })
+      await seedIngestedOrder(withShipping) // true gross 11868 (see the SHIPPING test above)
+
+      // qty=2: Product Price 49.99*2=99.98, Shipping 5.99*2=11.98,
+      // Tax (3.00+0.36)*2=6.72 -- sums to 118.68, the full documented-shape
+      // itemisation of the same 11868-cent gross.
+      const rows = parseSettlementCsv(
+        [
+          'Purchase Order #,Amount,Commission Amount,Currency,Transaction Type,Amount Type',
+          'PO-1001,99.98,0.00,USD,Sale,Product Price',
+          'PO-1001,11.98,0.00,USD,Sale,Shipping',
+          'PO-1001,6.72,-17.50,USD,Sale,Tax',
+        ].join('\n'),
+      )
+      await importSettlementRows(new Date('2026-08-01'), rows)
+
+      const itemisedRows = await prisma.channelSettlement.findMany({ where: { externalOrderId: 'PO-1001' }, orderBy: { amountCents: 'desc' } })
+      expect(itemisedRows).toHaveLength(3)
+      // Each row still records its OWN true received amount and Amount Type.
+      expect(itemisedRows.map((r) => r.amountCents).sort((a, b) => a - b)).toEqual([672, 1198, 9998])
+      // But every row carries the SAME order-level discrepancy: the group
+      // (99.98+11.98+6.72=118.68) reconciles exactly to the 118.68 gross.
+      // Row-by-row, "Product Price" alone (99.98) against the 118.68 gross
+      // would show a false ~1870-cent "shortfall".
+      for (const r of itemisedRows) {
+        expect(r.discrepancyCents).toBe(0)
+        expect(r.status).toBe('matched')
+      }
+      // Amount Type is preserved verbatim in raw for a human to inspect.
+      expect(itemisedRows.map((r) => (r.raw as any)['Amount Type']).sort()).toEqual(['Product Price', 'Shipping', 'Tax'])
     })
 
     it('nets a refund correctly even when the return payload\'s top-level purchaseOrderId disagrees with customerOrderInfo.purchaseOrderId (matches returns.service.ts precedence)', async () => {
@@ -329,7 +390,7 @@ describe('walmart settlement', () => {
       )
       await backdateReturn('RO-PRECEDENCE', new Date('2026-07-20'))
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,65.98,-9.90,USD,PaymentWithdrawn'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,65.98,-9.90,USD,Sale'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -368,7 +429,7 @@ describe('walmart settlement', () => {
     it('two calls for the same UTC day with different times dedupe as one report, not two', async () => {
       await seedIngestedOrder()
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,105.98,-15.90,USD,PaymentWithdrawn'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,105.98,-15.90,USD,Sale'].join('\n'),
       )
       const first = await importSettlementRows(new Date('2026-08-01T09:00:00Z'), rows)
       const second = await importSettlementRows(new Date('2026-08-01T23:00:00Z'), rows)
@@ -383,14 +444,14 @@ describe('walmart settlement', () => {
   describe('importSettlementRows: atomicity', () => {
     it('a malformed row rolls back the WHOLE import -- no half-imported report', async () => {
       const validRow: SettlementRow = {
-        externalOrderId: 'PO-GOOD', amountCents: 1000, feeCents: -100, currency: 'USD', transactionType: 'PaymentWithdrawn',
-        raw: { 'Purchase Order #': 'PO-GOOD', Amount: '10.00', 'Commission Amount': '-1.00', Currency: 'USD', 'Transaction Type': 'PaymentWithdrawn' },
+        externalOrderId: 'PO-GOOD', amountCents: 1000, feeCents: -100, currency: 'USD', transactionType: 'Sale',
+        raw: { 'Purchase Order #': 'PO-GOOD', Amount: '10.00', 'Commission Amount': '-1.00', Currency: 'USD', 'Transaction Type': 'Sale' },
       }
       // Simulates parseSettlementCsv's documented comma-shift failure mode: a
       // non-numeric cell landing in Amount parses to NaN cents.
       const badRow: SettlementRow = {
-        externalOrderId: 'PO-BAD', amountCents: NaN, feeCents: 0, currency: 'USD', transactionType: 'PaymentWithdrawn',
-        raw: { 'Purchase Order #': 'PO-BAD', Amount: 'not-a-number', 'Commission Amount': '0', Currency: 'USD', 'Transaction Type': 'PaymentWithdrawn' },
+        externalOrderId: 'PO-BAD', amountCents: NaN, feeCents: 0, currency: 'USD', transactionType: 'Sale',
+        raw: { 'Purchase Order #': 'PO-BAD', Amount: 'not-a-number', 'Commission Amount': '0', Currency: 'USD', 'Transaction Type': 'Sale' },
       }
       await expect(importSettlementRows(new Date('2026-08-01'), [validRow, badRow])).rejects.toThrow()
       expect(await prisma.channelSettlement.count()).toBe(0)
@@ -403,7 +464,7 @@ describe('walmart settlement', () => {
   describe('fetchAndImportSettlement', () => {
     const oneRowCsv = [
       'Purchase Order #,Amount,Commission Amount,Currency,Transaction Type',
-      'PO-7777,10.00,-1.50,USD,PaymentWithdrawn',
+      'PO-7777,10.00,-1.50,USD,Sale',
     ].join('\n')
 
     it('imports when the client returns a bare CSV string, and queries reportDate as YYYY-MM-DD', async () => {
