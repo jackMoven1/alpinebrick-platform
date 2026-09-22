@@ -99,7 +99,10 @@ enum ChannelSettlementStatus {
   // was NEVER COMPARED -- transactionType isn't the sale type, or is empty
   // (e.g. a column-name mismatch against a future report shape), or no
   // order_created ChannelEvent exists to reconstruct an expected figure
-  // from. Round 2 filed all of these as `matched`, indistinguishable from a
+  // from -- or (review round 4) the row, or its order's itemised Sale group,
+  // contains a row with no identity, an in-report identity collision, or a
+  // positive commission (listed in the import audit row's `anomalies`).
+  // Round 2 filed all of these as `matched`, indistinguishable from a
   // row that was compared and genuinely matched -- a bookkeeper reading
   // `matched` had no way to tell "verified zero" from "never checked."
   // `matched` now means ONLY "compared, and the amount was exactly right."
@@ -366,7 +369,7 @@ model ChannelSettlement {
   orderId         String?                 @map("order_id")
   status          ChannelSettlementStatus @default(unmatched)
   // Signed: the order's itemised Sale-row aggregate (see
-  // saleAmountSumByOrder in settlement.ts) minus the order's expected GROSS
+  // importSettlementRowsAttempt in settlement.ts) minus the order's expected GROSS
   // value reconstructed from ChannelEvent.raw (Task 12) -- positive means
   // Walmart's Sale rows sum to MORE than expected, negative means LESS,
   // zero is an exact match. Compared against GROSS only (review round 3,
@@ -387,7 +390,7 @@ model ChannelSettlement {
   // group, never sum across a group. (Review round 3, finding B4: the
   // group is scoped to one import call's own rows and is NOT re-stamped
   // when a later call adds sibling rows for the same order -- see
-  // settlement.ts's `saleAmountSumByOrder` doc comment for the known
+  // the BLOCKER FOR TASK 13 note in settlement.ts for the known
   // limitation and the task report for why this was left as a deliberate
   // stop rather than a rushed fix.)
   //
@@ -412,20 +415,23 @@ model ChannelSettlement {
   discrepancyCents Int?                   @map("discrepancy_cents")
   raw             Json
   createdAt       DateTime                @default(now()) @map("created_at")
-  // Idempotency key (review round 3, finding B1, overruling round 1's
-  // value-based key): Walmart's own `Transaction Key` where the report
-  // provides one, falling back to `(externalOrderId, Purchase Order
-  // line #, Amount Type, reportDate)` -- an IDENTITY key, not a value key.
-  // Round 1's `(externalOrderId, reportDate, transactionType, amountCents,
-  // feeCents)` collapsed genuinely distinct rows whenever two different
-  // line items happened to carry the same amount and fee (e.g. two
-  // same-price SKUs on one order, or a $0 fee on both a Shipping and a Tax
-  // line) -- `findFirst` found the FIRST one and silently skipped the
-  // second as if it were a re-delivery, while the in-memory aggregate
-  // (computed from the input rows, not the persisted ones) still counted
-  // it, so the stored discrepancy no longer matched what the persisted
-  // rows actually summed to. See computeLedgerKey in settlement.ts.
+  // Idempotency key -- an IDENTITY, not a value (review round 3, finding B1;
+  // tightened in round 4, finding 1). Prefixed forms: `tk:` (Walmart's
+  // Transaction Key + Transaction Type + line # + Amount Type), `po:` (no
+  // Transaction Key: PO + Transaction Type + line # + Amount Type + report
+  // date), `raw:` (no identity at all: report date + a hash of the raw row;
+  // such rows are never compared), each with a `#N` suffix when the same key
+  // recurs within one import. `legacy:<id>` only on rows backfilled by the
+  // 20260922170000 migration. See baseLedgerKey in settlement.ts for the
+  // uniqueness assumption this rests on.
   ledgerKey       String                  @unique @map("ledger_key")
+  // Provenance of `status` / `discrepancyCents` (review round 4, finding 5):
+  // which reconciliation model produced them. `'unverified'` means the
+  // comparison logic is reasoned from Walmart documentation, NOT checked
+  // against a real Walmart report -- treat `discrepant`/`matched` on such a
+  // row as provisional. Task 13's sandbox check is what may introduce a
+  // verified value; rows written before it keep `'unverified'`.
+  reconciliationModel String              @default("unverified") @map("reconciliation_model")
   @@index([externalOrderId])
   @@index([status])
   @@map("channel_settlements")

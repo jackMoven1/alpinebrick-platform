@@ -79,20 +79,21 @@ describe('walmart settlement', () => {
     const rows = parseSettlementCsv(csv)
     const date = new Date('2026-08-01')
     const r = await importSettlementRows(date, rows)
-    expect(r).toEqual({ imported: 2, matched: 1, unmatched: 1 })
+    // Review round 4 (finding 3): the brief's `matched` COUNT is renamed
+    // `linked` -- it counts "an order was found", which is not what
+    // `status: 'matched'` ("compared, and exactly right") means. Deviation
+    // from the brief's literal interface, disclosed in the task report.
+    expect(r).toEqual({ imported: 2, linked: 1, unmatched: 1 })
     const again = await importSettlementRows(date, rows)
     expect(again.imported).toBe(0) // duplicate rows skipped
-    const matched = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
-    // Review round 3 (finding B3): status is 'unreconciled', NOT 'matched' --
-    // this order was created directly (no ingestWalmartOrder), so there is
-    // no order_created ChannelEvent to reconstruct an expected gross from,
-    // and the amount was therefore NEVER COMPARED. 'matched' now means only
-    // "compared, and exactly right"; an order being found by externalOrderId
-    // (the `matched` COUNT in the return value above) is a coarser, separate
-    // fact from that. Deliberately deviating from the brief's literal
-    // `.toBe('matched')` assertion here -- disclosed in the task report.
-    expect(matched.status).toBe('unreconciled')
-    expect(matched.orderId).not.toBeNull()
+    const linkedRow = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
+    // 'unreconciled', NOT 'matched' (round 3, B3; deviation from the brief's
+    // literal assertion, disclosed): the order was created directly, so no
+    // order_created payload exists to compare against -- and (round 4,
+    // finding 1b) this brief-shaped row carries no Transaction Key, line #
+    // or Amount Type, so it has no identity and is never compared anyway.
+    expect(linkedRow.status).toBe('unreconciled')
+    expect(linkedRow.orderId).not.toBeNull()
     const unmatched = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-9999' } })
     expect(unmatched.status).toBe('unmatched') // the review-queue surface
   })
@@ -105,19 +106,38 @@ describe('walmart settlement', () => {
     expect(rows[1].feeCents).toBe(150)
   })
 
-  it('rejects a Sale row carrying a positive commission rather than letting it pass silently (item 10)', async () => {
-    await seedIngestedOrder()
+  it('a Sale row carrying a positive commission is persisted unreconciled and audited -- it does not block the rest of the report (finding 4)', async () => {
+    await seedIngestedOrder() // PO-1001, gross 10598
+    await ingestWalmartOrder({ ...walmartOrderFixture, purchaseOrderId: 'PO-1002', customerOrderId: 'CO-9002' }, 'webhook') // gross 10598
     const rows: SettlementRow[] = [
       {
         externalOrderId: 'PO-1001', amountCents: 10598, feeCents: 100, currency: 'USD', transactionType: 'Sale',
         transactionKey: 'TK-BAD-FEE', purchaseOrderLine: '1', amountType: 'Product Price',
         raw: { 'Purchase Order #': 'PO-1001', Amount: '105.98', 'Commission Amount': '1.00', Currency: 'USD', 'Transaction Type': 'Sale' },
       },
+      {
+        externalOrderId: 'PO-1002', amountCents: 10598, feeCents: -1590, currency: 'USD', transactionType: 'Sale',
+        transactionKey: 'TK-GOOD-FEE', purchaseOrderLine: '1', amountType: 'Product Price',
+        raw: { 'Purchase Order #': 'PO-1002', Amount: '105.98', 'Commission Amount': '-15.90', Currency: 'USD', 'Transaction Type': 'Sale' },
+      },
     ]
-    await expect(importSettlementRows(new Date('2026-08-01'), rows)).rejects.toThrow(/positive commission/)
-    // The whole import rolled back -- nothing committed, not even as a
-    // recorded-but-flagged row.
-    expect(await prisma.channelSettlement.count()).toBe(0)
+    const r = await importSettlementRows(new Date('2026-08-01'), rows)
+    expect(r.imported).toBe(2)
+    // The odd row is kept, as received, but never compared -- its amount
+    // alone would have been an exact match, which is precisely what must
+    // not be stamped 'matched' for a row we do not understand.
+    const odd = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
+    expect(odd.feeCents).toBe(100)
+    expect(odd.status).toBe('unreconciled')
+    expect(odd.discrepancyCents).toBeNull()
+    // The other order in the same report still reconciles.
+    const other = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1002' } })
+    expect(other.status).toBe('matched')
+    expect(other.discrepancyCents).toBe(0)
+    const audit = await prisma.auditLog.findFirstOrThrow({ where: { action: 'walmart_settlement_imported' } })
+    expect((audit.after as any).anomalies).toEqual([
+      { ledgerKey: odd.ledgerKey, externalOrderId: 'PO-1001', transactionType: 'Sale', reasons: ['positive_commission'] },
+    ])
   })
 
   // --- reconstructOrderGrossCents (fact 1: shipping) ---------------------
@@ -149,7 +169,7 @@ describe('walmart settlement', () => {
     it('exact match: settlement amount equals the reconstructed order gross -> discrepancyCents is 0, status stays matched', async () => {
       await seedIngestedOrder()
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,105.98,-15.90,USD,Sale'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type,Amount Type', 'PO-1001,105.98,-15.90,USD,Sale,Product Price'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -160,11 +180,11 @@ describe('walmart settlement', () => {
     it('mismatch by one cent is recorded exactly, with sign, and flips status to discrepant', async () => {
       await seedIngestedOrder()
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,105.97,-15.90,USD,Sale'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type,Amount Type', 'PO-1001,105.97,-15.90,USD,Sale,Product Price'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
-      // amountCents(10597) - expectedNetCents(10598) = -1
+      // amountCents(10597) - expectedGrossCents(10598) = -1
       expect(row.discrepancyCents).toBe(-1)
       expect(row.status).toBe('discrepant')
     })
@@ -180,7 +200,7 @@ describe('walmart settlement', () => {
       // Order.totalCents is still 10598 (PRODUCT only); Walmart's true gross is 11868.
       expect((await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).totalCents).toBe(10598)
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,118.68,-17.50,USD,Sale'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type,Amount Type', 'PO-1001,118.68,-17.50,USD,Sale,Product Price'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -194,23 +214,39 @@ describe('walmart settlement', () => {
 
     // --- fact 3 / B2: Sale rows are GROSS; refunds reconcile as their own
     // rows and do NOT net into this comparison (review round 3 reverses
-    // round 1's refund-netting design -- see expectedNetCents' doc comment
+    // round 1's refund-netting design -- see expectedGrossCents' doc comment
     // in settlement.ts for why netting a refund into a Sale row's expected
     // figure produced a phantom overpayment whenever a refund landed before
     // the sale settled).
 
-    it('a Sale row compares against GROSS only -- a refund on the order does not net into the comparison', async () => {
+    // Review round 4, finding 2: both refund tests BACKDATE the return to
+    // before the 2026-08-01 report date. Round 3's versions did not, so the
+    // refund's processedAt was "now" -- after the report date -- and the
+    // refund-netting code these tests exist to catch (5941deb, which only
+    // netted refunds with processedAt < reportDate + 1 day) skipped the
+    // refund and passed them too. Verified: with the backdate, both tests
+    // FAIL against 5941deb's actual settlement.ts (4000 vs 0; 0 vs -4000);
+    // without it, both pass there. See the task-12 report, round 4.
+    async function backdateReturn(returnOrderId: string) {
+      await prisma.channelEvent.update({
+        where: { externalId_eventType: { externalId: returnOrderId, eventType: 'return_created' } },
+        data: { processedAt: new Date('2026-07-30T12:00:00Z') },
+      })
+    }
+
+    it('a Sale row compares against GROSS only -- a refund on file before the report date does not net into the comparison', async () => {
       const orderId = await seedIngestedOrder()
       await prisma.order.update({ where: { id: orderId }, data: { status: 'fulfilled' } })
       await ingestWalmartReturn(
         { returnOrderId: 'RO-1', customerOrderInfo: { purchaseOrderId: 'PO-1001' }, refundedAmount: { currency: 'USD', amount: 40.0 } },
         'webhook',
       )
+      await backdateReturn('RO-1')
       expect((await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe('refunded')
       // Even though $40 was refunded, Walmart's Sale row is documented as
       // gross -- the full, unrefunded amount is the correct comparison.
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,105.98,-15.90,USD,Sale'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type,Amount Type', 'PO-1001,105.98,-15.90,USD,Sale,Product Price'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -225,12 +261,13 @@ describe('walmart settlement', () => {
         { returnOrderId: 'RO-2', customerOrderInfo: { purchaseOrderId: 'PO-1001' }, refundedAmount: { currency: 'USD', amount: 40.0 } },
         'webhook',
       )
+      await backdateReturn('RO-2')
       // If a Sale row ever DID arrive net-of-refund (65.98 instead of the
       // full 105.98 gross) -- the shape round 1's design silently absorbed
       // -- it now surfaces honestly as a real, non-zero discrepancy instead
       // of being explained away.
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,65.98,-9.90,USD,Sale'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type,Amount Type', 'PO-1001,65.98,-9.90,USD,Sale,Product Price'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -253,7 +290,7 @@ describe('walmart settlement', () => {
       // a -1270 "discrepancy" here (exactly the shipping charge). The fix
       // refuses instead.
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-2002,118.68,-17.50,USD,Sale'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type,Amount Type', 'PO-2002,118.68,-17.50,USD,Sale,Product Price'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-2002' } })
@@ -276,7 +313,7 @@ describe('walmart settlement', () => {
     it('a fee that exceeds the amount: feeCents/netCents are stored exactly and do not corrupt the amount-based discrepancy', async () => {
       await seedIngestedOrder()
       const rows = parseSettlementCsv(
-        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type', 'PO-1001,10.00,-150.00,USD,Sale'].join('\n'),
+        ['Purchase Order #,Amount,Commission Amount,Currency,Transaction Type,Amount Type', 'PO-1001,10.00,-150.00,USD,Sale,Product Price'].join('\n'),
       )
       await importSettlementRows(new Date('2026-08-01'), rows)
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
@@ -291,13 +328,10 @@ describe('walmart settlement', () => {
 
     it('transaction-type gate: a Sale row is reconciled, a same-PO row of the OTHER documented type (PaymentSummary) is recorded but never compared', async () => {
       await seedIngestedOrder() // gross 10598
-      // Transaction Key distinguishes the two rows -- without it, both would
-      // fall back to the SAME (PO, '', '', reportDate) ledger key (neither
-      // row carries a Purchase Order line # or Amount Type column) and the
-      // second would be silently treated as a duplicate of the first, which
-      // is exactly the degenerate-fallback-key limitation computeLedgerKey's
-      // doc comment names: with no identifying columns at all, this file
-      // cannot tell two genuinely different rows apart.
+      // Transaction Keys give both rows an identity, so the Sale row can be
+      // compared. (Round 3 needed them here to stop the second row being
+      // silently dropped; since round 4 an identity-less row is kept anyway,
+      // but is never compared -- see the fallback-key tests below.)
       const rows = parseSettlementCsv(
         [
           'Purchase Order #,Amount,Commission Amount,Currency,Transaction Type,Transaction Key',
@@ -325,7 +359,7 @@ describe('walmart settlement', () => {
     // Sale row carries "Amount Type": "Product Price" alongside "Amount":
     // "14.98" -- evidence a single sale settlement arrives as SEVERAL Sale
     // rows per PO (one per Amount Type: product, shipping, tax), not one row
-    // carrying the whole order's total. See saleAmountSumByOrder's doc
+    // carrying the whole order's total. See importSettlementRowsAttempt's doc
     // comment in settlement.ts for the full reasoning and the aggregation
     // fix. This fixture is shaped like the documented example: three Sale
     // rows for the same PO, one per Amount Type, summing to the order's true
@@ -404,7 +438,7 @@ describe('walmart settlement', () => {
       expect(ledgerKeys.size).toBe(2) // distinct identities -> distinct keys
     })
 
-    it('a Transaction Key, when present, is used as the ledger key directly (and re-importing the identical row is still deduped)', async () => {
+    it('a Transaction Key, when present, anchors the ledger key (and re-importing the identical row is still deduped)', async () => {
       await seedIngestedOrder()
       const rows = parseSettlementCsv(
         [
@@ -417,7 +451,130 @@ describe('walmart settlement', () => {
       const second = await importSettlementRows(new Date('2026-08-01'), rows)
       expect(second.imported).toBe(0) // same Transaction Key -- a genuine re-delivery
       const row = await prisma.channelSettlement.findFirstOrThrow({ where: { externalOrderId: 'PO-1001' } })
-      expect((row as any).ledgerKey).toBe('2020_12_19_317')
+      // Round 4: Transaction Type / line # / Amount Type are composed in, in
+      // case one Transaction Key is shared by a transaction's itemised rows.
+      expect(row.ledgerKey).toBe('tk:2020_12_19_317|Sale||')
+    })
+
+    // --- fallback-key collisions (review round 4, finding 1) ---------------
+
+    it('(1a) a Sale row and a PaymentSummary row sharing PO, line # and Amount Type both persist -- Transaction Type is part of the key', async () => {
+      await seedIngestedOrder() // gross 10598
+      const rows = parseSettlementCsv(
+        [
+          'Purchase Order #,Amount,Commission Amount,Currency,Transaction Type,Purchase Order line #,Amount Type',
+          'PO-1001,105.98,-15.90,USD,Sale,1,Product Price',
+          'PO-1001,40.00,0.00,USD,PaymentSummary,1,Product Price',
+        ].join('\n'),
+      )
+      // Delivered in SEPARATE import calls for the same report date: this is
+      // where a key without Transaction Type silently drops the second row
+      // (it looks like a re-delivery of the first). Within one call the
+      // in-batch collision suffix would rescue it -- see (1c) -- so a
+      // single-call version of this test cannot tell the two keys apart.
+      const first = await importSettlementRows(new Date('2026-08-01'), [rows[0]])
+      const second = await importSettlementRows(new Date('2026-08-01'), [rows[1]])
+      expect(first.imported).toBe(1)
+      expect(second.imported).toBe(1)
+      const persisted = await prisma.channelSettlement.findMany({ where: { externalOrderId: 'PO-1001' } })
+      expect(persisted.map((p) => p.transactionType).sort()).toEqual(['PaymentSummary', 'Sale'])
+      expect(persisted.map((p) => p.ledgerKey).sort()).toEqual([
+        'po:PO-1001|PaymentSummary|1|Product Price|2026-08-01',
+        'po:PO-1001|Sale|1|Product Price|2026-08-01',
+      ])
+      const sale = persisted.find((p) => p.transactionType === 'Sale')!
+      expect(sale.status).toBe('matched')
+      expect(sale.discrepancyCents).toBe(0)
+    })
+
+    it('(1b) rows with NO identity (no Transaction Key, line # or Amount Type -- the brief\'s own CSV shape) are all persisted, never compared, and flagged', async () => {
+      await seedIngestedOrder() // gross 10598
+      // Two genuinely different rows for one PO on one day, plus an exact
+      // repeat of the first. Round 3 keyed all three `PO-1001|||2026-08-01`
+      // and kept only the first; round 4 keeps all three.
+      const rows = parseSettlementCsv(
+        [
+          'Purchase Order #,Amount,Commission Amount,Currency,Transaction Type',
+          'PO-1001,99.98,-15.90,USD,Sale',
+          'PO-1001,6.00,0.00,USD,Sale',
+          'PO-1001,99.98,-15.90,USD,Sale',
+        ].join('\n'),
+      )
+      const r = await importSettlementRows(new Date('2026-08-01'), rows)
+      expect(r.imported).toBe(3)
+      const persisted = await prisma.channelSettlement.findMany({ where: { externalOrderId: 'PO-1001' } })
+      expect(persisted).toHaveLength(3)
+      // Nothing dropped: the persisted rows sum to exactly what was delivered.
+      expect(persisted.reduce((a, p) => a + p.amountCents, 0)).toBe(rows.reduce((a, row) => a + row.amountCents, 0))
+      // Nothing compared -- even though 99.98 + 6.00 alone would have summed
+      // to the order's exact gross.
+      for (const p of persisted) {
+        expect(p.status).toBe('unreconciled')
+        expect(p.discrepancyCents).toBeNull()
+        expect(p.ledgerKey.startsWith('raw:2026-08-01|')).toBe(true)
+      }
+      expect(new Set(persisted.map((p) => p.ledgerKey)).size).toBe(3)
+      const audit = await prisma.auditLog.findFirstOrThrow({ where: { action: 'walmart_settlement_imported' } })
+      const reasons = ((audit.after as any).anomalies as Array<{ reasons: string[] }>).map((a) => a.reasons)
+      expect(reasons).toEqual([['no_identity'], ['no_identity'], ['no_identity', 'identity_collision']])
+
+      // Re-importing the same report is still idempotent.
+      const again = await importSettlementRows(new Date('2026-08-01'), rows)
+      expect(again.imported).toBe(0)
+      expect(await prisma.channelSettlement.count({ where: { externalOrderId: 'PO-1001' } })).toBe(3)
+    })
+
+    it('(1c) an in-report identity collision persists BOTH rows and leaves the group uncompared, so no stored figure disagrees with the persisted rows', async () => {
+      await seedIngestedOrder() // gross 10598
+      // Same PO, Transaction Type, line # and Amount Type, different amounts:
+      // the uniqueness assumption is violated. Round 3 kept the first row
+      // (99.98) but summed both (105.98) into its discrepancy, stamping it
+      // 'matched' against rows that no longer existed.
+      const rows = parseSettlementCsv(
+        [
+          'Purchase Order #,Amount,Commission Amount,Currency,Transaction Type,Purchase Order line #,Amount Type',
+          'PO-1001,99.98,-15.90,USD,Sale,1,Product Price',
+          'PO-1001,6.00,0.00,USD,Sale,1,Product Price',
+        ].join('\n'),
+      )
+      const r = await importSettlementRows(new Date('2026-08-01'), rows)
+      expect(r.imported).toBe(2)
+      const persisted = await prisma.channelSettlement.findMany({ where: { externalOrderId: 'PO-1001' }, orderBy: { amountCents: 'desc' } })
+      expect(persisted.map((p) => p.amountCents)).toEqual([9998, 600])
+      expect(persisted.map((p) => p.ledgerKey)).toEqual(['po:PO-1001|Sale|1|Product Price|2026-08-01', 'po:PO-1001|Sale|1|Product Price|2026-08-01#1'])
+      for (const p of persisted) {
+        expect(p.status).toBe('unreconciled')
+        expect(p.discrepancyCents).toBeNull()
+      }
+      const audit = await prisma.auditLog.findFirstOrThrow({ where: { action: 'walmart_settlement_imported' } })
+      expect((audit.after as any).anomalies).toEqual([
+        { ledgerKey: 'po:PO-1001|Sale|1|Product Price|2026-08-01#1', externalOrderId: 'PO-1001', transactionType: 'Sale', reasons: ['identity_collision'] },
+      ])
+    })
+
+    it('two itemised rows sharing ONE Transaction Key but different Amount Types both persist and aggregate', async () => {
+      const withShipping = structuredClone(walmartOrderFixture) as any
+      withShipping.orderLines.orderLine[0].charges.charge.push({
+        chargeType: 'SHIPPING',
+        chargeAmount: { currency: 'USD', amount: 5.99 },
+        tax: { taxName: 'Tax1', taxAmount: { currency: 'USD', amount: 0.36 } },
+      })
+      await seedIngestedOrder(withShipping) // gross 11868
+      const rows = parseSettlementCsv(
+        [
+          'Purchase Order #,Amount,Commission Amount,Currency,Transaction Type,Transaction Key,Amount Type',
+          'PO-1001,106.70,-17.50,USD,Sale,TK-1,Product Price',
+          'PO-1001,11.98,0.00,USD,Sale,TK-1,Shipping',
+        ].join('\n'),
+      )
+      const r = await importSettlementRows(new Date('2026-08-01'), rows)
+      expect(r.imported).toBe(2)
+      const persisted = await prisma.channelSettlement.findMany({ where: { externalOrderId: 'PO-1001' } })
+      expect(persisted).toHaveLength(2)
+      for (const p of persisted) {
+        expect(p.discrepancyCents).toBe(0)
+        expect(p.status).toBe('matched')
+      }
     })
   })
 
@@ -436,8 +593,24 @@ describe('walmart settlement', () => {
       const audits = await prisma.auditLog.findMany({ where: { action: 'walmart_settlement_imported' } })
       expect(audits).toHaveLength(1)
       expect(audits[0].target).toBe('settlement_report:2026-08-01')
-      // PO-1001 was created directly (no ChannelEvent) -> unreconciled: 1.
-      expect(audits[0].after).toMatchObject({ reportDate: '2026-08-01', rowCount: 2, imported: 2, matched: 1, unmatched: 1, unreconciled: 1 })
+      // Round 4, finding 3: `linked` (an order was found) and `byStatus`
+      // (the per-row status tally) are separate fields -- round 3 reported
+      // `matched: 1, unreconciled: 1` here for ONE row, the same word
+      // meaning two things. No top-level `matched` field survives.
+      // Finding 5: the provisional status is carried in the data.
+      expect(audits[0].after).toMatchObject({
+        reportDate: '2026-08-01',
+        reconciliationModel: 'unverified',
+        rowCount: 2,
+        imported: 2,
+        linked: 1,
+        byStatus: { matched: 0, unmatched: 1, discrepant: 0, unreconciled: 1 },
+      })
+      expect(audits[0].after).not.toHaveProperty('matched')
+      expect(audits[0].after).not.toHaveProperty('unreconciled')
+      // ...and on every row, for anyone reading channel_settlements directly.
+      const models = await prisma.channelSettlement.findMany({ select: { reconciliationModel: true } })
+      expect(models).toEqual([{ reconciliationModel: 'unverified' }, { reconciliationModel: 'unverified' }])
 
       // A second, all-duplicate call still records its own summary row.
       await importSettlementRows(new Date('2026-08-01'), rows)
@@ -502,14 +675,14 @@ describe('walmart settlement', () => {
         },
       }
       const r = await fetchAndImportSettlement(new Date('2026-08-01T12:00:00Z'), client)
-      expect(r).toEqual({ imported: 1, matched: 0, unmatched: 1 })
+      expect(r).toEqual({ imported: 1, linked: 0, unmatched: 1 })
       expect(capturedQuery).toEqual({ reportDate: '2026-08-01' })
     })
 
     it('imports when the client returns { csv: string }', async () => {
       const client: WalmartClient = { request: async () => ({ csv: oneRowCsv }) }
       const r = await fetchAndImportSettlement(new Date('2026-08-01'), client)
-      expect(r).toEqual({ imported: 1, matched: 0, unmatched: 1 })
+      expect(r).toEqual({ imported: 1, linked: 0, unmatched: 1 })
     })
 
     it('throws on an unexpected response shape rather than silently importing nothing', async () => {

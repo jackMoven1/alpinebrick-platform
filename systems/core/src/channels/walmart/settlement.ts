@@ -17,11 +17,18 @@
 //   - round 3: found the aggregate's dedup key collapsed genuinely distinct
 //     rows, and that refunds were wrongly netted into a figure Walmart's own
 //     docs say is gross.
+//   - round 4: found the round-3 identity key could still collapse distinct
+//     rows (no transaction type in it; an all-empty identity degrading to
+//     PO+date), and that a well-formed-but-odd row blocked a whole day.
 // Do NOT treat any `discrepancyCents` / `status: 'discrepant'` this file
 // produces as actionable until Task 13's sandbox end-to-end check confirms
-// the actual report shape against a real Walmart response. See "LABELLED,
-// UNVERIFIED ASSUMPTIONS" further down for the specific open questions this
-// round could not settle from documentation alone.
+// the actual report shape against a real Walmart response. That status is
+// also carried IN THE DATA (round 4, finding 5): every row this file writes
+// has `reconciliation_model = 'unverified'`, and every import's audit row has
+// `reconciliationModel: 'unverified'` -- see RECONCILIATION_MODEL. See
+// "LABELLED, UNVERIFIED ASSUMPTIONS" further down for the specific open
+// questions documentation alone could not settle, and the BLOCKER FOR TASK
+// 13 note (finding B4) above `importSettlementRowsAttempt`.
 // =============================================================================
 //
 // Three facts were deliberately handed forward from earlier tasks for THIS
@@ -30,7 +37,7 @@
 //      chargeType === 'PRODUCT') -- `reconstructOrderGrossCents`.
 //   2. `ChannelEvent.raw` holds the Walmart order payload as received, before
 //      that filtering, specifically so this file could reconcile against it
-//      -- `reconstructOrderGrossCents` reads it; `expectedNetCents` calls it.
+//      -- `reconstructOrderGrossCents` reads it; `expectedGrossCents` calls it.
 //   3. `Order.status` is a coarse refund flag; the actual refunded amount
 //      lives only in `ChannelEvent.raw` (return_created). Round 3 (finding
 //      B2) removed refund netting from the Sale-row comparison entirely --
@@ -42,7 +49,7 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../prisma.js'
 import { recordAudit } from '../../audit.js'
-import { ChannelError } from './orders.ingest.js'
+import { createHash } from 'node:crypto'
 import { type WalmartClient, getWalmartClient } from './client.js'
 import { toCents } from './mappers.js'
 
@@ -59,14 +66,14 @@ export interface SettlementRow {
   // citation. Beyond the brief's original interface: needed as a
   // first-class field, not just something buried in `raw`, for the
   // transaction-type gate and the ledger key below -- see
-  // reconstructOrderGrossCents/expectedNetCents' doc comments and
+  // reconstructOrderGrossCents/expectedGrossCents' doc comments and
   // ChannelSettlement.transactionType in schema.prisma.
   transactionType: string
   // Review round 3 (finding B1): Walmart's own ledger identifiers, read as
-  // first-class fields (not left buried in `raw`) so `computeLedgerKey` can
+  // first-class fields (not left buried in `raw`) so `baseLedgerKey` can
   // key a row by IDENTITY instead of by value. Empty string when the
   // report doesn't carry the column (or it's blank) -- never undefined, so
-  // `computeLedgerKey`'s fallback composite always has a stable shape.
+  // `baseLedgerKey` always sees a stable shape.
   transactionKey: string
   purchaseOrderLine: string
   amountType: string
@@ -128,7 +135,7 @@ export function parseSettlementCsv(csv: string): SettlementRow[] {
 /**
  * Walmart's recon report emits more than one transaction row per PO --
  * in practice a Sale row and a later Refund row both arrive for the SAME
- * PO, and (see `saleAmountSumByOrder` below) a single sale itself arrives
+ * PO, and (see `importSettlementRowsAttempt` below) a single sale itself arrives
  * as more than one `Sale`-type row. Comparing any row's `amountCents`
  * against the order's expected gross only makes sense for the row(s) that
  * represent the actual sale settlement -- comparing an adjustment/refund
@@ -175,10 +182,10 @@ const SALE_TRANSACTION_TYPE = 'Sale'
  *
  * Returns `null` -- never `0`, never a guess -- when the payload doesn't have
  * the shape this needs (missing/malformed orderLines, a non-numeric charge).
- * `expectedNetCents` treats that the same as "no order_created event at
+ * `expectedGrossCents` treats that the same as "no order_created event at
  * all": nothing to compare against, rather than falling back to a figure
  * (`Order.totalCents`) this codebase already knows can be short by exactly
- * a dropped SHIPPING charge -- see `expectedNetCents`'s comment (review
+ * a dropped SHIPPING charge -- see `expectedGrossCents`'s comment (review
  * round 1, issue 3: the old fallback manufactured a discrepancy equal to
  * shipping for every pre-Task-5 order with no raw payload on file).
  */
@@ -204,53 +211,42 @@ export function reconstructOrderGrossCents(raw: unknown): number | null {
   return totalCents
 }
 
+
 /**
- * The figure a `Sale`-type settlement row's aggregate `amountCents` (see
- * `saleAmountSumByOrder`) is checked against: the order's GROSS value,
- * reconstructed from its order_created ChannelEvent.raw (fact 1 + fact 2,
- * `reconstructOrderGrossCents` above). Nothing else.
+ * The figure a `Sale`-type settlement group's summed `amountCents` is checked
+ * against: the order's GROSS value, reconstructed from its order_created
+ * ChannelEvent.raw (fact 1 + fact 2, `reconstructOrderGrossCents` above).
+ * Nothing else. (Named `expectedNetCents` until review round 4 -- it has
+ * returned gross, not net, since round 3 removed refund netting.)
  *
  * Review round 3, finding B2: this function PREVIOUSLY subtracted every
  * refund recorded on or before the report date (a `sumRefundedCents` helper,
- * removed in this round). That was wrong: this file's own module doc
- * (and Walmart's documented `Sale`/`PaymentSummary` transaction-type split)
- * says a `Sale` row is a gross settlement figure, and a refund is its own,
- * separate row -- not a deduction baked into a later Sale row's amount.
- * Netting a refund out of the expected gross meant any `Sale` row dated
- * after an already-ingested refund was compared against a net-of-refund
- * figure it was never actually net of, producing a phantom OVERPAYMENT and
- * a false `'discrepant'` flag -- exactly the kind of manufactured
- * discrepancy this task exists to prevent, now on the opposite sign from
- * round 1's original shipping bug. Refund reconciliation (comparing a
- * refund-shaped row, if one exists, against the return's own recorded
- * amount) is NOT built here -- Walmart's recon report doesn't document how
- * a refund row is shaped, so building that comparison now would be
- * guessing at a report shape the same way the last three rounds did. See
- * "LABELLED, UNVERIFIED ASSUMPTIONS" below.
+ * removed in that round). That was wrong: Walmart's documented
+ * `Sale`/`PaymentSummary` transaction-type split says a `Sale` row is a gross
+ * settlement figure, and a refund is its own, separate row -- not a
+ * deduction baked into a later Sale row's amount. Netting a refund out of
+ * the expected gross meant any `Sale` row whose refund was already on file
+ * by the report date was compared against a net-of-refund figure it was
+ * never actually net of: a phantom OVERPAYMENT and a false `'discrepant'`
+ * flag. Refund reconciliation (comparing a refund-shaped row, if one exists,
+ * against the return's own recorded amount) is NOT built here -- Walmart's
+ * recon report doesn't document how a refund row is shaped. See "LABELLED,
+ * UNVERIFIED ASSUMPTIONS" below.
  *
  * Returns `null` -- REFUSES to compare -- when there is no order_created
  * ChannelEvent on file, or its `raw` is null, or `reconstructOrderGrossCents`
- * can't parse it (review round 1, issue 3, overruling this file's original
- * decision to fall back to `Order.totalCents`): `ChannelEvent.raw` is
- * nullable specifically because it predates Task 5's migration, so every
- * Walmart order ingested before that migration has no raw payload on file
- * and would silently take that fallback -- comparing against a figure this
- * codebase already knows excludes SHIPPING is the "never estimate a figure"
- * rule in another costume, just with the estimate coming from our own
- * database instead of an invented rate. `null` here is the honest answer:
- * nothing comparable exists, so nothing is compared. The caller leaves
- * `discrepancyCents` null and `status: 'unreconciled'` (review round 3,
- * finding B3 -- an order genuinely was found, but the amount was NEVER
- * COMPARED, which is not the same thing as a verified match).
+ * can't parse it (review round 1, issue 3): `ChannelEvent.raw` is nullable
+ * because it predates Task 5's migration, and falling back to
+ * `Order.totalCents` -- a figure this codebase knows excludes SHIPPING --
+ * would be estimating a figure. The caller leaves `discrepancyCents` null
+ * and `status: 'unreconciled'`.
  *
- * Deliberately does NOT subtract `feeCents`/commission from this figure --
- * see `discrepancyCents`'s schema comment for why: there is no
+ * Deliberately does NOT subtract `feeCents`/commission: there is no
  * independently-sourced expected commission rate anywhere in this codebase
- * to check Walmart's stated commission against, and inventing one would be
- * exactly the "estimate a figure" this project's money rule forbids. This
- * function reconstructs REVENUE, not net-of-commission payout.
+ * to check Walmart's stated commission against. This function reconstructs
+ * REVENUE, not net-of-commission payout.
  */
-async function expectedNetCents(db: Db, externalOrderId: string): Promise<number | null> {
+async function expectedGrossCents(db: Db, externalOrderId: string): Promise<number | null> {
   const event = await db.channelEvent.findUnique({
     where: { externalId_eventType: { externalId: externalOrderId, eventType: 'order_created' } },
   })
@@ -263,53 +259,100 @@ function truncateToUtcDate(d: Date): Date {
 }
 
 /**
- * Review round 3, finding B1 (Critical), overruling round 1's value-based
- * idempotency key: `(externalOrderId, reportDate, transactionType,
- * amountCents, feeCents)` has no way to tell apart two GENUINELY DIFFERENT
- * rows that happen to carry the same amount and fee -- a two-line order of
- * the same $49.99 SKU (Walmart splits quantity into separate lines), or a
- * Shipping and a Tax line that both happen to carry `feeCents: 0`. The old
- * key found the FIRST such row via `findFirst` and silently treated the
- * SECOND as a re-delivery of it, skipping it entirely -- while the in-memory
- * aggregate (`saleAmountSumByOrder`, computed from the input `rows`, not
- * from what actually got persisted) still counted the dropped row's amount.
- * Result: the stored `discrepancyCents` said the group balanced, but the
- * PERSISTED rows for that PO summed to less than that -- the ledger no
- * longer reproduced its own reconciliation.
- *
- * Fix: key by Walmart's own `Transaction Key` where the report provides one
- * -- an identifier, not a value, so two rows can never collide just because
- * their amounts match. Falls back to `(externalOrderId, Purchase Order
- * line #, Amount Type, reportDate)` when no Transaction Key is present:
- * still an IDENTITY (which line, what kind of amount, which report), not a
- * value. A row with an empty `transactionKey` AND an empty
- * `purchaseOrderLine`/`amountType` degrades to keying on
- * `(externalOrderId, '', '', reportDate)` alone -- no worse than round 1's
- * key for that specific degenerate case, and every other case is strictly
- * safer.
- *
- * This key is INTENTIONALLY no longer value-sensitive: a row with the same
- * identity but a different `amountCents`/`feeCents` on a later pull is now
- * treated as a duplicate (found, skipped), not a correction. That is a
- * deliberate reversal of round 1's stance ("a human should see both rows").
- * Walmart's own `Transaction Key` is presumably a stable ledger-entry
- * identifier -- a real correction should arrive as a NEW entry (its own
- * key), the way a reversing entry works in any ledger, not as a silent
- * value-mutation of an existing one under the same key. Unverified against
- * real Walmart data like everything else in this file; flagged, not
- * guessed past.
+ * Stamped on every `ChannelSettlement` row (`reconciliationModel` column) and
+ * on every import's audit row, so the provisional status of `status` /
+ * `discrepancyCents` is visible to anyone reading DATA, not just to a
+ * developer reading this file (review round 4, finding 5). Task 13's sandbox
+ * check is what may change this value; rows written before that keep
+ * `'unverified'`, which is the correct provenance for them.
  */
-function computeLedgerKey(row: SettlementRow, reportDate: Date): string {
-  if (row.transactionKey) return row.transactionKey
-  return [row.externalOrderId, row.purchaseOrderLine, row.amountType, reportDate.toISOString().slice(0, 10)].join('|')
+export const RECONCILIATION_MODEL = 'unverified'
+
+/**
+ * Why a row (and, for a `Sale` row, its whole order group -- see
+ * `importSettlementRowsAttempt`) was persisted but deliberately NOT compared.
+ * Recorded in the import's audit row.
+ *   - `no_identity`: no Transaction Key, no Purchase Order line #, no Amount
+ *     Type. There is nothing to tell this row apart from a sibling, so it is
+ *     keyed on a hash of the raw row and never deduped against another row.
+ *   - `identity_collision`: this row's key was already used by an earlier
+ *     row IN THE SAME IMPORT CALL -- the uniqueness assumption below was
+ *     violated. Persisted under a suffixed key rather than dropped.
+ *   - `positive_commission`: a `Sale` row with `feeCents > 0` (finding 4) --
+ *     well-formed data this file has no interpretation for (a commission
+ *     reversal is plausible), not corrupt parsing.
+ */
+type AnomalyReason = 'no_identity' | 'identity_collision' | 'positive_commission'
+
+/**
+ * Review round 3 (B1) replaced round 1's VALUE key with an IDENTITY key.
+ * Review round 4 (finding 1) closed the ways that identity key could still
+ * collapse genuinely distinct rows -- each of which silently skipped the
+ * second row while the in-memory aggregate still counted it, i.e. the
+ * original B1 defect:
+ *   (a) `transactionType` was not in the key: a `Sale` and a
+ *       `PaymentSummary`/refund row sharing PO, line # and Amount Type on one
+ *       day collided. It is now in every identity key.
+ *   (b) With no Transaction Key, no line # and no Amount Type, the key
+ *       degraded to `PO||date`, collapsing EVERY row for that PO on that day
+ *       into one -- WORSE than round 1's value key (which at least told rows
+ *       apart by type, amount and fee), not "no worse" as the round-3 comment
+ *       claimed. Such a row now has no identity key at all: it is keyed on a
+ *       hash of its raw row and is never compared.
+ *   (c) Every in-batch key reuse is now persisted under a suffixed key and
+ *       flagged, not dropped -- nothing a report delivers is lost.
+ *
+ * Key forms (the prefixes keep the three spaces disjoint):
+ *   - `tk:<Transaction Key>|<type>|<line #>|<Amount Type>` when a Transaction
+ *     Key is present. Not the bare Transaction Key (round 3's choice):
+ *     whether Walmart gives each ITEMISED row its own key, or one key per
+ *     transaction shared by its Product Price / Shipping / Tax rows, is
+ *     undocumented. Composing the other identity fields in is harmless if
+ *     keys are per-row, and prevents collapsing an itemised sale if they are
+ *     per-transaction. No report date: a Transaction Key is assumed stable
+ *     across report pulls.
+ *   - `po:<PO>|<type>|<line #>|<Amount Type>|<report date>` when there is no
+ *     Transaction Key but at least a line # or an Amount Type.
+ *   - `raw:<report date>|<sha256 of the raw row, keys sorted>` when there is
+ *     no identity at all.
+ * The Nth (N >= 1) reuse of the same key within ONE call becomes `<key>#N`,
+ * flagged `identity_collision`.
+ *
+ * UNIQUENESS ASSUMPTION (unverified against real Walmart data): within one
+ * report, no two DISTINCT rows share Transaction Key + Transaction Type +
+ * line # + Amount Type (or, with no Transaction Key, PO + Transaction Type +
+ * line # + Amount Type + report date). If that is ever false it is no longer
+ * silent: the second row is still persisted (suffixed), its order group is
+ * `'unreconciled'`, and the collision is listed in the audit row. What
+ * remains silent is ACROSS calls: a row whose key an earlier call already
+ * persisted is skipped as a re-delivery -- the idempotency this key exists
+ * for. The `#N` suffix relies on a re-delivered report listing colliding rows
+ * in the same order.
+ *
+ * The key is intentionally NOT value-sensitive: a row with the same identity
+ * but a different amount on a later pull is a duplicate (skipped), not a
+ * correction -- a real correction is presumed to arrive as a new ledger entry
+ * with its own identity. Unverified, like everything else in this file.
+ */
+function baseLedgerKey(row: SettlementRow, reportDay: string): { key: string; hasIdentity: boolean } {
+  if (row.transactionKey) {
+    return { key: `tk:${[row.transactionKey, row.transactionType, row.purchaseOrderLine, row.amountType].join('|')}`, hasIdentity: true }
+  }
+  if (row.purchaseOrderLine || row.amountType) {
+    return {
+      key: `po:${[row.externalOrderId, row.transactionType, row.purchaseOrderLine, row.amountType, reportDay].join('|')}`,
+      hasIdentity: true,
+    }
+  }
+  const canonicalRaw = JSON.stringify(Object.keys(row.raw).sort().map((k) => [k, row.raw[k]]))
+  return { key: `raw:${reportDay}|${createHash('sha256').update(canonicalRaw).digest('hex')}`, hasIdentity: false }
 }
 
 /**
  * True for a Prisma unique-constraint violation -- mirrors
  * `isConcurrentDeliveryRace` in orders.ingest.ts / returns.service.ts
  * exactly, same failure mode one file over: two truly concurrent imports of
- * the same report (a scheduler double-firing, or a manual re-run racing a
- * scheduled one) can both pass a duplicate-row read before either commits.
+ * the same report can both pass a duplicate-row read before either commits.
  */
 function isConcurrentImportRace(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
@@ -319,157 +362,134 @@ function isConcurrentImportRace(err: unknown): boolean {
 // Import
 // --------------------------------------------------------------------------
 
+export interface SettlementImportResult {
+  imported: number
+  // Rows linked to an existing Order by externalOrderId -- whether or not the
+  // amount was ever compared. Review round 4, finding 3: this was called
+  // `matched`, which is also a `status` value meaning "compared and exactly
+  // right"; one name meant two things. `linked + unmatched === imported`.
+  // Per-status counts are in the audit row's `byStatus`.
+  linked: number
+  unmatched: number
+}
+
 /**
- * Idempotency key: `computeLedgerKey` above (review round 3, finding B1),
- * enforced by a DB-level `@@unique` constraint on `ChannelSettlement.ledgerKey`
- * (schema.prisma), not app-level `findFirst`-then-`create` alone --
- * `findFirst`-then-`create` is non-atomic under two genuinely concurrent
- * imports of the same report (both can pass the `findFirst` read before
- * either commits). The `findFirst` check below still runs first, as a cheap
- * fast path that avoids a doomed `create` in the common sequential case;
- * the unique constraint is the actual guarantee.
+ * Idempotency: `baseLedgerKey` above, enforced by a DB-level `@unique`
+ * constraint on `ChannelSettlement.ledgerKey`; the `findFirst` check is only
+ * a fast path. The whole import runs inside ONE `prisma.$transaction` so
+ * `recordAudit` commits atomically with the rows it reports on, and a
+ * CORRUPT row (e.g. `NaN` cents from `parseSettlementCsv`'s comma-split
+ * limitation, which makes `create()` throw) rolls back the entire report
+ * rather than leaving it half-imported. A concurrent-import race is retried
+ * exactly once.
  *
- * The whole import runs inside ONE `prisma.$transaction` (review round 1)
- * for two reasons: (a) `recordAudit` below must commit atomically with
- * everything it's reporting on, matching every other money-affecting write
- * in this codebase; (b) a malformed row that makes a `create()` throw (e.g.
- * `NaN` cents from `parseSettlementCsv`'s comma-split limitation, or a
- * positive-commission `Sale` row -- see the fee-sign guard below) rolls back
- * the ENTIRE report import rather than committing everything before it and
- * silently leaving the report half-imported. A concurrent-import race
- * (`isConcurrentImportRace`) rolls back the whole attempt the same way
- * `ingestWalmartOrder` does, and is retried exactly once: the retry's own
- * `findFirst` checks will correctly skip everything the winning transaction
- * already committed, so it is a safe, idempotent re-run, not a
- * double-import.
+ * Well-formed rows this file does not understand do NOT throw (review round
+ * 4, finding 4 -- round 3 threw on a positive-commission `Sale` row, which
+ * rolled back every other order's reconciliation for that day, on every
+ * retry, and left no audit trail). They are persisted, `'unreconciled'`, and
+ * listed in the audit row's `anomalies`.
  *
- * Review round 3, finding B7 (item 10): a `Sale` row is expected to carry a
- * commission as a DEDUCTION (`feeCents <= 0`, matching how the CSV's
- * `Commission Amount` column has always been signed in every fixture and
- * every documented sign convention this file relies on). A positive
- * `feeCents` on a `Sale` row is not a value this file has any documented
- * interpretation for, and averaging/ignoring it would let it "pass
- * silently" -- exactly what the review flagged. Throws `ChannelError`
- * (`invalid_fee_sign`), which aborts the whole transaction the same way a
- * malformed row does, rather than committing a row this file cannot
- * meaningfully reconcile.
+ * Status:
+ *   - no order found                                        -> `'unmatched'`
+ *   - order found, not compared (non-Sale row; no
+ *     order_created payload; anomaly in the row's group)    -> `'unreconciled'`
+ *   - order found, compared, discrepancyCents !== 0         -> `'discrepant'`
+ *   - order found, compared, discrepancyCents === 0         -> `'matched'`
+ * `'matched'` means ONLY "compared, and exactly right".
  *
- * For each non-duplicate, valid row: create one `ChannelSettlement`,
- * storing `netCents = amountCents + feeCents` unconditionally (pure
- * arithmetic on the row itself, no order needed). If an `Order` with that
- * `externalOrderId` exists, link `orderId`; if the row's `transactionType`
- * is the sale type (`SALE_TRANSACTION_TYPE`) AND `expectedNetCents` can
- * compute a real figure, set `discrepancyCents` from the order-level
- * aggregate (`saleAmountSumByOrder` below). Status (review round 3, finding
- * B3, overruling rounds 1-2's two-way split):
- *   - no order found                                  -> `'unmatched'`
- *   - order found, no comparison was possible          -> `'unreconciled'`
- *   - order found, compared, discrepancyCents !== 0    -> `'discrepant'`
- *   - order found, compared, discrepancyCents === 0    -> `'matched'`
- * `'matched'` now means ONLY "compared, and exactly right" -- rounds 1-2
- * filed every refused/non-sale/never-checked row as `'matched'` too,
- * indistinguishable from a verified zero.
- *
- * A summary audit row (`walmart_settlement_imported`) is written once per
- * call, inside the same transaction, recording `reportDate`, the input row
- * count, and the final `imported`/`matched`/`unmatched`/`discrepant`/
- * `unreconciled` counts -- these are financial records being created; every
- * other money-affecting write in this codebase leaves an audit trail.
+ * Every figure here is PROVISIONAL -- see RECONCILIATION_MODEL and the
+ * file-top banner.
  */
-export async function importSettlementRows(
-  reportDate: Date,
-  rows: SettlementRow[],
-): Promise<{ imported: number; matched: number; unmatched: number }> {
+export async function importSettlementRows(reportDate: Date, rows: SettlementRow[]): Promise<SettlementImportResult> {
   return importSettlementRowsAttempt(reportDate, rows, false)
 }
 
 /**
- * Review round 2 + round 3 (finding B4, STOPPED, not fixed -- see the task
- * report): Walmart's recon report carries an `"Amount Type"` column
- * (documented example: `"Amount Type": "Product Price"`) alongside
- * `"Transaction Type"` -- strong evidence a single sale settlement arrives
- * as SEVERAL `Sale`-type rows per PO (product/shipping/tax), not one row
- * carrying the whole order total. Comparing any one of those rows'
- * `amountCents` against the whole order's expected gross compares a
- * fragment against the whole and manufactures a false discrepancy on every
- * itemised sale.
+ * Comparison is per ORDER GROUP, not per row (review round 2): Walmart's
+ * documented `"Amount Type"` column (example `"Product Price"`) means a sale
+ * arrives as several `Sale` rows per PO, and one fragment compared against
+ * the whole order's gross manufactures a false discrepancy. So every `Sale`
+ * row for a PO is summed, and the one resulting `discrepancyCents` is written
+ * to every row in the group.
  *
- * Fix (round 2): sum every `Sale`-type row's `amountCents` per
- * `externalOrderId`, **within this call's own `rows` array**, before
- * comparing, and write the resulting `discrepancyCents` to every `Sale` row
- * in the group -- they share one order-level answer, not N independent
- * ones.
+ * Review round 4, finding 1(c): the group sum is built from the rows THIS
+ * CALL ACTUALLY PERSISTS (after the ledger-key dedupe), never from the input
+ * array -- so the stored discrepancy always agrees with what the group's
+ * persisted rows add up to. And a group containing ANY anomalous row
+ * (`AnomalyReason`) is not compared at all: every `Sale` row in it is
+ * `'unreconciled'`. A sum that includes a row we cannot identify, or one we
+ * do not understand, is not a figure worth stamping `'matched'` or
+ * `'discrepant'`.
  *
- * KNOWN LIMITATION, not fixed this round (finding B4): this sum is scoped
- * to ONE call's own rows and is NEVER RE-COMPUTED once a row is persisted.
- * If a report arrives itemised across more than one import call for the
- * same order (e.g. a partial pull stamps the Product row `discrepant`
- * against a gross it can't yet see the Shipping/Tax rows for; a later,
- * complete pull for the same PO adds those siblings as NEW rows, correctly
- * keyed and not colliding with the first pull's row now that B1 keys by
- * identity) -- the FIRST pull's already-persisted row keeps its stale,
- * now-wrong `discrepancyCents` forever. The group ends up self-contradictory:
- * old row reads `discrepant`, new siblings read `matched`, and no single
- * row (or query) tells a human "the group, as it now stands, reconciles."
- *
- * The correct fix -- summing every PERSISTED `Sale` row for the PO with
- * `reportDate` up to and including this call's `reportDate` (safe now that
- * B1 makes every row a unique ledger entry, so no double-counting), then
- * RE-STAMPING every one of those rows (old and new) with the freshly
- * computed consistent result -- requires restructuring this function from a
- * single insert-per-row pass into an insert-then-reconcile two-phase
- * process: insert this call's new rows first (still keyed/deduped as
- * today), then, for every `externalOrderId` touched by a new `Sale` row in
- * this call, re-query ALL persisted `Sale` rows for that PO up to
- * `reportDate` and `updateMany` their `discrepancyCents`/`status` to the
- * newly consistent answer. That is a real behavioural and structural
- * change (a write pattern this file has never done -- updating rows a
- * PRIOR call already committed), not a contained edit to this loop, so per
- * this round's explicit instruction it is being reported, not guessed at
- * under time pressure that produced the last three rounds' bugs. See the
- * task report for the recommended design and the assumption it still rests
- * on (that one report pull is the natural unit to reconcile within, even
- * once re-stamping crosses calls).
+ * =========================================================================
+ * BLOCKER FOR TASK 13 -- finding B4, DELIBERATELY DEFERRED (not an oversight).
+ * The group is scoped to ONE call and is never re-stamped. If one order's
+ * itemised `Sale` rows arrive across more than one import call, the first
+ * call stamps its rows against an incomplete group, the later call's new
+ * siblings get their own (different) figure, the earlier rows keep their
+ * stale `discrepancyCents` forever, and the group contradicts itself. The fix
+ * is a two-phase insert-then-reconcile restructure: insert new rows, then for
+ * every PO touched, re-sum ALL persisted `Sale` rows for it up to this
+ * `reportDate` and re-stamp every one of them. Deferred until AFTER Task 13's
+ * sandbox check because the real report shape (JSON wire format; possibly
+ * commission lines carried on `Sale` rows) may change what gets aggregated,
+ * and building it now risks building it twice. Task 13 cannot be closed
+ * without resolving this. It depends on round 4's finding 1 (now fixed): a
+ * DB-wide re-sum is only safe once no two distinct rows can share a key.
+ * =========================================================================
  */
 async function importSettlementRowsAttempt(
   reportDate: Date,
   rows: SettlementRow[],
   retried: boolean,
-): Promise<{ imported: number; matched: number; unmatched: number }> {
+): Promise<SettlementImportResult> {
   const normalizedDate = truncateToUtcDate(reportDate)
-  let imported = 0
-  let matched = 0
-  let unmatched = 0
-  let discrepant = 0
-  let unreconciled = 0
-
-  const saleAmountSumByOrder = new Map<string, number>()
-  for (const row of rows) {
-    if (row.transactionType === SALE_TRANSACTION_TYPE) {
-      saleAmountSumByOrder.set(row.externalOrderId, (saleAmountSumByOrder.get(row.externalOrderId) ?? 0) + row.amountCents)
-    }
-  }
+  const reportDay = normalizedDate.toISOString().slice(0, 10)
+  const result: SettlementImportResult = { imported: 0, linked: 0, unmatched: 0 }
+  const byStatus = { matched: 0, unmatched: 0, discrepant: 0, unreconciled: 0 }
+  const anomalies: Array<{ ledgerKey: string; externalOrderId: string; transactionType: string; reasons: AnomalyReason[] }> = []
+  let skippedAsAlreadyImported = 0
 
   try {
     await prisma.$transaction(async (tx) => {
+      // Phase 1: key every row, skip only what an EARLIER call already
+      // persisted, and decide what this call will persist.
+      const keyUses = new Map<string, number>()
+      const toPersist: Array<{ row: SettlementRow; ledgerKey: string; reasons: AnomalyReason[] }> = []
       for (const row of rows) {
-        // Review round 3, finding B7/item 10: a Sale row's commission is
-        // documented (and every fixture in this file) as a deduction --
-        // feeCents <= 0. A positive value on a Sale row is not a shape this
-        // file has any interpretation for; fail loudly rather than let it
-        // pass silently into a discrepancy figure that would be wrong for
-        // reasons nobody could see from the stored data alone.
-        if (row.transactionType === SALE_TRANSACTION_TYPE && row.feeCents > 0) {
-          throw new ChannelError(
-            'invalid_fee_sign',
-            `Sale row for ${row.externalOrderId} carries a positive commission (feeCents=${row.feeCents}); commission must be <= 0`,
-          )
+        const { key, hasIdentity } = baseLedgerKey(row, reportDay)
+        const use = keyUses.get(key) ?? 0
+        keyUses.set(key, use + 1)
+        const ledgerKey = use === 0 ? key : `${key}#${use}`
+
+        if (await tx.channelSettlement.findFirst({ where: { ledgerKey }, select: { id: true } })) {
+          skippedAsAlreadyImported++
+          continue
         }
+        const reasons: AnomalyReason[] = []
+        if (!hasIdentity) reasons.push('no_identity')
+        if (use > 0) reasons.push('identity_collision')
+        // Sale rows only: a Sale row is the only row this file compares, so
+        // it is the only place a commission it cannot interpret affects a
+        // figure it writes. Every non-Sale row is already 'unreconciled', and
+        // a positive commission there (e.g. commission returned alongside a
+        // customer refund) is plausible, not anomalous.
+        if (row.transactionType === SALE_TRANSACTION_TYPE && row.feeCents > 0) reasons.push('positive_commission')
+        toPersist.push({ row, ledgerKey, reasons })
+      }
 
-        const ledgerKey = computeLedgerKey(row, normalizedDate)
-        const dupe = await tx.channelSettlement.findFirst({ where: { ledgerKey } })
-        if (dupe) continue
+      // Phase 2: order-group aggregate over what will actually be persisted.
+      const saleGroups = new Map<string, { sumCents: number; blocked: boolean }>()
+      for (const { row, reasons } of toPersist) {
+        if (row.transactionType !== SALE_TRANSACTION_TYPE) continue
+        const g = saleGroups.get(row.externalOrderId) ?? { sumCents: 0, blocked: false }
+        g.sumCents += row.amountCents
+        if (reasons.length > 0) g.blocked = true
+        saleGroups.set(row.externalOrderId, g)
+      }
 
+      // Phase 3: persist.
+      for (const { row, ledgerKey, reasons } of toPersist) {
         const order = await tx.order.findUnique({
           where: { externalOrderId: row.externalOrderId },
           select: { id: true, externalOrderId: true },
@@ -477,16 +497,12 @@ async function importSettlementRowsAttempt(
 
         let discrepancyCents: number | null = null
         let compared = false
-        if (order && order.externalOrderId && row.transactionType === SALE_TRANSACTION_TYPE) {
-          const expected = await expectedNetCents(tx, order.externalOrderId)
+        const group = saleGroups.get(row.externalOrderId)
+        if (order?.externalOrderId && row.transactionType === SALE_TRANSACTION_TYPE && group && !group.blocked) {
+          const expected = await expectedGrossCents(tx, order.externalOrderId)
           if (expected !== null) {
             compared = true
-            // The order-level aggregate (see saleAmountSumByOrder's doc
-            // comment above `importSettlementRowsAttempt`), not this row's
-            // own amountCents alone -- an itemised row's individual amount
-            // is not comparable to the whole order's expected gross.
-            const groupAmountCents = saleAmountSumByOrder.get(row.externalOrderId)!
-            discrepancyCents = groupAmountCents - expected
+            discrepancyCents = group.sumCents - expected
           }
         }
 
@@ -509,34 +525,36 @@ async function importSettlementRowsAttempt(
             status,
             discrepancyCents,
             ledgerKey,
+            reconciliationModel: RECONCILIATION_MODEL,
             raw: row.raw as Prisma.InputJsonValue,
           },
         })
-        imported++
-        if (order) matched++
-        else unmatched++
-        if (status === 'discrepant') discrepant++
-        if (status === 'unreconciled') unreconciled++
+        result.imported++
+        if (order) result.linked++
+        else result.unmatched++
+        byStatus[status]++
+        if (reasons.length > 0) {
+          anomalies.push({ ledgerKey, externalOrderId: row.externalOrderId, transactionType: row.transactionType, reasons })
+        }
       }
 
       await recordAudit(
         {
           actorId: 'system',
           action: 'walmart_settlement_imported',
-          // "source" here is the report endpoint this data structurally
-          // comes from -- importSettlementRows itself has no webhook/poll
-          // distinction the way order/return ingestion does, since a
-          // settlement report is only ever pulled, never pushed.
-          target: `settlement_report:${normalizedDate.toISOString().slice(0, 10)}`,
+          // A settlement report is only ever pulled, never pushed.
+          target: `settlement_report:${reportDay}`,
           after: {
-            reportDate: normalizedDate.toISOString().slice(0, 10),
+            reportDate: reportDay,
             source: 'walmart_reconreport',
+            // Finding 5: the provisional status, at data level.
+            reconciliationModel: RECONCILIATION_MODEL,
             rowCount: rows.length,
-            imported,
-            matched,
-            unmatched,
-            discrepant,
-            unreconciled,
+            imported: result.imported,
+            skippedAsAlreadyImported,
+            linked: result.linked,
+            byStatus,
+            anomalies,
           },
         },
         tx,
@@ -547,7 +565,7 @@ async function importSettlementRowsAttempt(
     return importSettlementRowsAttempt(reportDate, rows, true)
   }
 
-  return { imported, matched, unmatched }
+  return result
 }
 
 /**
@@ -555,15 +573,14 @@ async function importSettlementRowsAttempt(
  * (`YYYY-MM-DD`). Actual sandbox response format (possibly zipped) is
  * unverified until Task 13 -- if it turns out not to be a bare CSV string or
  * `{ csv: string }`, the correction lands here and in the client only, per
- * the brief. See the file-level warning at the top: the fetched
- * documentation page's example response is JSON, not CSV, so this function's
- * whole premise is itself one of the unverified assumptions Task 13 needs to
- * check.
+ * the brief. The fetched documentation page's example response is JSON, not
+ * CSV, so this function's whole premise is itself one of the unverified
+ * assumptions Task 13 needs to check.
  */
 export async function fetchAndImportSettlement(
   reportDate: Date,
   client: WalmartClient = getWalmartClient(),
-): Promise<{ imported: number; matched: number; unmatched: number }> {
+): Promise<SettlementImportResult> {
   const res = await client.request('GET', '/v3/report/reconreport/reconFile', {
     query: { reportDate: reportDate.toISOString().slice(0, 10) },
   })
@@ -573,31 +590,28 @@ export async function fetchAndImportSettlement(
 }
 
 // =============================================================================
-// LABELLED, UNVERIFIED ASSUMPTIONS (review round 3) -- not guessed at further,
-// recorded explicitly per the instruction to label rather than assume:
+// LABELLED, UNVERIFIED ASSUMPTIONS -- not guessed at further:
 //
 // - COMMISSION ROWS. Unconfirmed recollection (not a documentation citation):
 //   Walmart's `Amount Type` may include commission lines (e.g. "Commission
-//   on Product") carried ON `Sale` rows as negative amounts. If real, this
-//   file's `saleAmountSumByOrder` aggregate -- which sums every `Sale`-type
-//   row's `amountCents` regardless of `Amount Type` -- would include those
-//   commission lines in the "gross" side of the comparison, and EVERY order
-//   would show a false shortfall equal to its own commission. Not fixed:
-//   there is no documentation confirming or shaping this, and guessing at
-//   an `Amount Type` exclusion list is exactly the pattern that produced
-//   three rounds of bugs already.
+//   on Product") carried ON `Sale` rows as negative amounts. If real, the
+//   order-group sum -- every `Sale` row's `amountCents` regardless of
+//   `Amount Type` -- would put commission on the "gross" side and EVERY
+//   order would show a false shortfall equal to its own commission. Not
+//   fixed: no documentation shapes this.
 // - WIRE FORMAT. The one fetched documentation example is a JSON response
-//   (`{ reportData: [...], nextOffset, totalRecords, description }`), not
-//   the CSV `parseSettlementCsv`/`fetchAndImportSettlement` assume. Per the
-//   brief, this is explicitly Task 13's to verify and correct.
-// - AMOUNT TYPE ENUMERATION. Only `"Product Price"` is documented by
-//   example. `Shipping` and `Tax` (used in this file's itemisation test)
-//   are inferred by analogy to other marketplace settlement formats, not
-//   confirmed by Walmart's own documentation.
-// - REFUND-TIME BOUNDARY. Not currently load-bearing (round 3 removed
-//   refund netting from the Sale comparison entirely -- see expectedNetCents'
-//   doc comment), but preserved here as a fact for whoever eventually builds
-//   refund-ROW reconciliation: `ChannelEvent.processedAt` is this codebase's
-//   own ingestion timestamp, not Walmart's own refund-issued timestamp, and
-//   Walmart's report "day" boundary is not confirmed to be UTC.
+//   (`{ reportData: [...], nextOffset, totalRecords, description }`), not the
+//   CSV `parseSettlementCsv`/`fetchAndImportSettlement` assume. Task 13's.
+// - AMOUNT TYPE ENUMERATION. Only `"Product Price"` is documented by example.
+//   `Shipping` and `Tax` (used in tests) are inferred by analogy.
+// - TRANSACTION KEY GRAIN. Whether a Transaction Key identifies one itemised
+//   row or one whole transaction is undocumented; `baseLedgerKey` composes
+//   the other identity fields in so either answer is safe.
+// - REFUND-TIME BOUNDARY. Not load-bearing (no refund netting since round 3),
+//   preserved for whoever builds refund-ROW reconciliation:
+//   `ChannelEvent.processedAt` is this codebase's ingestion timestamp, not
+//   Walmart's refund-issued timestamp, and Walmart's report "day" boundary is
+//   not confirmed to be UTC.
+// - B4 (cross-call re-stamping) -- see the BLOCKER FOR TASK 13 note above
+//   `importSettlementRowsAttempt`.
 // =============================================================================
