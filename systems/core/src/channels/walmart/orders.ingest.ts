@@ -48,8 +48,8 @@ function isConcurrentDeliveryRace(err: unknown): boolean {
  *
  * Stock reservation, order/line creation, the ChannelEvent, the audit row,
  * and the outbox job that schedules the Walmart ack are all in one
- * transaction (recordAudit and enqueueJob are both passed `tx`, not the
- * global prisma client) -- if any step fails partway through, everything
+ * transaction (recordAudit and enqueueIdempotentJob are both passed `tx`,
+ * not the global prisma client) -- if any step fails partway through, everything
  * commits or nothing does. The ack job has to be in here too, not enqueued
  * after: enqueued after, a crash or DB blip between this transaction's
  * commit and the enqueue call would leave an ingested order with no ack job

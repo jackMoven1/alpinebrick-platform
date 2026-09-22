@@ -193,8 +193,9 @@ describe('ingestWalmartOrder', () => {
   // against), this goes red: the order/reservation/ChannelEvent/job commit
   // before the now-standalone audit write fails, so order.count() comes back
   // 1, not 0. Because recordAudit is the last statement in the callback and
-  // enqueueJob runs just before it in the same transaction, this also proves
-  // the ack job is atomic with everything else: if enqueueJob were ever moved
+  // enqueueIdempotentJob runs just before it in the same transaction, this
+  // also proves the ack job is atomic with everything else: if
+  // enqueueIdempotentJob were ever moved
   // outside the transaction (or called with the default client instead of
   // `tx`), it would commit independently before recordAudit's later failure,
   // and channelJob.count() below would come back 1 instead of 0.

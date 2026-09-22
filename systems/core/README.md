@@ -74,7 +74,7 @@ them, see "Env vars for `.env.example`" below):
 
 | Var | Purpose | Default |
 |---|---|---|
-| `WALMART_SYNC_ENABLED` | `true` to start the scheduler in `src/worker.ts`. Unset or anything else: the worker logs that sync is disabled and exits 0. | unset |
+| `WALMART_SYNC_ENABLED` | `true` to start the scheduler in `src/worker.ts`. Unset or anything else: the worker logs that sync is disabled and exits 0 -- which on Render crash-loops the worker; only provision `core-worker` with this set to `true`. | unset |
 | `WALMART_SETTLEMENT_ENABLED` | `true` to also register the 24h settlement-import interval. See "Settlement is unverified" below before flipping this anywhere real. | unset (off) |
 | `WALMART_CLIENT_ID` | Walmart API client ID (secret). | — |
 | `WALMART_CLIENT_SECRET` | Walmart API client secret (secret). | — |
@@ -91,9 +91,13 @@ them, see "Env vars for `.env.example`" below):
 4. `Ctrl+C` (SIGINT) or a `SIGTERM` stops the scheduler's intervals and
    disconnects Prisma before the process exits.
 
-Leaving `WALMART_SYNC_ENABLED` unset is deliberate and safe: the worker logs
-that sync is disabled and exits 0 immediately, so an accidental deploy
-without the flag never starts polling Walmart.
+Leaving `WALMART_SYNC_ENABLED` unset means the worker logs that sync is
+disabled and exits 0 immediately, so a run without the flag never polls
+Walmart. **Only provision the `core-worker` service with
+`WALMART_SYNC_ENABLED=true`.** Render restarts a background worker that
+exits, so a `core-worker` deployed without the flag crash-loops (start, exit
+0, restart) as a paid service doing nothing. Locally that exit is harmless;
+on Render, leave the service unprovisioned until sync is meant to run.
 
 ### What the scheduler runs
 
@@ -152,7 +156,8 @@ on anywhere real:
    the report's actual wire format (documentation shows JSON; the current
    code assumes CSV) and fixing whatever it gets wrong.
 2. A known, deliberately deferred defect (finding B4 — see the
-   `BLOCKER FOR PRODUCTION LAUNCH` comment near `settlement.ts:425`): a
+   `BLOCKER FOR PRODUCTION LAUNCH` comment above
+   `importSettlementRowsAttempt` in `settlement.ts`): a
    settlement group spanning more than one import call is never re-stamped,
    so its rows' `discrepancyCents` can go stale and self-contradictory.
 

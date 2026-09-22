@@ -7,13 +7,13 @@
 // ChannelEvent(returnOrderId, 'return_created') uniqueness is the gate, not a
 // business check.
 //
-// Neither path is actually wired up yet, as of this task: webhooks.routes.ts
-// only recognises `eventType === 'ORDER_CREATED'` and 202s everything else
-// (including a return event), and pollWalmartReturns (like pollWalmartOrders
-// before it) is not called by any scheduler -- only by tests. This file's
-// functions are correct and tested in isolation; making Walmart's returns
-// actually reach them is unstarted wiring, not a claim this comment used to
-// make by omission.
+// Only the poller is wired: scheduler.ts's startWalmartScheduler runs
+// pollWalmartReturns every 30 minutes, but only in the worker process
+// (worker.ts), and only when WALMART_SYNC_ENABLED=true -- so nothing reaches
+// this file until core-worker is provisioned with that flag. The webhook path
+// is not wired: webhooks.routes.ts only recognises
+// `eventType === 'ORDER_CREATED'` and 202s everything else, a return event
+// included.
 //
 // Stock decision (Task 11): a refund never moves inventory, in either
 // direction, regardless of whether Walmart's returned goods physically came
@@ -192,8 +192,10 @@ export async function ingestWalmartReturn(payload: unknown, source: 'webhook' | 
   // see, aborting the whole sweep instead of skipping this one return.
   const purchaseOrderIdRaw: unknown = p?.customerOrderInfo?.purchaseOrderId ?? p?.purchaseOrderId
   const purchaseOrderId: string | undefined = typeof purchaseOrderIdRaw === 'string' && purchaseOrderIdRaw ? purchaseOrderIdRaw : undefined
-  const refundedAmountCents = Number(p?.refundedAmount?.amount)
-  const hasRealRefund = Number.isFinite(refundedAmountCents) && refundedAmountCents > 0
+  // Walmart sends this amount in DOLLARS (e.g. 105.98), not cents. Only its
+  // sign is used here -- nothing below stores or sums it.
+  const refundedAmountDollars = Number(p?.refundedAmount?.amount)
+  const hasRealRefund = Number.isFinite(refundedAmountDollars) && refundedAmountDollars > 0
 
   const existing = await prisma.channelEvent.findUnique({
     where: { externalId_eventType: { externalId: returnOrderId, eventType: 'return_created' } },

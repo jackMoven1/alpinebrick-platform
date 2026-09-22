@@ -73,13 +73,15 @@ services:
   # service, which is Jack's call, not something this task does on its own.
   # Before uncommenting, per-instance config needs setting (dashboard-side,
   # like the other secrets below — never declared in this file):
-  #   - WALMART_SYNC_ENABLED=true (otherwise the worker starts, logs that
-  #     sync is disabled, and exits 0 immediately — a paid service doing
-  #     nothing)
+  #   - WALMART_SYNC_ENABLED=true. ONLY provision this service with it set.
+  #     Without it the worker logs that sync is disabled and exits 0 --
+  #     and Render restarts a worker that exits, so it crash-loops (start,
+  #     exit, restart) as a paid service doing nothing.
   #   - WALMART_CLIENT_ID / WALMART_CLIENT_SECRET (real Walmart credentials)
   # WALMART_SETTLEMENT_ENABLED stays "false" (core-env's default) until the
   # sandbox gate (Task 13 brief, Step 6) and the B4 cross-call re-stamping
-  # defect (settlement.ts, `BLOCKER FOR PRODUCTION LAUNCH` near line 425)
+  # defect (settlement.ts, the `BLOCKER FOR PRODUCTION LAUNCH` comment above
+  # importSettlementRowsAttempt)
   # are both resolved — see the README section for detail.
   #
   # - type: worker
