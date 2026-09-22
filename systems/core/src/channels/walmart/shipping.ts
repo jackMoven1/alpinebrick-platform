@@ -25,7 +25,7 @@ import { prisma } from '../../prisma.js'
 import { fulfillOrder, cancelOrder } from '../../orders/orders.service.js'
 import { type WalmartClient, getWalmartClient } from './client.js'
 import { toShipPayload } from './mappers.js'
-import { enqueueJob, registerHandler } from './outbox.js'
+import { enqueueIdempotentJob, registerHandler } from './outbox.js'
 import { ChannelError } from './orders.ingest.js'
 
 /**
@@ -33,20 +33,33 @@ import { ChannelError } from './orders.ingest.js'
  * Plan 2's `fulfillOrder` (a conditional UPDATE inside a transaction --
  * decrements on_hand and reserved together, guarded by the affected-row
  * count, exactly like every other stock movement in this codebase; see
- * orders.service.ts) and then schedules the outbound shipping push.
+ * orders.service.ts) and schedules the outbound shipping push IN THAT SAME
+ * TRANSACTION, via `fulfillOrder`'s `inTransaction` hook.
+ *
+ * Atomicity (final fix wave A1): the `walmart_ship_order` job commits with
+ * the status change or not at all. It used to be enqueued after
+ * `fulfillOrder` committed (and after its post-commit inventory pushes), so
+ * a throw or crash in between left a fulfilled order with no ship job -- and
+ * a retry was refused by the guard below, so recovery was manual. Now a
+ * failed job insert rolls the fulfilment back (the order stays `paid` and
+ * the call can simply be retried), and nothing after commit can stop the job
+ * from existing.
+ *
+ * `enqueueIdempotentJob`, not `enqueueJob`: this runs inside a transaction,
+ * where `enqueueJob`'s P2002 catch-and-recover would poison it (25P02 -- see
+ * enqueueIdempotentJob's doc comment in outbox.ts). `ship:<orderId>` is a
+ * one-shot key -- an order ships once -- so it is never released at pickup
+ * either (see `processDueJobs`).
  *
  * Idempotency: the guard below (`order.channel !== 'walmart' || order.status
- * !== 'paid'`) is what makes a second call safe, not just the job's
- * dedupeKey. The first call moves the order to `fulfilled`; a second call
- * against the same orderId sees a non-'paid' order and throws
- * `not_shippable` before `fulfillOrder` (and therefore the stock UPDATE) or
- * `enqueueJob` ever runs -- stock cannot be decremented twice and at most one
- * `walmart_ship_order` job is ever created per order. The dedupeKey
- * (`ship:<orderId>`) is a second line of defence against a caller racing two
- * concurrent `recordChannelShipment` calls for the same order: only one can
- * win `fulfillOrder`'s conditional UPDATE (the other throws
- * `inventory_conflict` from `fulfillOrder` itself), so in practice the guard
- * above already prevents the race from reaching `enqueueJob` twice.
+ * !== 'paid'`) is what makes a second call safe. The first call moves the
+ * order to `fulfilled`; a second call sees a non-'paid' order and throws
+ * `not_shippable` before `fulfillOrder` runs -- stock cannot be decremented
+ * twice and at most one `walmart_ship_order` job is ever created per order.
+ * Two calls racing past that guard are settled by `fulfillOrder`'s own
+ * status check and conditional UPDATE (the loser throws and rolls back,
+ * taking its job insert with it); the one-shot dedupeKey is a further line
+ * of defence.
  */
 export async function recordChannelShipment(
   orderId: string,
@@ -56,32 +69,35 @@ export async function recordChannelShipment(
   if (!order || order.channel !== 'walmart' || order.status !== 'paid') {
     throw new ChannelError('not_shippable', `order ${orderId} is not a paid walmart order`)
   }
-  await fulfillOrder(orderId)
-  await enqueueJob('walmart_ship_order', { orderId, ...input }, { dedupeKey: `ship:${orderId}` })
+  await fulfillOrder(orderId, 'system', {
+    inTransaction: (tx) => enqueueIdempotentJob('walmart_ship_order', { orderId, ...input }, `ship:${orderId}`, tx),
+  })
 }
 
 /**
  * Seller-initiated cancel of a Walmart order: releases the reservation via
  * Plan 2's `cancelOrder` (same conditional-UPDATE-inside-a-transaction
  * pattern as `fulfillOrder` -- see orders.service.ts) and schedules the
- * outbound cancel push.
+ * outbound cancel push in that same transaction, exactly as
+ * `recordChannelShipment` does for shipping (final fix wave A1): a failed
+ * job insert rolls the cancel back; nothing after commit can stop the job
+ * from existing. `cancel:<orderId>` is one-shot.
  *
  * Idempotency: `cancelOrder` itself is the guard here -- it only accepts a
  * `pending` or `paid` order and throws `OrderError('invalid_transition')`
  * otherwise, so a second `cancelChannelOrder(orderId)` call against an
  * already-cancelled (or already-fulfilled) order fails before its conditional
- * UPDATE runs, never releasing the same reservation twice. The dedupeKey
- * (`cancel:<orderId>`) again only matters for two concurrent calls racing
- * each other; `cancelOrder`'s own affected-row check already makes that race
- * safe (the loser's UPDATE matches 0 rows and throws `inventory_conflict`).
+ * UPDATE runs, never releasing the same reservation twice, and rolls back
+ * before any job insert.
  */
 export async function cancelChannelOrder(orderId: string): Promise<void> {
   const order = await prisma.order.findUnique({ where: { id: orderId } })
   if (!order || order.channel !== 'walmart') {
     throw new ChannelError('not_walmart', `order ${orderId} is not a walmart order`)
   }
-  await cancelOrder(orderId)
-  await enqueueJob('walmart_cancel_order', { orderId }, { dedupeKey: `cancel:${orderId}` })
+  await cancelOrder(orderId, 'system', {
+    inTransaction: (tx) => enqueueIdempotentJob('walmart_cancel_order', { orderId }, `cancel:${orderId}`, tx),
+  })
 }
 
 export function registerShippingHandlers(client: WalmartClient = getWalmartClient()): void {
