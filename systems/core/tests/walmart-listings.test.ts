@@ -245,4 +245,58 @@ describe('walmart listings', () => {
     const listing = await prisma.channelListing.findUniqueOrThrow({ where: { id: l.id } })
     expect(listing.status).toBe('rejected')
   })
+
+  // Three real outcomes, not two: SUCCESS -> live, INPROGRESS -> no verdict
+  // yet (must stay exactly as it was, still eligible for the next poll),
+  // and everything else (a terminal error status, or one we don't
+  // recognise) -> rejected fail-closed. Also proves a mixed feed settles
+  // its resolved items in the SAME poll rather than waiting for every item
+  // to reach a terminal state -- the good and bad items here are decided
+  // immediately, right alongside the one still in progress.
+  it('resolves SUCCESS, leaves INPROGRESS unchanged, and rejects terminal/unrecognised statuses -- all in the same poll', async () => {
+    const vSuccess = await seedVariant()
+    const vInProgress = await seedVariant()
+    const vSysErr = await seedVariant()
+    const vUnknown = await seedVariant()
+    const lSuccess = await createListing(vSuccess.id, 'ABE-SUCCESS-W')
+    const lInProgress = await createListing(vInProgress.id, 'ABE-INPROGRESS-W')
+    const lSysErr = await createListing(vSysErr.id, 'ABE-SYSERR-W')
+    const lUnknown = await createListing(vUnknown.id, 'ABE-UNKNOWN-W')
+
+    const client: WalmartClient = {
+      request: async (method) =>
+        method === 'POST'
+          ? { feedId: 'FEED-6' }
+          : {
+              feedStatus: 'PROCESSED',
+              itemDetails: {
+                itemIngestionStatus: [
+                  { sku: 'ABE-SUCCESS-W', ingestionStatus: 'SUCCESS' },
+                  { sku: 'ABE-INPROGRESS-W', ingestionStatus: 'INPROGRESS' },
+                  { sku: 'ABE-SYSERR-W', ingestionStatus: 'SYSTEM_ERROR' },
+                  { sku: 'ABE-UNKNOWN-W', ingestionStatus: 'SOME_MADE_UP_STATUS' },
+                ],
+              },
+            },
+    }
+
+    await submitItemFeed([lSuccess.id, lInProgress.id, lSysErr.id, lUnknown.id], client)
+
+    const beforePoll = await prisma.channelListing.findUniqueOrThrow({ where: { id: lInProgress.id } })
+    expect(beforePoll.status).toBe('submitted')
+
+    expect(await checkFeedStatus('FEED-6', client)).toBe('processed')
+
+    expect((await prisma.channelListing.findUniqueOrThrow({ where: { id: lSuccess.id } })).status).toBe('live')
+
+    // The critical assertion: state is IDENTICAL before and after, not
+    // merely "not live". Asserting only `!== 'live'` would still pass if
+    // INPROGRESS were wrongly mapped to 'rejected'.
+    const afterPoll = await prisma.channelListing.findUniqueOrThrow({ where: { id: lInProgress.id } })
+    expect(afterPoll.status).toBe(beforePoll.status)
+    expect(afterPoll.status).toBe('submitted')
+
+    expect((await prisma.channelListing.findUniqueOrThrow({ where: { id: lSysErr.id } })).status).toBe('rejected')
+    expect((await prisma.channelListing.findUniqueOrThrow({ where: { id: lUnknown.id } })).status).toBe('rejected')
+  })
 })

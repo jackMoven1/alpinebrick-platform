@@ -103,10 +103,21 @@ export async function submitItemFeed(
 
 // Walmart's own published item ingestion statuses --
 // https://developer.walmart.com/doc/us/mp/us-mp-feeds/ -- confirmed before
-// enumerating rather than assumed: SUCCESS is the only value that means the
-// item actually listed. INPROGRESS/DATA_ERROR/SYSTEM_ERROR/TIMEOUT_ERROR (and
-// anything not in this list) are not live.
+// enumerating rather than assumed:
+//   SUCCESS    -- the item was ingested. The only value that goes live.
+//   INPROGRESS -- Walmart has not finished with this item yet. This is NOT
+//                 a failure -- it is an outcome we understand and it means
+//                 "no verdict yet, ask again later."
+//   DATA_ERROR / SYSTEM_ERROR / TIMEOUT_ERROR -- terminal failures.
+// Anything not on this list -- a missing status, or a string we don't
+// recognise -- fails closed as a rejection, same as a terminal error: an
+// outcome we DON'T understand must never become a live product. INPROGRESS
+// is deliberately excluded from that fail-closed bucket because it IS
+// understood and is not terminal.
 const WALMART_ITEM_SUCCESS_STATUS = 'SUCCESS'
+const WALMART_ITEM_INPROGRESS_STATUS = 'INPROGRESS'
+
+type ItemOutcome = 'live' | 'rejected' | 'in_progress'
 
 function hasIngestionErrors(entry: unknown): boolean {
   const errors = (entry as any)?.ingestionErrors?.ingestionError
@@ -117,26 +128,46 @@ function hasIngestionErrors(entry: unknown): boolean {
  * Per-SKU outcome extracted from Walmart's `itemDetails.itemIngestionStatus`
  * (present when the feed status check is called with `includeDetails=true`).
  *
- * Fails closed: a listing only goes live on Walmart's own, EXPLICIT success
- * value for that sku (`ingestionStatus === 'SUCCESS'`) with no populated
- * `ingestionErrors`. A different or unrecognised status string, a missing
- * status, or a populated `ingestionErrors` regardless of status -- ALL of
- * these are treated as failure. The earlier version of this function only
- * checked for a populated errors array, which meant an entry like
- * `{ sku, ingestionStatus: 'SYSTEM_ERROR' }` (no `ingestionErrors` populated)
- * was indistinguishable from success and went live -- exactly the
- * "unrecognised outcome becomes a live product" failure mode this task
- * exists to prevent, one layer below the feed-level version of the same bug.
+ * Three outcomes, not two:
+ *  - `live`: Walmart's own explicit `ingestionStatus === 'SUCCESS'`, with no
+ *    populated `ingestionErrors` (an errors array is always a failure,
+ *    regardless of what the status string says).
+ *  - `in_progress`: `ingestionStatus === 'INPROGRESS'` and no errors. Not
+ *    terminal -- the caller must leave the listing exactly as it is rather
+ *    than recording a verdict that hasn't happened yet.
+ *  - `rejected`: everything else -- a terminal error status, a missing
+ *    status, an unrecognised one, or a populated `ingestionErrors`. An
+ *    earlier version of this function only checked for a populated errors
+ *    array, which meant an entry like `{ sku, ingestionStatus:
+ *    'SYSTEM_ERROR' }` (no `ingestionErrors` populated) was indistinguishable
+ *    from success and went live -- exactly the "unrecognised outcome
+ *    becomes a live product" failure mode this task exists to prevent, one
+ *    layer below the feed-level version of the same bug. A second, equally
+ *    wrong attempt at closing that gap treated INPROGRESS as a rejection
+ *    too, which writes a terminal, wrong verdict onto an item that hasn't
+ *    finished processing -- fail-closed applies to outcomes we don't
+ *    understand, and INPROGRESS is one we do.
  */
-function itemOutcomesBySku(itemDetails: unknown): Map<string, boolean> {
-  const outcomes = new Map<string, boolean>()
+function itemOutcomesBySku(itemDetails: unknown): Map<string, ItemOutcome> {
+  const outcomes = new Map<string, ItemOutcome>()
   const entries = (itemDetails as any)?.itemIngestionStatus
   if (!Array.isArray(entries)) return outcomes
   for (const entry of entries) {
     const sku = entry?.sku
     if (typeof sku !== 'string') continue
-    const ok = !hasIngestionErrors(entry) && entry?.ingestionStatus === WALMART_ITEM_SUCCESS_STATUS
-    outcomes.set(sku, ok)
+    if (hasIngestionErrors(entry)) {
+      outcomes.set(sku, 'rejected')
+      continue
+    }
+    if (entry?.ingestionStatus === WALMART_ITEM_SUCCESS_STATUS) {
+      outcomes.set(sku, 'live')
+      continue
+    }
+    if (entry?.ingestionStatus === WALMART_ITEM_INPROGRESS_STATUS) {
+      outcomes.set(sku, 'in_progress')
+      continue
+    }
+    outcomes.set(sku, 'rejected')
   }
   return outcomes
 }
@@ -207,13 +238,20 @@ export async function checkFeedStatus(
   const rejectedIds: string[] = []
   for (const listing of listings) {
     const outcome = outcomes.get(listing.walmartSku)
-    // A listing goes live only when ITS OWN item reports success. When
-    // Walmart's response carries no per-item detail for this sku at all,
-    // fall back to the feed-level status -- but an item explicitly reported
-    // as failed is NEVER live, regardless of the feed's overall status.
-    // This is the distinction the whole task exists to enforce: a
-    // "processed" feed can still carry rejected items.
-    const isLive = outcome === undefined ? feedLevelStatus === 'processed' : outcome
+    // A listing goes live only when ITS OWN item reports explicit success.
+    // An item still `in_progress` gets NO state change at all -- it is left
+    // out of both buckets below, so it stays exactly as it was and remains
+    // eligible for the next poll. This is what makes a mixed feed settle
+    // correctly: the live/rejected items decided in THIS SAME poll are
+    // written immediately, without waiting for the in-progress ones to
+    // reach a terminal state too. When Walmart's response carries no
+    // per-item detail for this sku at all, fall back to the feed-level
+    // status -- but an item explicitly reported as failed is NEVER live,
+    // regardless of the feed's overall status. This is the distinction the
+    // whole task exists to enforce: a "processed" feed can still carry
+    // rejected items.
+    if (outcome === 'in_progress') continue
+    const isLive = outcome === undefined ? feedLevelStatus === 'processed' : outcome === 'live'
     ;(isLive ? liveIds : rejectedIds).push(listing.id)
   }
 
