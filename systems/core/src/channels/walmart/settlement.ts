@@ -422,19 +422,21 @@ export async function importSettlementRows(reportDate: Date, rows: SettlementRow
  * `'discrepant'`.
  *
  * =========================================================================
- * BLOCKER FOR TASK 13 -- finding B4, DELIBERATELY DEFERRED (not an oversight).
- * The group is scoped to ONE call and is never re-stamped. If one order's
- * itemised `Sale` rows arrive across more than one import call, the first
- * call stamps its rows against an incomplete group, the later call's new
- * siblings get their own (different) figure, the earlier rows keep their
+ * BLOCKER FOR PRODUCTION LAUNCH -- finding B4, DELIBERATELY DEFERRED (not an
+ * oversight). The group is scoped to ONE call and is never re-stamped. If one
+ * order's itemised `Sale` rows arrive across more than one import call, the
+ * first call stamps its rows against an incomplete group, the later call's
+ * new siblings get their own (different) figure, the earlier rows keep their
  * stale `discrepancyCents` forever, and the group contradicts itself. The fix
  * is a two-phase insert-then-reconcile restructure: insert new rows, then for
  * every PO touched, re-sum ALL persisted `Sale` rows for it up to this
- * `reportDate` and re-stamp every one of them. Deferred until AFTER Task 13's
- * sandbox check because the real report shape (JSON wire format; possibly
- * commission lines carried on `Sale` rows) may change what gets aggregated,
- * and building it now risks building it twice. Task 13 cannot be closed
- * without resolving this. It depends on round 4's finding 1 (now fixed): a
+ * `reportDate` and re-stamp every one of them. Deferred until AFTER the
+ * sandbox check (Task 13 brief, Step 6) because the real report shape (JSON
+ * wire format; possibly commission lines carried on `Sale` rows) may change
+ * what gets aggregated, and building it now risks building it twice.
+ * Production launch -- enabling `WALMART_SETTLEMENT_ENABLED` -- cannot
+ * proceed without resolving this, once the sandbox gate has confirmed the
+ * real report shape. It depends on round 4's finding 1 (now fixed): a
  * DB-wide re-sum is only safe once no two distinct rows can share a key.
  * =========================================================================
  */
@@ -601,7 +603,8 @@ export async function fetchAndImportSettlement(
 //   fixed: no documentation shapes this.
 // - WIRE FORMAT. The one fetched documentation example is a JSON response
 //   (`{ reportData: [...], nextOffset, totalRecords, description }`), not the
-//   CSV `parseSettlementCsv`/`fetchAndImportSettlement` assume. Task 13's.
+//   CSV `parseSettlementCsv`/`fetchAndImportSettlement` assume. Confirm
+//   against the sandbox gate (Task 13 brief, Step 6) before launch.
 // - AMOUNT TYPE ENUMERATION. Only `"Product Price"` is documented by example.
 //   `Shipping` and `Tax` (used in tests) are inferred by analogy.
 // - TRANSACTION KEY GRAIN. Whether a Transaction Key identifies one itemised
