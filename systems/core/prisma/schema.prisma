@@ -88,6 +88,13 @@ enum ChannelJobStatus {
 enum ChannelSettlementStatus {
   matched
   unmatched
+  // A row matched to a real order whose reconstructed expected amount does
+  // NOT equal amountCents (discrepancyCents is non-null and non-zero). Not
+  // "matched" (the amount is wrong) and not "unmatched" (an order was
+  // found) -- a distinct third state so an operator filtering on `status`
+  // alone finds it, and so @@index([status]) below actually narrows a
+  // `discrepant` query instead of splitting an almost-all-one-value column.
+  discrepant
 }
 
 model Product {
@@ -326,24 +333,56 @@ model ChannelSettlement {
   id              String                  @id @default(cuid())
   reportDate      DateTime                @map("report_date")
   externalOrderId String                  @map("external_order_id")
+  // Walmart's own per-row transaction classification (recon report
+  // "Transaction Type" column) -- e.g. `PaymentWithdrawn` for a sale
+  // settlement, `Adjustment` for something else. Part of the idempotency
+  // key (fix review round 1) and the gate on whether `discrepancyCents` is
+  // even attempted: Walmart emits multiple transaction rows per PO (a sale
+  // row and, separately, a refund row are both real rows for the same PO),
+  // and comparing a non-sale row's amount against a whole-order-lifetime
+  // expected net is comparing two things that were never meant to match.
+  transactionType String                  @map("transaction_type")
   amountCents     Int                     @map("amount_cents")
   feeCents        Int                     @map("fee_cents")
+  // amountCents + feeCents -- what actually lands in the bank for this row
+  // (feeCents is already signed negative for a commission deduction). Cheap
+  // to store now, from data already on the row, so a later bank
+  // reconciliation doesn't have to re-derive it. Deliberately NOT what
+  // `discrepancyCents` is checked against -- see that column's comment.
+  netCents        Int                     @map("net_cents")
   currency        String                  @default("USD")
   orderId         String?                 @map("order_id")
   status          ChannelSettlementStatus @default(unmatched)
   // Signed: amountCents minus the expected order value reconstructed from
   // ChannelEvent.raw (Task 12) -- positive means Walmart remitted MORE than
-  // expected, negative means LESS, zero is an exact match. Null only when
-  // `orderId` is null (nothing to compare `amountCents` against). This is the
-  // review-queue surface for a matched-but-wrong-amount row, the same way
-  // `status: 'unmatched'` is the review-queue surface for a row with no order
-  // at all -- see src/channels/walmart/settlement.ts for the reconciliation
-  // this is computed from and why `feeCents` deliberately does not enter the
-  // formula (no expected commission rate exists anywhere in this codebase to
-  // check it against; inventing one would be "estimating a figure").
+  // expected, negative means LESS, zero is an exact match. This reconciles
+  // REVENUE RECOGNITION, not cash: feeCents/commission deliberately never
+  // enters the formula (no expected commission rate exists anywhere in this
+  // codebase to check Walmart's stated commission against; inventing one
+  // would be "estimating a figure"), so a wrong commission hides perfectly
+  // inside a matching amountCents -- this column cannot catch that, only a
+  // real bank/cash reconciliation against `netCents` can.
+  //
+  // Null when there is nothing comparable to compute against: `orderId` is
+  // null (no order), the row's `transactionType` isn't the sale type this
+  // reconciliation understands, or no order_created ChannelEvent.raw is on
+  // file to reconstruct an expected figure from (this codebase never falls
+  // back to Order.totalCents for that -- a figure known to exclude shipping
+  // is not a safe stand-in, see settlement.ts). A `'matched'` row can
+  // therefore still carry a null discrepancyCents; `status: 'discrepant'`
+  // is the queryable signal that a real, non-zero comparison was made and
+  // failed. See src/channels/walmart/settlement.ts for the computation.
   discrepancyCents Int?                   @map("discrepancy_cents")
   raw             Json
   createdAt       DateTime                @default(now()) @map("created_at")
+  // Idempotency key (fix review round 1): a DB-enforced constraint, not
+  // app-level findFirst-then-create, which is non-atomic under two
+  // concurrent imports of the same report. toCents is deterministic for
+  // identical input, so two genuinely different pulls of the same
+  // (PO, date, type) with a different amount or fee are DIFFERENT rows on
+  // purpose -- a correction is something a human should see as a second
+  // row, not something silently dropped for matching an older one.
+  @@unique([externalOrderId, reportDate, transactionType, amountCents, feeCents])
   @@index([externalOrderId])
   @@index([status])
   @@map("channel_settlements")
