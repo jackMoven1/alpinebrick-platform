@@ -1,0 +1,12 @@
+-- Final fix wave A2: mark which jobs carry a RECURRING dedupe key, so
+-- processDueJobs can release that key at pickup (a change arriving while
+-- the job runs then queues a fresh push instead of being dropped) without
+-- ever releasing a ONE-SHOT key (ack:/ship:/cancel:), whose release would
+-- let a replay create a second ship job.
+--
+-- DEFAULT false is the fail-safe direction: any existing row, and any row a
+-- future path inserts without setting the flag, keeps its key exactly as
+-- before this migration. Existing recurring rows are still recovered by
+-- enqueueJob's release-on-collision once they complete.
+-- AlterTable
+ALTER TABLE "channel_jobs" ADD COLUMN     "recurring" BOOLEAN NOT NULL DEFAULT false;

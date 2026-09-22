@@ -335,6 +335,13 @@ model ChannelJob {
   runAfter  DateTime         @default(now()) @map("run_after")
   lastError String?          @map("last_error")
   dedupeKey String?          @unique @map("dedupe_key")
+  /// True only for jobs enqueued via enqueueJob (recurring inventory/price
+  /// pushes): processDueJobs releases their dedupeKey at pickup so a change
+  /// arriving mid-run queues a fresh job. False (the default) for one-shot
+  /// keys from enqueueIdempotentJob (ack:/ship:/cancel:) and for any row
+  /// written by a path that does not set it -- those keep their key, because
+  /// a released one-shot key lets a replay double-ship. See outbox.ts.
+  recurring Boolean          @default(false)
   createdAt DateTime         @default(now()) @map("created_at")
   updatedAt DateTime         @updatedAt @map("updated_at")
   @@index([status, runAfter])

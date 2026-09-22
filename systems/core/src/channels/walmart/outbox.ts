@@ -24,11 +24,20 @@ export function clearHandlers(): void {
 export type JobDb = Pick<Prisma.TransactionClient, 'channelJob'>
 
 /**
- * Enqueue a job.
+ * Enqueue a job whose dedupeKey is RECURRING (inventory and price pushes).
  *
- * `dedupeKey` collapses bursts: while a job with that key is still `pending`,
- * further enqueues return null. Once it leaves `pending` the key is released,
- * so recurring work (inventory and price pushes) can be queued again.
+ * `dedupeKey` collapses bursts: while a job with that key is waiting to be
+ * picked up, further enqueues return null. The key is released in two places
+ * so recurring work can be queued again:
+ *
+ *  - at pickup: `processDueJobs` nulls the key of a `recurring` job just
+ *    before running its handler (final fix wave A2). The handler reads
+ *    current state (stock, price) when it runs; a change that lands after
+ *    that read must be able to queue a fresh job, or it is lost until the
+ *    next reconcile. Every job this function writes is marked `recurring`.
+ *  - on collision with a job that has left `pending` (below): covers rows
+ *    written before the `recurring` column existed, and any job that ends
+ *    `done`/`dead` still holding its key.
  *
  * The release matters more than it looks. `dedupe_key` is UNIQUE across the
  * whole table, not scoped to status, so without it a key is spent permanently
@@ -58,6 +67,7 @@ async function createJob(
         payload: payload as Prisma.InputJsonValue,
         dedupeKey: opts.dedupeKey,
         runAfter: opts.runAfter ?? new Date(),
+        recurring: true,
       },
       select: { id: true },
     })
@@ -108,6 +118,11 @@ async function createJob(
  * completed). `updateMany` rather than `update` because there's no id in
  * hand without a second read, and matching zero rows is not an error.
  *
+ * Jobs written here are never `recurring` (the column defaults to false), so
+ * `processDueJobs` never releases their key at pickup: a one-shot key stays
+ * claimed while its job runs and after it completes. That is what stops a
+ * replayed ship/cancel enqueue from creating a second job (double-ship).
+ *
  * Do NOT use this for a dedupeKey that legitimately gets reused across
  * separate units of work -- e.g. the recurring inventory/price-push keys
  * `enqueueJob`'s release-on-completion recovery exists for (see its own doc
@@ -149,6 +164,17 @@ export async function processDueJobs(
   let failed = 0
   for (const job of due) {
     const handler = handlers.get(job.type)
+    // Release a RECURRING key at pickup, before the handler reads state
+    // (final fix wave A2). While the key was held for the whole run, an
+    // enqueue during the run returned null and the change it carried was
+    // lost: this handler had already read the old value. Released here, that
+    // enqueue creates a second pending job that reads the new value. Two
+    // pushes of the same variant are harmless -- each sends current state.
+    // One-shot keys (`recurring` false) are never released: see
+    // enqueueIdempotentJob.
+    if (job.recurring && job.dedupeKey !== null) {
+      await prisma.channelJob.update({ where: { id: job.id }, data: { dedupeKey: null } })
+    }
     try {
       if (!handler) throw new Error(`no handler registered for job type ${job.type}`)
       await handler(job.payload)
@@ -156,16 +182,30 @@ export async function processDueJobs(
       processed++
     } catch (e: any) {
       const attempts = job.attempts + 1
+      const dead = attempts >= MAX_ATTEMPTS
+      const lastError = String(e?.message ?? e).slice(0, 1000)
       failed++
       await prisma.channelJob.update({
         where: { id: job.id },
         data: {
           attempts,
-          lastError: String(e?.message ?? e).slice(0, 1000),
-          status: attempts >= MAX_ATTEMPTS ? 'dead' : 'pending',
+          lastError,
+          status: dead ? 'dead' : 'pending',
           runAfter: new Date(now.getTime() + 2 ** attempts * 60_000),
         },
       })
+      if (dead) {
+        // Final fix wave A3: a dead job never runs again on its own, so it
+        // must not be silent. Identifiers and a short error only -- never the
+        // payload, which can carry customer and order data.
+        console.error('walmart outbox: job dead-lettered', {
+          type: job.type,
+          id: job.id,
+          dedupeKey: job.dedupeKey,
+          attempts,
+          lastError: lastError.slice(0, 200),
+        })
+      }
     }
   }
   return { processed, failed }

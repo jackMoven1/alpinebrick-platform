@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { prisma } from '../src/prisma.js'
 import { resetDb } from './helpers/db.js'
 import { enqueueJob, enqueueIdempotentJob, processDueJobs, registerHandler, clearHandlers } from '../src/channels/walmart/outbox.js'
@@ -106,5 +106,108 @@ describe('walmart outbox', () => {
       const job = await prisma.channelJob.findUniqueOrThrow({ where: { dedupeKey: 'idem-k4' } })
       expect(job).toMatchObject({ status: 'pending', attempts: 0, lastError: null })
     })
+  })
+
+  // --- Final fix wave A2: dedupe claim released at pickup, recurring only ---
+  //
+  // A job stays `pending` while its handler runs. Before this fix, an
+  // enqueueJob under the same key during that window returned null, while the
+  // running handler had already read the old stock -- the change was lost
+  // until the hourly reconcile. A gate lets each test enqueue mid-run.
+  function blockingHandler() {
+    let release!: () => void
+    let entered!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const started = new Promise<void>((r) => { entered = r })
+    const handler = async () => { entered(); await gate }
+    return { handler, started, release: () => release() }
+  }
+
+  it('A2: a recurring push re-enqueued while its job is running is not dropped', async () => {
+    const b = blockingHandler()
+    registerHandler('walmart_push_inventory', b.handler)
+    expect(await enqueueJob('walmart_push_inventory', { variantId: 'v1' }, { dedupeKey: 'inv:v1' })).not.toBeNull()
+
+    const run = processDueJobs()
+    await b.started
+    // Mid-run: stock changed again. This must queue a fresh push.
+    const second = await enqueueJob('walmart_push_inventory', { variantId: 'v1' }, { dedupeKey: 'inv:v1' })
+    b.release()
+    await run
+
+    expect(second).not.toBeNull()
+    const pending = await prisma.channelJob.findMany({ where: { type: 'walmart_push_inventory', status: 'pending' } })
+    expect(pending).toHaveLength(1)
+    expect(pending[0].dedupeKey).toBe('inv:v1')
+    expect(await prisma.channelJob.count({ where: { type: 'walmart_push_inventory', status: 'done' } })).toBe(1)
+  })
+
+  it('A2: a one-shot key (enqueueIdempotentJob) is NOT released at pickup, so a mid-run replay cannot create a second job', async () => {
+    const b = blockingHandler()
+    registerHandler('walmart_ship_order', b.handler)
+    await enqueueIdempotentJob('walmart_ship_order', { orderId: 'o1' }, 'ship:o1', prisma)
+
+    const run = processDueJobs()
+    await b.started
+    const running = await prisma.channelJob.findFirstOrThrow({ where: { type: 'walmart_ship_order' } })
+    expect(running.dedupeKey).toBe('ship:o1') // still claimed while it runs
+    // A replay of the same one-shot enqueue mid-run must be a no-op.
+    await enqueueIdempotentJob('walmart_ship_order', { orderId: 'o1' }, 'ship:o1', prisma)
+    b.release()
+    await run
+
+    const jobs = await prisma.channelJob.findMany({ where: { type: 'walmart_ship_order' } })
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0]).toMatchObject({ status: 'done', dedupeKey: 'ship:o1' })
+    // And the key stays spent after completion: a later replay is still a no-op.
+    await enqueueIdempotentJob('walmart_ship_order', { orderId: 'o1' }, 'ship:o1', prisma)
+    expect(await prisma.channelJob.count({ where: { type: 'walmart_ship_order' } })).toBe(1)
+  })
+
+  it('A2: a one-shot job and a recurring job in the same batch -- only the recurring key is released', async () => {
+    const seenKeys: Record<string, string | null> = {}
+    registerHandler('walmart_ship_order', async () => {
+      seenKeys.ship = (await prisma.channelJob.findFirstOrThrow({ where: { type: 'walmart_ship_order' } })).dedupeKey
+    })
+    registerHandler('walmart_push_inventory', async () => {
+      seenKeys.inv = (await prisma.channelJob.findFirstOrThrow({ where: { type: 'walmart_push_inventory' } })).dedupeKey
+    })
+    await enqueueIdempotentJob('walmart_ship_order', { orderId: 'o2' }, 'ship:o2', prisma)
+    await enqueueJob('walmart_push_inventory', { variantId: 'v2' }, { dedupeKey: 'inv:v2' })
+    await processDueJobs()
+    expect(seenKeys).toEqual({ ship: 'ship:o2', inv: null })
+  })
+
+  // --- Final fix wave A3: dead-lettering is logged -------------------------
+  it('A3: console.errors type, id, dedupeKey and truncated lastError when a job dead-letters -- never the payload', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const long = 'x'.repeat(5000)
+      registerHandler('walmart_ship_order', async () => { throw new Error(`boom ${long}`) })
+      // A one-shot job: its key stays on the row for life, so it is still
+      // there to log. (A recurring job's key is released at its first
+      // pickup -- A2 -- so by the time it dies it logs dedupeKey null; type
+      // and id still identify it.)
+      await enqueueIdempotentJob('walmart_ship_order', { secretish: 'PAYLOAD-MARKER' }, 'ship:o-dead', prisma)
+      for (let i = 0; i < 4; i++) {
+        const job = await prisma.channelJob.findFirstOrThrow()
+        await processDueJobs(new Date(job.runAfter.getTime() + 1))
+      }
+      expect(errorSpy).not.toHaveBeenCalled() // retries 1-4 are not dead yet
+      const job = await prisma.channelJob.findFirstOrThrow()
+      await processDueJobs(new Date(job.runAfter.getTime() + 1))
+
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      const logged = errorSpy.mock.calls[0].map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')
+      expect(logged).toContain('dead')
+      expect(logged).toContain('walmart_ship_order')
+      expect(logged).toContain(job.id)
+      expect(logged).toContain('ship:o-dead')
+      expect(logged).toContain('boom')
+      expect(logged).not.toContain('PAYLOAD-MARKER')
+      expect(logged.length).toBeLessThan(1000)
+    } finally {
+      errorSpy.mockRestore()
+    }
   })
 })
