@@ -8,6 +8,39 @@ export function toCents(dollars: number): number {
   return Math.round(dollars * 100)
 }
 
+/**
+ * The one outbound conversion boundary: integer cents (our side) -> decimal
+ * dollars (Walmart's `amount` fields). Mirrors `toCents` in the other
+ * direction, and is the only place that boundary is crossed -- every
+ * outbound payload builder in this file calls this instead of dividing
+ * inline.
+ *
+ * Built entirely on BigInt integer arithmetic (never `cents / 100`) so the
+ * dollars/remainder split cannot be off by a float-rounding epsilon, then
+ * assembled as a decimal string and parsed back to a Number exactly once.
+ * In practice `cents / 100` also round-trips cleanly for realistic prices --
+ * JS's Number-to-string algorithm always picks the shortest decimal that
+ * round-trips to the same double, and for an integer divided by a power of
+ * ten that shortest decimal IS the terminating 2-decimal value -- so this
+ * function's output is bit-for-bit identical to naive division across the
+ * whole range tested. It's still written this way rather than as
+ * `cents / 100`: relying on that shortest-round-trip property is an
+ * implementation detail of engine number formatting to depend on for money,
+ * not a guarantee this code should assume silently, and integer arithmetic
+ * costs nothing here.
+ */
+export function centsToDollars(cents: number): number {
+  if (!Number.isInteger(cents)) {
+    throw new TypeError(`centsToDollars: priceCents must be an integer, got ${cents}`)
+  }
+  const negative = cents < 0
+  const abs = BigInt(Math.abs(cents))
+  const dollars = abs / 100n
+  const remainder = abs % 100n
+  const decimal = `${negative ? '-' : ''}${dollars.toString()}.${remainder.toString().padStart(2, '0')}`
+  return Number(decimal)
+}
+
 export interface CanonicalChannelOrder {
   externalOrderId: string
   email: string
@@ -67,7 +100,7 @@ export function toInventoryPayload(walmartSku: string, quantity: number): unknow
 }
 
 export function toPricePayload(walmartSku: string, priceCents: number): unknown {
-  return { sku: walmartSku, pricing: [{ currentPriceType: 'BASE', currentPrice: { currency: 'USD', amount: priceCents / 100 } }] }
+  return { sku: walmartSku, pricing: [{ currentPriceType: 'BASE', currentPrice: { currency: 'USD', amount: centsToDollars(priceCents) } }] }
 }
 
 export function toShipPayload(input: { lineNumbers: string[]; quantityByLine: Record<string, number>; carrier: string; trackingNumber: string; trackingUrl?: string; shipDateIso: string }): unknown {
