@@ -61,6 +61,17 @@ describe('walmart listings', () => {
     await expect(createListing(vDraft.id, 'ABE-D-W')).rejects.toMatchObject({ code: 'not_published' })
   })
 
+  // Write-time guard: catches a bad price override at creation, before it
+  // ever reaches submitItemFeed or the price push. seedVariant's catalog
+  // price is a valid 4999, so only the override itself is under test here.
+  it('refuses to create a listing with a $0 or negative price override', async () => {
+    const v = await seedVariant()
+    await expect(createListing(v.id, 'ABE-ZERO-W', { priceOverrideCents: 0 })).rejects.toMatchObject({ code: 'invalid_price' })
+    await expect(createListing(v.id, 'ABE-NEG-W', { priceOverrideCents: -500 })).rejects.toMatchObject({ code: 'invalid_price' })
+    // Neither rejected attempt left a row behind.
+    expect(await prisma.channelListing.count({ where: { variantId: v.id } })).toBe(0)
+  })
+
   it('submits an item feed and tracks status to live', async () => {
     const v = await seedVariant()
     const l = await createListing(v.id, 'ABE-C-W')
@@ -184,6 +195,24 @@ describe('walmart listings', () => {
     const l = await createListing(v.id, 'ABE-C-W')
     process.env.ASSET_PUBLIC_BASE_URL = ''
     await expect(submitItemFeed([l.id])).rejects.toMatchObject({ code: 'asset_base_url_unset' })
+  })
+
+  // The other boundary the same money crosses: the INITIAL listing price,
+  // via the item feed, not just the recurring price push. createListing's
+  // own write-time guard blocks a bad override at creation, so this
+  // simulates the price having gone bad AFTER that check ran (e.g. the
+  // catalog price itself dropping to 0) by creating the listing directly.
+  // The point is that submitItemFeed must refuse on its own, independent of
+  // createListing ever having run correctly.
+  it('refuses to submit an item feed for a listing with a non-positive resolved price, without calling Walmart', async () => {
+    const v = await seedVariant()
+    await prisma.variant.update({ where: { id: v.id }, data: { priceCents: 0 } })
+    const l = await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-ZEROFEED-W', status: 'draft' } })
+    const calls: any[] = []
+    const client: WalmartClient = { request: async (method, path) => { calls.push({ method, path }); return { feedId: 'SHOULD-NOT-HAPPEN' } } }
+    await expect(submitItemFeed([l.id], client)).rejects.toMatchObject({ code: 'invalid_price' })
+    expect(calls).toEqual([])
+    expect((await prisma.channelListing.findUniqueOrThrow({ where: { id: l.id } })).status).toBe('draft')
   })
 
   // Fail-closed: an item outcome we don't recognise must never become a

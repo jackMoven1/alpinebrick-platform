@@ -3,6 +3,7 @@ import { prisma } from '../../prisma.js'
 import { type WalmartClient, getWalmartClient } from './client.js'
 import { toItemFeed } from './mappers.js'
 import { ChannelError } from './orders.ingest.js'
+import { resolveListingPriceCents } from './pricing.js'
 import { imageUrl } from '../../assets/image-url.js'
 
 export async function createListing(
@@ -14,6 +15,12 @@ export async function createListing(
   if (variant.product.status !== 'published') {
     throw new ChannelError('not_published', `product ${variant.product.slug} is not published`)
   }
+  // Write-time check: gives a clearer error at creation than waiting for the
+  // push path (or submitItemFeed) to dead-letter a job over a bad price set
+  // here. NOT a substitute for either of those -- this only ever sees the
+  // price at creation time, and priceOverrideCents / variant.priceCents can
+  // both change afterward without going through createListing again.
+  resolveListingPriceCents({ priceOverrideCents: opts.priceOverrideCents ?? null, variant: { priceCents: variant.priceCents } })
   const listing = await prisma.channelListing.create({
     data: { variantId, walmartSku, bufferPct: opts.bufferPct, priceOverrideCents: opts.priceOverrideCents },
     select: { id: true },
@@ -83,7 +90,12 @@ export async function submitItemFeed(
       walmartSku: l.walmartSku,
       name: l.variant.product.name,
       description: l.variant.product.description,
-      priceCents: l.priceOverrideCents ?? l.variant.priceCents,
+      // Same precedence + <=0 guard the price push uses -- this is the
+      // OTHER boundary the same money crosses (the initial listing price,
+      // via the item feed, vs. the recurring price push), and it must fail
+      // closed the same way: a bad price here would list the item live at
+      // that price, not just fail a later price update.
+      priceCents: resolveListingPriceCents(l),
       imageUrls: resolveImageUrls(l.variant.product.images, l.variant.product.slug),
     })),
   )

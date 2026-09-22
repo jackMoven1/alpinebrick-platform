@@ -86,7 +86,9 @@ describe('walmart price push', () => {
       { cents: 7, amount: 0.07, label: 'non-round cents under a dollar' },
       { cents: 33, amount: 0.33, label: 'non-round cents' },
       { cents: 4999, amount: 49.99, label: 'ordinary retail price' },
-      { cents: 0, amount: 0, label: 'exactly zero' },
+      // Zero is deliberately NOT a case here -- resolveListingPriceCents
+      // refuses it before it reaches toPricePayload. Covered separately
+      // below, as a refusal rather than a serialisation.
       { cents: 999999999, amount: 9999999.99, label: 'a large price' },
     ]
     for (const { cents, amount, label } of cases) {
@@ -100,6 +102,42 @@ describe('walmart price push', () => {
       // The load-bearing assertion: the exact JSON text sent over the wire.
       expect(JSON.stringify(body.pricing[0].currentPrice), label).toBe(JSON.stringify({ currency: 'USD', amount }))
     }
+  })
+
+  // --- The guard: a $0 or negative resolved price must never reach Walmart ---
+
+  it('refuses to push a $0 catalog price (no override) rather than listing free', async () => {
+    const p = await prisma.product.create({ data: { slug: 'zero-catalog', name: 'ZeroCatalog', productType: 'own_designed' } })
+    const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-ZC', priceCents: 0 } })
+    const listing = await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-ZC-W', status: 'live' } })
+    const { client, calls } = recordingClient()
+    await expect(pushPriceForVariant(v.id, client)).rejects.toMatchObject({ code: 'invalid_price' })
+    expect(calls).toEqual([])
+    expect((await prisma.channelListing.findUniqueOrThrow({ where: { id: listing.id } })).lastPushedPriceCents).toBeNull()
+  })
+
+  // The case the `??` vs `||` choice actually protects: a valid, positive
+  // catalog price with a $0 OVERRIDE on top of it. Under `||` this would
+  // silently fall through to the (valid) catalog price and push happily --
+  // wrong, because the override is what the caller actually asked for. `??`
+  // preserves the `0`, so it reaches the guard and is refused instead of
+  // silently substituting a different price the caller didn't set.
+  it('refuses to push a $0 override even though the catalog price is valid', async () => {
+    const p = await prisma.product.create({ data: { slug: 'zero-override', name: 'ZeroOverride', productType: 'own_designed' } })
+    const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-ZO', priceCents: 4999 } })
+    await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-ZO-W', status: 'live', priceOverrideCents: 0 } })
+    const { client, calls } = recordingClient()
+    await expect(pushPriceForVariant(v.id, client)).rejects.toMatchObject({ code: 'invalid_price' })
+    expect(calls).toEqual([])
+  })
+
+  it('refuses to push a negative price', async () => {
+    const p = await prisma.product.create({ data: { slug: 'neg-price', name: 'NegPrice', productType: 'own_designed' } })
+    const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-NEG', priceCents: 4999 } })
+    await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-NEG-W', status: 'live', priceOverrideCents: -500 } })
+    const { client, calls } = recordingClient()
+    await expect(pushPriceForVariant(v.id, client)).rejects.toMatchObject({ code: 'invalid_price' })
+    expect(calls).toEqual([])
   })
 })
 
@@ -159,5 +197,27 @@ describe('enqueuePricePush', () => {
     ])
     const listing = await prisma.channelListing.findFirstOrThrow()
     expect(listing.lastPushedPriceCents).toBe(1234)
+  })
+
+  // The guard must dead-letter LOUDLY through the job's own lastError, not
+  // crash processDueJobs's sweep of other jobs and not disappear silently --
+  // this is what "unguarded" looked like before the fix: a $0 price would
+  // have gone straight to Walmart with no error anywhere.
+  it('an invalid resolved price fails the job with a readable lastError instead of crashing the sweep', async () => {
+    const p = await prisma.product.create({ data: { slug: 'e2e-invalid', name: 'E2EInvalid', productType: 'own_designed' } })
+    const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-E2E-INV', priceCents: 0 } })
+    await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-E2E-INV-W', status: 'live' } })
+    const { client, calls } = recordingClient()
+    registerPriceHandlers(client)
+    await enqueuePricePush(v.id)
+    const r = await processDueJobs()
+    expect(r).toEqual({ processed: 0, failed: 1 })
+    expect(calls).toEqual([])
+    const job = await prisma.channelJob.findFirstOrThrow({ where: { type: 'walmart_push_price' } })
+    expect(job.status).toBe('pending') // first failure, retried later -- not silently dropped
+    // processDueJobs records only e.message in lastError (see outbox.ts), not
+    // the ChannelError's .code -- so the guard's message has to be readable
+    // on its own for anyone reading channel_jobs, which is what's asserted here.
+    expect(job.lastError).toContain('resolved price 0 cents is not > 0')
   })
 })

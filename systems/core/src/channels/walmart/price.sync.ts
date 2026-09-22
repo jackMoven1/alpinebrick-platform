@@ -2,6 +2,7 @@ import { prisma } from '../../prisma.js'
 import { type WalmartClient, getWalmartClient } from './client.js'
 import { toPricePayload } from './mappers.js'
 import { enqueueJob, registerHandler } from './outbox.js'
+import { resolveListingPriceCents } from './pricing.js'
 
 // Same pushable set as inventory.sync.ts (Task 7): a listing only reaches
 // `live` via a Walmart-confirmed SUCCESS on the item feed, and `submitted`
@@ -21,12 +22,17 @@ const PUSHABLE = new Set(['live', 'submitted'])
  * the storefront price), else `variant.priceCents` (the catalog price).
  * `??` is deliberate over `||` -- an override of `0` is a real (if unusual)
  * override, not "unset"; only `null`/`undefined` fall through to the
- * catalog price.
+ * catalog price. That precedence is resolved by `resolveListingPriceCents`,
+ * not inlined here, because it is also the last gate against a $0 or
+ * negative price reaching Walmart -- this is a recurring push, so it is the
+ * one place that catches a bad price regardless of source: a bad import, a
+ * bad seed, a future admin UI, or `variant.priceCents` itself. See that
+ * function's doc comment for why it throws instead of clamping or skipping.
  */
 export async function pushPriceForVariant(variantId: string, client: WalmartClient = getWalmartClient()): Promise<void> {
   const listing = await prisma.channelListing.findUnique({ where: { variantId }, include: { variant: true } })
   if (!listing || !PUSHABLE.has(listing.status)) return
-  const priceCents = listing.priceOverrideCents ?? listing.variant.priceCents
+  const priceCents = resolveListingPriceCents(listing)
   await client.request('PUT', '/v3/price', { body: toPricePayload(listing.walmartSku, priceCents) })
   await prisma.channelListing.update({ where: { id: listing.id }, data: { lastPushedPriceCents: priceCents, lastSyncedAt: new Date() } })
 }

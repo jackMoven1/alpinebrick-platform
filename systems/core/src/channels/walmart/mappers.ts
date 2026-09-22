@@ -10,24 +10,15 @@ export function toCents(dollars: number): number {
 
 /**
  * The one outbound conversion boundary: integer cents (our side) -> decimal
- * dollars (Walmart's `amount` fields). Mirrors `toCents` in the other
- * direction, and is the only place that boundary is crossed -- every
- * outbound payload builder in this file calls this instead of dividing
- * inline.
+ * dollars (Walmart's `amount`/`price` fields). Mirrors `toCents` in the
+ * other direction; every outbound payload builder in this file calls this
+ * instead of dividing inline.
  *
- * Built entirely on BigInt integer arithmetic (never `cents / 100`) so the
- * dollars/remainder split cannot be off by a float-rounding epsilon, then
- * assembled as a decimal string and parsed back to a Number exactly once.
- * In practice `cents / 100` also round-trips cleanly for realistic prices --
- * JS's Number-to-string algorithm always picks the shortest decimal that
- * round-trips to the same double, and for an integer divided by a power of
- * ten that shortest decimal IS the terminating 2-decimal value -- so this
- * function's output is bit-for-bit identical to naive division across the
- * whole range tested. It's still written this way rather than as
- * `cents / 100`: relying on that shortest-round-trip property is an
- * implementation detail of engine number formatting to depend on for money,
- * not a guarantee this code should assume silently, and integer arithmetic
- * costs nothing here.
+ * Built on BigInt integer arithmetic and a single string->Number parse
+ * rather than `cents / 100` -- not because the division is wrong (it isn't:
+ * both paths round the same exact rational to the same double, always, for
+ * any integer `cents`), but so correctness doesn't rest on that fact staying
+ * true unnoticed. The integer check below is the part that earns its keep.
  */
 export function centsToDollars(cents: number): number {
   if (!Number.isInteger(cents)) {
@@ -85,7 +76,7 @@ export function toItemFeed(items: { walmartSku: string; name: string; descriptio
         sku: i.walmartSku,
         productIdentifiers: { productIdType: 'SKU', productId: i.walmartSku },
         productName: i.name,
-        price: i.priceCents / 100,
+        price: centsToDollars(i.priceCents),
         ShippingWeight: 1,
       },
       Visible: {
