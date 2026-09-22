@@ -331,9 +331,21 @@ model ChannelSettlement {
   currency        String                  @default("USD")
   orderId         String?                 @map("order_id")
   status          ChannelSettlementStatus @default(unmatched)
+  // Signed: amountCents minus the expected order value reconstructed from
+  // ChannelEvent.raw (Task 12) -- positive means Walmart remitted MORE than
+  // expected, negative means LESS, zero is an exact match. Null only when
+  // `orderId` is null (nothing to compare `amountCents` against). This is the
+  // review-queue surface for a matched-but-wrong-amount row, the same way
+  // `status: 'unmatched'` is the review-queue surface for a row with no order
+  // at all -- see src/channels/walmart/settlement.ts for the reconciliation
+  // this is computed from and why `feeCents` deliberately does not enter the
+  // formula (no expected commission rate exists anywhere in this codebase to
+  // check it against; inventing one would be "estimating a figure").
+  discrepancyCents Int?                   @map("discrepancy_cents")
   raw             Json
   createdAt       DateTime                @default(now()) @map("created_at")
   @@index([externalOrderId])
+  @@index([status])
   @@map("channel_settlements")
 }
 
