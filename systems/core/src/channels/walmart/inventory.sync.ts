@@ -68,10 +68,31 @@ export async function enqueueInventoryPush(variantId: string): Promise<void> {
   await enqueueJob('walmart_push_inventory', { variantId }, { dedupeKey: `inv:${variantId}` })
 }
 
-export async function reconcileAllInventory(client: WalmartClient = getWalmartClient()): Promise<{ pushed: number }> {
+/**
+ * Push current available-to-sell for every live listing.
+ *
+ * Each listing is isolated (final fix wave B3): one listing throwing (a
+ * Walmart 4xx/5xx for that SKU, a bad row) is console.error'd and the sweep
+ * carries on, instead of aborting and leaving every later listing
+ * un-reconciled for another hour. `pushed` counts only listings whose push
+ * completed; `failed` counts the ones that threw.
+ */
+export async function reconcileAllInventory(
+  client: WalmartClient = getWalmartClient(),
+): Promise<{ pushed: number; failed: number }> {
   const listings = await prisma.channelListing.findMany({ where: { status: 'live' }, select: { variantId: true } })
-  for (const l of listings) await pushInventoryForVariant(l.variantId, client)
-  return { pushed: listings.length }
+  let pushed = 0
+  let failed = 0
+  for (const l of listings) {
+    try {
+      await pushInventoryForVariant(l.variantId, client)
+      pushed++
+    } catch (e) {
+      failed++
+      console.error(`walmart inventory reconcile: push failed for variant ${l.variantId}:`, e)
+    }
+  }
+  return { pushed, failed }
 }
 
 export function registerInventoryHandlers(client: WalmartClient = getWalmartClient()): void {

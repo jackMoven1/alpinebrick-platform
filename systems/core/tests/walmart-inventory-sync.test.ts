@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest'
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import { prisma } from '../src/prisma.js'
 import { resetDb } from './helpers/db.js'
 import {
@@ -127,7 +127,7 @@ describe('inventory push', () => {
     await seed(10, 0)
     const { client, calls } = recordingClient()
     const r = await reconcileAllInventory(client)
-    expect(r.pushed).toBe(1)
+    expect(r).toEqual({ pushed: 1, failed: 0 })
     expect(calls.length).toBe(1)
   })
 
@@ -138,8 +138,38 @@ describe('inventory push', () => {
     await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-SUB2-W', status: 'submitted' } })
     const { client, calls } = recordingClient()
     const r = await reconcileAllInventory(client)
-    expect(r.pushed).toBe(0)
+    expect(r).toEqual({ pushed: 0, failed: 0 })
     expect(calls.length).toBe(0)
+  })
+
+  // Final fix wave B3: one listing throwing used to abort the whole sweep,
+  // so every listing after it went un-reconciled for another hour.
+  it('reconcileAllInventory isolates a failing listing, keeps going, and does not count it as pushed', async () => {
+    const skus = ['ABE-R1', 'ABE-R2', 'ABE-R3']
+    for (const [i, sku] of skus.entries()) {
+      const p = await prisma.product.create({ data: { slug: `r${i}`, name: `R${i}`, productType: 'own_designed', status: 'published' } })
+      const v = await prisma.variant.create({ data: { productId: p.id, sku, priceCents: 100 } })
+      await prisma.inventory.create({ data: { variantId: v.id, onHand: 10, reserved: 0 } })
+      await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: `${sku}-W`, status: 'live' } })
+    }
+    const pushedSkus: string[] = []
+    const client: WalmartClient = {
+      request: async (_m, _path, opts: any) => {
+        if (opts?.query?.sku === 'ABE-R1-W') throw new Error('walmart 500 for R1')
+        pushedSkus.push(opts?.query?.sku)
+        return {}
+      },
+    }
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const r = await reconcileAllInventory(client)
+      expect(r).toEqual({ pushed: 2, failed: 1 })
+      expect(pushedSkus.sort()).toEqual(['ABE-R2-W', 'ABE-R3-W'])
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(errorSpy.mock.calls[0].map(String).join(' ')).toContain('walmart 500 for R1')
+    } finally {
+      errorSpy.mockRestore()
+    }
   })
 })
 
