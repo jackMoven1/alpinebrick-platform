@@ -38,7 +38,7 @@ describe('walmart channel schema', () => {
     await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-1-W' } })
     await prisma.channelJob.create({ data: { type: 'walmart_push_inventory', payload: { variantId: v.id } } })
     await prisma.channelFeed.create({ data: { feedId: 'F1', type: 'item', status: 'submitted' } })
-    await prisma.channelSettlement.create({ data: { reportDate: new Date(), externalOrderId: 'PO-1', transactionType: 'Sale', amountCents: 100, feeCents: 15, netCents: 115, raw: {} } })
+    await prisma.channelSettlement.create({ data: { reportDate: new Date(), externalOrderId: 'PO-1', transactionType: 'Sale', amountCents: 100, feeCents: 15, netCents: 115, ledgerKey: 'PO-1-schema-test', raw: {} } })
     await prisma.channelEvent.create({ data: { source: 'webhook', externalId: 'PO-1', eventType: 'order_created' } })
     await expect(prisma.channelEvent.create({ data: { source: 'poll', externalId: 'PO-1', eventType: 'order_created' } }))
       .rejects.toThrow()

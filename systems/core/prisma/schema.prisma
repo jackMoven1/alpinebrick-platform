@@ -95,6 +95,15 @@ enum ChannelSettlementStatus {
   // alone finds it, and so @@index([status]) below actually narrows a
   // `discrepant` query instead of splitting an almost-all-one-value column.
   discrepant
+  // Review round 3, finding B3: a row matched to a real order whose amount
+  // was NEVER COMPARED -- transactionType isn't the sale type, or is empty
+  // (e.g. a column-name mismatch against a future report shape), or no
+  // order_created ChannelEvent exists to reconstruct an expected figure
+  // from. Round 2 filed all of these as `matched`, indistinguishable from a
+  // row that was compared and genuinely matched -- a bookkeeper reading
+  // `matched` had no way to tell "verified zero" from "never checked."
+  // `matched` now means ONLY "compared, and the amount was exactly right."
+  unreconciled
 }
 
 model Product {
@@ -334,13 +343,16 @@ model ChannelSettlement {
   reportDate      DateTime                @map("report_date")
   externalOrderId String                  @map("external_order_id")
   // Walmart's own per-row transaction classification (recon report
-  // "Transaction Type" column) -- e.g. `PaymentWithdrawn` for a sale
-  // settlement, `Adjustment` for something else. Part of the idempotency
-  // key (fix review round 1) and the gate on whether `discrepancyCents` is
-  // even attempted: Walmart emits multiple transaction rows per PO (a sale
-  // row and, separately, a refund row are both real rows for the same PO),
-  // and comparing a non-sale row's amount against a whole-order-lifetime
-  // expected net is comparing two things that were never meant to match.
+  // "Transaction Type" column) -- documented values are `Sale` (a customer
+  // order/payment) and `PaymentSummary` (settlement/payout activity); see
+  // SALE_TRANSACTION_TYPE's doc comment in settlement.ts for the citation
+  // (review round 2 corrected this from `PaymentWithdrawn`, an invented
+  // placeholder that appears nowhere in Walmart's documentation). The gate
+  // on whether `discrepancyCents` is even attempted: Walmart emits multiple
+  // transaction rows per PO, and a single sale itself arrives as several
+  // itemised `Sale` rows -- comparing a non-sale row's amount against the
+  // order's expected gross is comparing two things that were never meant
+  // to match.
   transactionType String                  @map("transaction_type")
   amountCents     Int                     @map("amount_cents")
   feeCents        Int                     @map("fee_cents")
@@ -353,36 +365,67 @@ model ChannelSettlement {
   currency        String                  @default("USD")
   orderId         String?                 @map("order_id")
   status          ChannelSettlementStatus @default(unmatched)
-  // Signed: amountCents minus the expected order value reconstructed from
-  // ChannelEvent.raw (Task 12) -- positive means Walmart remitted MORE than
-  // expected, negative means LESS, zero is an exact match. This reconciles
-  // REVENUE RECOGNITION, not cash: feeCents/commission deliberately never
-  // enters the formula (no expected commission rate exists anywhere in this
-  // codebase to check Walmart's stated commission against; inventing one
-  // would be "estimating a figure"), so a wrong commission hides perfectly
-  // inside a matching amountCents -- this column cannot catch that, only a
-  // real bank/cash reconciliation against `netCents` can.
+  // Signed: the order's itemised Sale-row aggregate (see
+  // saleAmountSumByOrder in settlement.ts) minus the order's expected GROSS
+  // value reconstructed from ChannelEvent.raw (Task 12) -- positive means
+  // Walmart's Sale rows sum to MORE than expected, negative means LESS,
+  // zero is an exact match. Compared against GROSS only (review round 3,
+  // finding B2): refunds do NOT net into this figure -- a `Sale` row is
+  // gross by Walmart's own documented model, and a refund is its own,
+  // separate settlement row. This reconciles REVENUE RECOGNITION, not cash:
+  // feeCents/commission deliberately never enters the formula (no expected
+  // commission rate exists anywhere in this codebase to check Walmart's
+  // stated commission against; inventing one would be "estimating a
+  // figure"), so a wrong commission hides perfectly inside a matching
+  // amountCents -- this column cannot catch that, only a real bank/cash
+  // reconciliation against `netCents` can.
+  //
+  // WARNING: this figure is an ORDER-LEVEL result written to EVERY `Sale`
+  // row in the order's itemised group (review round 2's aggregation) --
+  // `SUM(discrepancy_cents)` over multiple rows of the same group
+  // over-reports by a factor of the group's row count. Read one row per
+  // group, never sum across a group. (Review round 3, finding B4: the
+  // group is scoped to one import call's own rows and is NOT re-stamped
+  // when a later call adds sibling rows for the same order -- see
+  // settlement.ts's `saleAmountSumByOrder` doc comment for the known
+  // limitation and the task report for why this was left as a deliberate
+  // stop rather than a rushed fix.)
   //
   // Null when there is nothing comparable to compute against: `orderId` is
   // null (no order), the row's `transactionType` isn't the sale type this
   // reconciliation understands, or no order_created ChannelEvent.raw is on
   // file to reconstruct an expected figure from (this codebase never falls
   // back to Order.totalCents for that -- a figure known to exclude shipping
-  // is not a safe stand-in, see settlement.ts). A `'matched'` row can
-  // therefore still carry a null discrepancyCents; `status: 'discrepant'`
-  // is the queryable signal that a real, non-zero comparison was made and
-  // failed. See src/channels/walmart/settlement.ts for the computation.
+  // is not a safe stand-in, see settlement.ts). Null discrepancyCents pairs
+  // with `status: 'unreconciled'` (review round 3, finding B3) -- NOT
+  // `'matched'`, which now means only "compared, and exactly right."
+  // `status: 'discrepant'` is the queryable signal that a real, non-zero
+  // comparison was made and failed. See src/channels/walmart/settlement.ts
+  // for the computation.
+  //
+  // UNVERIFIED AGAINST REAL WALMART DATA -- see the prominent warning at
+  // the top of settlement.ts. Every fact this column depends on (the recon
+  // report's wire format, its Transaction Type/Amount Type values, whether
+  // Sale rows are truly gross) is reasoned from one fetched documentation
+  // page, not a live Walmart report. No figure here should be acted on
+  // until Task 13's sandbox end-to-end check confirms the report shape.
   discrepancyCents Int?                   @map("discrepancy_cents")
   raw             Json
   createdAt       DateTime                @default(now()) @map("created_at")
-  // Idempotency key (fix review round 1): a DB-enforced constraint, not
-  // app-level findFirst-then-create, which is non-atomic under two
-  // concurrent imports of the same report. toCents is deterministic for
-  // identical input, so two genuinely different pulls of the same
-  // (PO, date, type) with a different amount or fee are DIFFERENT rows on
-  // purpose -- a correction is something a human should see as a second
-  // row, not something silently dropped for matching an older one.
-  @@unique([externalOrderId, reportDate, transactionType, amountCents, feeCents])
+  // Idempotency key (review round 3, finding B1, overruling round 1's
+  // value-based key): Walmart's own `Transaction Key` where the report
+  // provides one, falling back to `(externalOrderId, Purchase Order
+  // line #, Amount Type, reportDate)` -- an IDENTITY key, not a value key.
+  // Round 1's `(externalOrderId, reportDate, transactionType, amountCents,
+  // feeCents)` collapsed genuinely distinct rows whenever two different
+  // line items happened to carry the same amount and fee (e.g. two
+  // same-price SKUs on one order, or a $0 fee on both a Shipping and a Tax
+  // line) -- `findFirst` found the FIRST one and silently skipped the
+  // second as if it were a re-delivery, while the in-memory aggregate
+  // (computed from the input rows, not the persisted ones) still counted
+  // it, so the stored discrepancy no longer matched what the persisted
+  // rows actually summed to. See computeLedgerKey in settlement.ts.
+  ledgerKey       String                  @unique @map("ledger_key")
   @@index([externalOrderId])
   @@index([status])
   @@map("channel_settlements")
