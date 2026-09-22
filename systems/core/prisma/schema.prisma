@@ -281,6 +281,11 @@ model ChannelFeed {
   type        ChannelFeedType
   status      ChannelFeedStatus @default(submitted)
   errors      Json?
+  // The ChannelListing ids this feed covers, written once at submission time
+  // by submitItemFeed. checkFeedStatus reads it back to know which listings
+  // to update on a status transition -- the feed has no FK to listings
+  // (a feed can cover several) so this Json array is the only linkage.
+  listingIds  Json              @default("[]") @map("listing_ids")
   submittedAt DateTime          @default(now()) @map("submitted_at")
   updatedAt   DateTime          @updatedAt @map("updated_at")
   @@map("channel_feeds")
