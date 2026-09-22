@@ -60,15 +60,14 @@ export async function ingestWalmartOrder(
   payload: unknown,
   source: 'webhook' | 'poll',
 ): Promise<{ orderId: string | null; created: boolean }> {
-  // NOTE (flagged to the plan owner, not resolved here -- see task-5-report.md
-  // "Important 4"): `payload` is never persisted past this function. mappers.ts
-  // only maps `charges.charge[chargeType === 'PRODUCT']`, so Walmart's
-  // SHIPPING charges (and their tax) are read here and then discarded --
-  // nothing in this schema captures the raw order payload the way
-  // `ChannelSettlement.raw` captures a raw settlement report. Task 12
-  // (settlement matching) will need Walmart's actual remitted total,
-  // including shipping, to reconcile against `Order.totalCents`; as ingested
-  // today, that information does not exist anywhere after this call returns.
+  // mappers.ts's toCanonicalOrder only maps
+  // `charges.charge[chargeType === 'PRODUCT']`, so Walmart's SHIPPING charges
+  // (and their tax) never reach `canonical` or `Order.totalCents`. `payload`
+  // itself is never mutated or filtered by anything below -- it's the same
+  // value received here, written verbatim to `ChannelEvent.raw` when that
+  // row is created further down. That's Task 12's (settlement matching)
+  // reconciliation source for the gap between `Order.totalCents` and what
+  // Walmart actually remits.
   let canonical
   try {
     canonical = toCanonicalOrder(payload)
@@ -158,7 +157,16 @@ export async function ingestWalmartOrder(
       })
 
       await tx.channelEvent.create({
-        data: { source, externalId: canonical.externalOrderId, eventType: 'order_created' },
+        // `raw: payload` -- the payload exactly as this function received it,
+        // not `canonical` -- so whatever toCanonicalOrder's mapping drops
+        // (SHIPPING charges today, whatever else tomorrow) still survives
+        // somewhere. See the function doc comment above.
+        data: {
+          source,
+          externalId: canonical.externalOrderId,
+          eventType: 'order_created',
+          raw: payload as Prisma.InputJsonValue,
+        },
       })
 
       // Passing `tx` (not the default client) is load-bearing: it puts this

@@ -53,6 +53,36 @@ describe('ingestWalmartOrder', () => {
     expect(audit.target).toBe(`order:${r.orderId}`)
   })
 
+  // mappers.ts's toCanonicalOrder only maps chargeType === 'PRODUCT', so a
+  // SHIPPING charge on the same order line never reaches `canonical` and
+  // never reaches `Order.subtotalCents`/`taxCents`/`totalCents`. This is the
+  // property Task 12 (settlement matching) needs: the SHIPPING charge must
+  // still be recoverable from *somewhere*, because it's exactly the kind of
+  // gap that shows up as a mismatch between our stored total and what
+  // Walmart actually remits.
+  it('preserves a charge the mapper drops (SHIPPING) in ChannelEvent.raw, while Order totals reflect PRODUCT only', async () => {
+    await seedListing(10)
+    const payloadWithShipping = structuredClone(walmartOrderFixture) as any
+    payloadWithShipping.orderLines.orderLine[0].charges.charge.push({
+      chargeType: 'SHIPPING',
+      chargeAmount: { currency: 'USD', amount: 5.99 },
+      tax: { taxName: 'Tax1', taxAmount: { currency: 'USD', amount: 0.36 } },
+    })
+
+    const r = await ingestWalmartOrder(payloadWithShipping, 'webhook')
+
+    const event = await prisma.channelEvent.findUniqueOrThrow({
+      where: { externalId_eventType: { externalId: 'PO-1001', eventType: 'order_created' } },
+    })
+    const rawCharges = (event.raw as any).orderLines.orderLine[0].charges.charge
+    expect(rawCharges).toEqual(payloadWithShipping.orderLines.orderLine[0].charges.charge)
+    expect(rawCharges.some((c: any) => c.chargeType === 'SHIPPING' && c.chargeAmount.amount === 5.99)).toBe(true)
+
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: r.orderId! } })
+    // Unchanged from the PRODUCT-only fixture: SHIPPING never reached these.
+    expect(order).toMatchObject({ subtotalCents: 9998, taxCents: 600, totalCents: 10598 })
+  })
+
   it('is idempotent across webhook + poll duplication (sequential)', async () => {
     await seedListing(10)
     const first = await ingestWalmartOrder(walmartOrderFixture, 'webhook')

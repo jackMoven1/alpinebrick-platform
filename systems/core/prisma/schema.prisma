@@ -291,6 +291,12 @@ model ChannelEvent {
   source      ChannelEventSource
   externalId  String             @map("external_id")
   eventType   String             @map("event_type")
+  // The payload exactly as received, before any mapping/filtering (e.g. the
+  // Walmart order mapper drops SHIPPING charges when it builds canonical
+  // lines). Nullable: existing rows predate this column and events that
+  // never carried a meaningful payload don't need one. Mirrors
+  // ChannelSettlement.raw -- same idea, inbound side.
+  raw         Json?
   processedAt DateTime           @default(now()) @map("processed_at")
   @@unique([externalId, eventType])
   @@map("channel_events")
