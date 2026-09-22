@@ -77,7 +77,56 @@ describe('walmart returns', () => {
     const after = await prisma.inventory.findUniqueOrThrow({ where: { variantId: variant.id } })
     expect(after.onHand).toBe(before.onHand)
     expect(after.reserved).toBe(before.reserved)
-    void orderId
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe('refunded')
+  })
+
+  it('does not transition the order on a zero or missing refund amount', async () => {
+    const orderId = await seedFulfilledOrder()
+    const zeroRefund = { returnOrderId: 'RO-3', customerOrderInfo: { purchaseOrderId: 'PO-1001' }, refundedAmount: { currency: 'USD', amount: 0 } }
+    const r = await ingestWalmartReturn(zeroRefund, 'webhook')
+    expect(r.created).toBe(true)
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe('fulfilled')
+    expect(await prisma.auditLog.count({ where: { action: 'walmart_order_refunded' } })).toBe(0)
+  })
+
+  it('rejects refunding a nonexistent order', async () => {
+    await expect(markOrderRefunded('no-such-order')).rejects.toMatchObject({ code: 'order_not_found' })
+  })
+
+  it('resolves a true concurrent re-delivery race to one refund, not a raw constraint error', async () => {
+    const orderId = await seedFulfilledOrder()
+    const [a, b] = await Promise.all([
+      ingestWalmartReturn(returnFixture, 'webhook'),
+      ingestWalmartReturn(returnFixture, 'poll'),
+    ])
+    const winners = [a, b].filter((r) => r.created)
+    const losers = [a, b].filter((r) => !r.created)
+    expect(winners).toHaveLength(1)
+    expect(losers).toHaveLength(1)
+    expect(await prisma.channelEvent.count({ where: { externalId: 'RO-1' } })).toBe(1)
+    expect(await prisma.auditLog.count({ where: { action: 'walmart_order_refunded' } })).toBe(1)
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe('refunded')
+  })
+
+  it('does not double-refund when two distinct returns for the same order race concurrently', async () => {
+    const orderId = await seedFulfilledOrder()
+    const returnA = { returnOrderId: 'RO-1', customerOrderInfo: { purchaseOrderId: 'PO-1001' }, refundedAmount: { currency: 'USD', amount: 20 } }
+    const returnB = { returnOrderId: 'RO-2', customerOrderInfo: { purchaseOrderId: 'PO-1001' }, refundedAmount: { currency: 'USD', amount: 30 } }
+    const [a, b] = await Promise.all([
+      ingestWalmartReturn(returnA, 'webhook'),
+      ingestWalmartReturn(returnB, 'webhook'),
+    ])
+    // Both are real, distinct returns and must both be recorded -- neither is
+    // a re-delivery of the other.
+    expect(a.created).toBe(true)
+    expect(b.created).toBe(true)
+    expect(await prisma.channelEvent.count({ where: { eventType: 'return_created' } })).toBe(2)
+    expect(await prisma.auditLog.count({ where: { action: 'walmart_return_ingested' } })).toBe(2)
+    // But only one of them can actually flip the order -- the second one to
+    // reach the conditional UPDATE loses the race and its transition is
+    // skipped, not double-applied.
+    expect(await prisma.auditLog.count({ where: { action: 'walmart_order_refunded' } })).toBe(1)
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe('refunded')
   })
 
   it('rejects invalid refund transitions', async () => {
@@ -111,6 +160,7 @@ describe('walmart returns', () => {
     const client: WalmartClient = { request: async (m, path) => { calls.push({ m, path }); return { returnOrders: [returnFixture] } } }
     await issueWalmartRefund('RO-1', client)
     expect(calls[0]).toEqual({ m: 'POST', path: '/v3/returns/RO-1/refund' })
+    expect(await prisma.auditLog.count({ where: { action: 'walmart_refund_issued' } })).toBe(1)
 
     const polled = await pollWalmartReturns(client)
     expect(polled.found).toBe(1)

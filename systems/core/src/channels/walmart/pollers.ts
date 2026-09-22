@@ -1,6 +1,7 @@
 import { type WalmartClient, getWalmartClient } from './client.js'
 import { ingestWalmartOrder, ChannelError } from './orders.ingest.js'
 import { ingestWalmartReturn } from './returns.service.js'
+import { OrderError } from '../../orders/orders.service.js'
 
 /**
  * Reconciliation sweep for anything the webhook missed. Redundant with
@@ -60,7 +61,13 @@ export async function pollWalmartOrders(
  *
  * A `ChannelError` from one return (e.g. `unmappable_return`) is logged and
  * skipped, never thrown -- one bad return in the batch must not abort the
- * sweep for the rest, matching `pollWalmartOrders`.
+ * sweep for the rest, matching `pollWalmartOrders`. `OrderError` is caught
+ * the same way: `ingestWalmartReturn` swallows its own expected race
+ * (`invalid_transition` from a concurrent return already refunding the same
+ * order) internally and should never let one escape here, but the poller's
+ * job is to survive a batch even if that internal handling has a gap, not to
+ * assume it never will -- an uncaught `OrderError` must not abort the sweep
+ * for every return after it, the same as an uncaught `ChannelError` must not.
  */
 export async function pollWalmartReturns(
   client: WalmartClient = getWalmartClient(),
@@ -75,7 +82,7 @@ export async function pollWalmartReturns(
       const result = await ingestWalmartReturn(r, 'poll')
       if (result.created) created++
     } catch (e) {
-      if (e instanceof ChannelError) {
+      if (e instanceof ChannelError || e instanceof OrderError) {
         console.error(`walmart returns poll: ${e.code} -- ${e.message}`)
       } else {
         throw e
