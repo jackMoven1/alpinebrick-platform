@@ -1,32 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { toCents, toCanonicalOrder, toItemFeed, toInventoryPayload, toPricePayload, toShipPayload } from '../src/channels/walmart/mappers.js'
-
-// Trimmed from a real sandbox order response shape (Orders API v3).
-export const walmartOrderFixture = {
-  purchaseOrderId: 'PO-1001',
-  customerOrderId: 'CO-9001',
-  customerEmailId: 'mgr@relay.walmart.com',
-  orderDate: 1754160000000,
-  shippingInfo: { postalAddress: { state: 'MI', postalCode: '48823' } },
-  orderLines: {
-    orderLine: [
-      {
-        lineNumber: '1',
-        item: { sku: 'ABE-SET-001-W', productName: 'Castle Set' },
-        orderLineQuantity: { unitOfMeasurement: 'EACH', amount: '2' },
-        charges: {
-          charge: [
-            {
-              chargeType: 'PRODUCT',
-              chargeAmount: { currency: 'USD', amount: 49.99 },
-              tax: { taxName: 'Tax1', taxAmount: { currency: 'USD', amount: 3.0 } },
-            },
-          ],
-        },
-      },
-    ],
-  },
-}
+import { walmartOrderFixture } from './helpers/walmart-fixtures.js'
 
 describe('walmart mappers', () => {
   it('toCents rounds decimal dollars', () => {

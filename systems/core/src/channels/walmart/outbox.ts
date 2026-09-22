@@ -14,6 +14,16 @@ export function clearHandlers(): void {
 }
 
 /**
+ * A Prisma client or an interactive-transaction client. Mirrors
+ * `AuditDb` in `../../audit.ts`: accepting both lets a caller enqueue a job
+ * INSIDE the transaction that performs the write it schedules follow-up work
+ * for, so the job and that write commit or roll back together. Passing
+ * nothing keeps the old behaviour -- the job is written on its own
+ * connection, independent of any transaction the caller happens to be in.
+ */
+export type JobDb = Pick<Prisma.TransactionClient, 'channelJob'>
+
+/**
  * Enqueue a job.
  *
  * `dedupeKey` collapses bursts: while a job with that key is still `pending`,
@@ -29,8 +39,9 @@ export async function enqueueJob(
   type: string,
   payload: unknown,
   opts: { dedupeKey?: string; runAfter?: Date } = {},
+  db: JobDb = prisma,
 ): Promise<{ id: string } | null> {
-  return createJob(type, payload, opts, false)
+  return createJob(type, payload, opts, false, db)
 }
 
 async function createJob(
@@ -38,9 +49,10 @@ async function createJob(
   payload: unknown,
   opts: { dedupeKey?: string; runAfter?: Date },
   retried: boolean,
+  db: JobDb,
 ): Promise<{ id: string } | null> {
   try {
-    return await prisma.channelJob.create({
+    return await db.channelJob.create({
       data: {
         type,
         payload: payload as Prisma.InputJsonValue,
@@ -55,10 +67,10 @@ async function createJob(
     // Retry at most once. A second P2002 means another writer won the race and
     // its job is pending, which is exactly the burst this key exists to collapse.
     if (retried) return null
-    const existing = await prisma.channelJob.findUnique({ where: { dedupeKey: opts.dedupeKey } })
+    const existing = await db.channelJob.findUnique({ where: { dedupeKey: opts.dedupeKey } })
     if (existing && existing.status !== 'pending') {
-      await prisma.channelJob.update({ where: { id: existing.id }, data: { dedupeKey: null } })
-      return createJob(type, payload, opts, true)
+      await db.channelJob.update({ where: { id: existing.id }, data: { dedupeKey: null } })
+      return createJob(type, payload, opts, true, db)
     }
     return null
   }
