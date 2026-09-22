@@ -100,17 +100,41 @@ export async function cancelChannelOrder(orderId: string): Promise<void> {
   })
 }
 
+/**
+ * Order lines in the order `ingestWalmartOrder` created them (final fix wave
+ * B2). Without an orderBy, Postgres returns rows in physical order, which an
+ * ordinary UPDATE of a line changes (the new row version lands elsewhere in
+ * the heap) -- and the position-derived Walmart line numbers above would
+ * then ship or cancel the wrong line's quantity.
+ *
+ * Ordered by `id`: OrderLine has no created-at or position column, and its
+ * `id` is a Prisma `cuid()` -- 'c' + millisecond timestamp + per-process
+ * counter, both fixed-width base36 -- so ids sort in generation order.
+ * Ingest creates every line of an order in one nested `lines.create` array,
+ * in `canonical.lines` order (which is Walmart's orderLine array order), and
+ * Prisma generates the ids in that array order within one process. Caveat:
+ * the 4-char counter wraps every ~1.68M ids, so an order whose lines straddle
+ * a wrap in the same millisecond would sort out of order; negligible, but it
+ * is why this is ordering by proxy.
+ *
+ * The real fix is to store Walmart's own `lineNumber` on OrderLine at ingest
+ * and send that back -- on the launch checklist
+ * (docs/status/2026-09-22-walmart-launch-checklist.md).
+ */
+const LINES_IN_INGEST_ORDER = { lines: { orderBy: { id: 'asc' as const } } }
+
 export function registerShippingHandlers(client: WalmartClient = getWalmartClient()): void {
   registerHandler('walmart_ack_order', async (p) => {
     await client.request('POST', `/v3/orders/${p.externalOrderId}/acknowledge`)
   })
 
   registerHandler('walmart_ship_order', async (p) => {
-    const order = await prisma.order.findUniqueOrThrow({ where: { id: p.orderId }, include: { lines: true } })
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: p.orderId }, include: LINES_IN_INGEST_ORDER })
     // Walmart line numbers are 1-based strings in original order; we store
     // nothing extra to remember them, so the i-th order line maps to
     // lineNumber String(i+1) by position, both here and in the cancel
-    // handler below.
+    // handler below. That only holds if the lines come back in the order
+    // ingest created them -- see LINES_IN_INGEST_ORDER.
     const lineNumbers = order.lines.map((_, i) => String(i + 1))
     const quantityByLine = Object.fromEntries(order.lines.map((l, i) => [String(i + 1), l.quantity]))
     await client.request('POST', `/v3/orders/${order.externalOrderId}/shipping`, {
@@ -126,7 +150,7 @@ export function registerShippingHandlers(client: WalmartClient = getWalmartClien
   })
 
   registerHandler('walmart_cancel_order', async (p) => {
-    const order = await prisma.order.findUniqueOrThrow({ where: { id: p.orderId }, include: { lines: true } })
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: p.orderId }, include: LINES_IN_INGEST_ORDER })
     await client.request('POST', `/v3/orders/${order.externalOrderId}/cancel`, {
       body: {
         orderCancellation: {
