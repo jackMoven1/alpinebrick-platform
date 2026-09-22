@@ -60,3 +60,12 @@ WALMART_CLIENT_SECRET=
 WALMART_API_BASE=https://sandbox.walmartapis.com
 WALMART_WEBHOOK_SECRET=
 ```
+
+## 4. Residual minors from the final fix re-review
+
+Optional. None affects correctness today; each is worth doing before the worker runs against production volume.
+
+- **Duplicate recurring jobs during an outage** (outbox.ts processDueJobs, release-at-pickup). A recurring push whose key was released and whose handler then fails stays pending with no key; each later stock change adds another keyed job. Handlers read current state, so correctness holds, but the job count grows, dead-letter log lines show dedupeKey null, and the 50-job pickup batch can fill with retries ahead of ack/ship jobs. Fix: when a released recurring job fails and a pending job of the same type and payload exists, mark the failing one done as superseded.
+- **Key-release update sits outside the per-job try/catch** (outbox.ts processDueJobs). A DB error there aborts the rest of the batch; the next tick recovers. Fix: move it inside the try.
+- **enqueueInventoryPushesAfterCommit comment overclaims** (orders.service.ts). It says a failed post-commit push recovers via the hourly reconcile, but reconcileAllInventory covers only live listings; a submitted listing does not recover (see section 2).
+- **Scheduler wiring test covers the jobs interval only** (tests/walmart-scheduler-wiring.test.ts). The other four intervals are not locked by a test.
