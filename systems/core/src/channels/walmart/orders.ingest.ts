@@ -3,6 +3,7 @@ import { prisma } from '../../prisma.js'
 import { recordAudit } from '../../audit.js'
 import { toCanonicalOrder } from './mappers.js'
 import { enqueueIdempotentJob } from './outbox.js'
+import { enqueueInventoryPush } from './inventory.sync.js'
 
 export class ChannelError extends Error {
   constructor(public code: string, message: string) {
@@ -217,6 +218,15 @@ export async function ingestWalmartOrder(
     // raw constraint-violation error for what is contractually a no-op.
     const order = await prisma.order.findUnique({ where: { externalOrderId: canonical.externalOrderId }, select: { id: true } })
     return { orderId: order?.id ?? null, created: false }
+  }
+
+  // Outside the transaction, deliberately: enqueueInventoryPush's dedupeKey
+  // (`inv:<variantId>`) is recurring, not one-shot -- see its doc comment in
+  // inventory.sync.ts and enqueueJob's in outbox.ts. Each ingested line just
+  // reserved stock, so the variant's available-to-sell figure Walmart has on
+  // file is now stale until this push runs.
+  for (const line of canonical.lines) {
+    await enqueueInventoryPush(byWalmartSku.get(line.walmartSku)!.variantId)
   }
 
   return { orderId, created: true }

@@ -2,6 +2,7 @@ import { prisma } from '../prisma.js'
 import { recordAudit } from '../audit.js'
 import type { TaxPort } from '../ports/tax/tax.port.js'
 import { createFlatRateTaxPort } from '../ports/tax/flat-rate.adapter.js'
+import { enqueueInventoryPush } from '../channels/walmart/inventory.sync.js'
 
 export class OrderError extends Error {
   constructor(public code: string, message: string) {
@@ -137,6 +138,8 @@ export async function placeOrder(input: PlaceOrderInput, taxPort: TaxPort = defa
     return created
   })
 
+  for (const line of order.lines) await enqueueInventoryPush(line.variantId)
+
   return toDto(order)
 }
 
@@ -180,6 +183,7 @@ export async function fulfillOrder(orderId: string, actorId = 'system'): Promise
     await recordAudit({ actorId, action: 'order.fulfilled', target: `order:${orderId}`, before: { status: 'paid' }, after: { status: 'fulfilled' } }, tx)
     return next
   })
+  for (const line of updated.lines) await enqueueInventoryPush(line.variantId)
   return toDto(updated)
 }
 
@@ -204,5 +208,6 @@ export async function cancelOrder(orderId: string, actorId = 'system'): Promise<
     await recordAudit({ actorId, action: 'order.cancelled', target: `order:${orderId}`, after: { status: 'cancelled' } }, tx)
     return next
   })
+  for (const line of updated.lines) await enqueueInventoryPush(line.variantId)
   return toDto(updated)
 }
