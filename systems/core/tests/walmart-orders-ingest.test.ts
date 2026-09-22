@@ -83,6 +83,43 @@ describe('ingestWalmartOrder', () => {
     expect(order).toMatchObject({ subtotalCents: 9998, taxCents: 600, totalCents: 10598 })
   })
 
+  // The only way ingestWalmartOrder ever sees its ack dedupeKey already
+  // taken: a legitimate re-delivery of the SAME order short-circuits at the
+  // ChannelEvent idempotency check above, long before reaching the enqueue
+  // step (see isConcurrentDeliveryRace's doc comment). So a pre-existing
+  // ChannelJob under this key, on a FIRST-time ingest (no ChannelEvent yet),
+  // can only be an orphan -- ops cleanup, a backfill, or a row predating a
+  // migration. Seeded 'dead' here: the harder case, since a dead job never
+  // runs again on its own. If the in-transaction enqueue silently skipped
+  // on collision without reviving it, this order's ack would be lost
+  // forever with no error anywhere -- the exact silent-failure risk raised
+  // in review.
+  it('ingests successfully when an orphaned dead ack job already holds the dedupeKey', async () => {
+    const v = await seedListing(10)
+    await prisma.channelJob.create({
+      data: {
+        type: 'walmart_ack_order',
+        payload: { externalOrderId: 'PO-1001' },
+        dedupeKey: 'ack:PO-1001',
+        status: 'dead',
+        attempts: 5,
+        lastError: 'stale failure, unrelated to this ingest',
+      },
+    })
+
+    const r = await ingestWalmartOrder(walmartOrderFixture, 'webhook')
+
+    expect(r.created).toBe(true)
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: r.orderId! } })
+    expect(order.status).toBe('paid')
+    const inv = await prisma.inventory.findUniqueOrThrow({ where: { variantId: v.id } })
+    expect(inv.reserved).toBe(2)
+    expect(await prisma.channelJob.count({ where: { dedupeKey: 'ack:PO-1001' } })).toBe(1)
+    // Revived, not left dead forever: enqueueIdempotentJob's whole point.
+    const job = await prisma.channelJob.findUniqueOrThrow({ where: { dedupeKey: 'ack:PO-1001' } })
+    expect(job.status).toBe('pending')
+  })
+
   it('is idempotent across webhook + poll duplication (sequential)', async () => {
     await seedListing(10)
     const first = await ingestWalmartOrder(walmartOrderFixture, 'webhook')

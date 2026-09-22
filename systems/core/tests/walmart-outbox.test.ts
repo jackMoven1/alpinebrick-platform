@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { prisma } from '../src/prisma.js'
 import { resetDb } from './helpers/db.js'
-import { enqueueJob, processDueJobs, registerHandler, clearHandlers } from '../src/channels/walmart/outbox.js'
+import { enqueueJob, enqueueIdempotentJob, processDueJobs, registerHandler, clearHandlers } from '../src/channels/walmart/outbox.js'
 
 describe('walmart outbox', () => {
   beforeEach(async () => {
@@ -66,5 +66,45 @@ describe('walmart outbox', () => {
     await enqueueJob('t', {}, { dedupeKey: 'k3' })
     expect(await enqueueJob('t', {}, { dedupeKey: 'k3' })).toBeNull()
     expect(await prisma.channelJob.count()).toBe(1)
+  })
+
+  // enqueueIdempotentJob exists specifically so an in-transaction caller
+  // (ingestWalmartOrder's ack-job enqueue) never risks a raising INSERT on a
+  // dedupeKey collision -- see its doc comment for why enqueueJob's ordinary
+  // P2002-catch-and-recover would poison the surrounding transaction. These
+  // exercise it directly, against the default client, independent of any
+  // ingest flow.
+  describe('enqueueIdempotentJob', () => {
+    it('creates the job when the key is free', async () => {
+      await enqueueIdempotentJob('t', { a: 1 }, 'idem-k1', prisma)
+      const job = await prisma.channelJob.findUniqueOrThrow({ where: { dedupeKey: 'idem-k1' } })
+      expect(job).toMatchObject({ type: 't', status: 'pending', payload: { a: 1 } })
+    })
+
+    it('is a silent no-op -- no throw, no duplicate -- when the key already holds a pending job', async () => {
+      await enqueueIdempotentJob('t', { a: 1 }, 'idem-k2', prisma)
+      await expect(enqueueIdempotentJob('t', { a: 2 }, 'idem-k2', prisma)).resolves.toBeUndefined()
+      expect(await prisma.channelJob.count({ where: { dedupeKey: 'idem-k2' } })).toBe(1)
+      const job = await prisma.channelJob.findUniqueOrThrow({ where: { dedupeKey: 'idem-k2' } })
+      expect(job.payload).toEqual({ a: 1 }) // untouched -- the second call was skipped, not applied
+    })
+
+    it('leaves a done job alone -- the one-shot work it names already completed', async () => {
+      await prisma.channelJob.create({ data: { type: 't', payload: {}, dedupeKey: 'idem-k3', status: 'done' } })
+      await enqueueIdempotentJob('t', {}, 'idem-k3', prisma)
+      expect(await prisma.channelJob.count({ where: { dedupeKey: 'idem-k3' } })).toBe(1)
+      const job = await prisma.channelJob.findUniqueOrThrow({ where: { dedupeKey: 'idem-k3' } })
+      expect(job.status).toBe('done')
+    })
+
+    it('revives a dead job under the key back to pending, instead of leaving it stuck forever', async () => {
+      await prisma.channelJob.create({
+        data: { type: 't', payload: {}, dedupeKey: 'idem-k4', status: 'dead', attempts: 5, lastError: 'boom' },
+      })
+      await enqueueIdempotentJob('t', {}, 'idem-k4', prisma)
+      expect(await prisma.channelJob.count({ where: { dedupeKey: 'idem-k4' } })).toBe(1)
+      const job = await prisma.channelJob.findUniqueOrThrow({ where: { dedupeKey: 'idem-k4' } })
+      expect(job).toMatchObject({ status: 'pending', attempts: 0, lastError: null })
+    })
   })
 })

@@ -76,6 +76,65 @@ async function createJob(
   }
 }
 
+/**
+ * Enqueue a job under a dedupeKey the caller already knows is one-shot: a
+ * collision on that key can only mean "this exact unit of work already has
+ * a job," never "a different unit of work needs the key back." Unlike
+ * `enqueueJob`, this never raises on collision -- it uses a
+ * conflict-tolerant INSERT (`createMany` + `skipDuplicates`, i.e. Postgres
+ * `ON CONFLICT DO NOTHING`) instead of catching P2002 and recovering with
+ * follow-up queries.
+ *
+ * That distinction is load-bearing when `db` is an interactive-transaction
+ * client (`tx`), which is the only reason this function exists rather than
+ * just calling `enqueueJob(..., tx)`: Postgres aborts the ENTIRE transaction
+ * block on the first statement error, unique-violation included, and every
+ * later statement fails with `25P02: current transaction is aborted` until
+ * rollback -- Prisma does not wrap interactive-transaction queries in
+ * per-statement savepoints, so catching the P2002 in application code (the
+ * way `enqueueJob`'s `createJob` does) cannot undo that. A raising INSERT
+ * here would poison the surrounding transaction and roll back whatever else
+ * it was doing (an order, a reservation, a ChannelEvent) over a condition
+ * that's actually fine: the job this key names already exists.
+ *
+ * If the INSERT is skipped, and the existing job under that key has already
+ * dead-lettered (it will never run again on its own), this revives it to
+ * `pending` -- the caller's one-shot guarantee means the unit of work that
+ * key names still needs doing, even though a prior attempt at it
+ * permanently failed (e.g. an orphaned job left behind by ops cleanup, a
+ * backfill, or a row predating some migration, with no companion record to
+ * have driven a retry). A `pending` job is left alone (it will still run);
+ * a `done` job is left alone too (the one-shot work it names already
+ * completed). `updateMany` rather than `update` because there's no id in
+ * hand without a second read, and matching zero rows is not an error.
+ *
+ * Do NOT use this for a dedupeKey that legitimately gets reused across
+ * separate units of work -- e.g. the recurring inventory/price-push keys
+ * `enqueueJob`'s release-on-completion recovery exists for (see its own doc
+ * comment). Those need `enqueueJob`'s existing out-of-transaction behaviour,
+ * unchanged. This function is for callers who can prove -- as
+ * `ingestWalmartOrder` can, via `ChannelEvent(externalId, eventType)`
+ * uniqueness upstream -- that the key is spent exactly once, ever.
+ */
+export async function enqueueIdempotentJob(
+  type: string,
+  payload: unknown,
+  dedupeKey: string,
+  db: JobDb,
+  runAfter: Date = new Date(),
+): Promise<void> {
+  const { count } = await db.channelJob.createMany({
+    data: [{ type, payload: payload as Prisma.InputJsonValue, dedupeKey, runAfter }],
+    skipDuplicates: true,
+  })
+  if (count === 0) {
+    await db.channelJob.updateMany({
+      where: { dedupeKey, status: 'dead' },
+      data: { status: 'pending', attempts: 0, lastError: null, runAfter },
+    })
+  }
+}
+
 const MAX_ATTEMPTS = 5
 
 export async function processDueJobs(

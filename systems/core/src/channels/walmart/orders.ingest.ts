@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '../../prisma.js'
 import { recordAudit } from '../../audit.js'
 import { toCanonicalOrder } from './mappers.js'
-import { enqueueJob } from './outbox.js'
+import { enqueueIdempotentJob } from './outbox.js'
 
 export class ChannelError extends Error {
   constructor(public code: string, message: string) {
@@ -13,13 +13,19 @@ export class ChannelError extends Error {
 
 /**
  * True for a Prisma unique-constraint violation. Inside this transaction the
- * only writes that can collide are `Order.externalOrderId` and
- * `ChannelEvent(externalId, eventType)` -- both only ever collide with
- * another delivery of the *same* Walmart order racing this one (the
- * `ChannelJob.dedupeKey` collision that a concurrent ack-enqueue could hit is
- * handled internally by `enqueueJob`, which never lets it surface as a
- * throw). So any P2002 reaching the caller here means "another delivery of
- * this order won the race," never an unrelated conflict.
+ * only write that can RAISE on collision is `tx.order.create`
+ * (`Order.externalOrderId`) -- `tx.channelEvent.create`
+ * (`ChannelEvent(externalId, eventType)`) would collide the same way in
+ * principle, but in practice `order.create` always collides first since it
+ * runs first and shares the same "another delivery of this order" cause.
+ * The ack job's dedupeKey does NOT raise on collision: it goes through
+ * `enqueueIdempotentJob`, a conflict-tolerant INSERT built specifically so a
+ * dedupeKey collision inside this transaction never surfaces as a throw here
+ * (see that function's doc comment in outbox.ts for why an ordinary
+ * P2002-catch-and-recover, the way `enqueueJob` does it outside a
+ * transaction, does not work inside one). So any P2002 reaching the caller
+ * here means "another delivery of this order won the race," never an
+ * unrelated conflict.
  */
 function isConcurrentDeliveryRace(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
@@ -174,10 +180,17 @@ export async function ingestWalmartOrder(
       // ChannelEvent above, so ingesting the order and scheduling its
       // Walmart ack are atomic -- see the function doc comment above for why
       // that matters (a post-commit enqueue can silently lose the ack).
-      await enqueueJob(
+      //
+      // `enqueueIdempotentJob`, not `enqueueJob`, and that's load-bearing
+      // too: this dedupeKey is one-shot (see `isConcurrentDeliveryRace`'s
+      // doc comment) and the caller of a job enqueue inside a transaction
+      // cannot tolerate a raising INSERT on collision, which is exactly what
+      // `enqueueJob`'s ordinary P2002-catch-and-recover would become here --
+      // see enqueueIdempotentJob's doc comment in outbox.ts.
+      await enqueueIdempotentJob(
         'walmart_ack_order',
         { externalOrderId: canonical.externalOrderId },
-        { dedupeKey: `ack:${canonical.externalOrderId}` },
+        `ack:${canonical.externalOrderId}`,
         tx,
       )
 
