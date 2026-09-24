@@ -29,6 +29,9 @@ stock, and find every one of those changes in the audit log.
 | Can admins set stock? | **Yes** — edit on-hand per variant, every change recorded, never below reserved |
 | Which product fields? | **Every field in the schema**, not an essentials subset |
 | API shape | **Granular endpoints** (approach A), not a whole-product save (B) or a generic CRUD layer (C) |
+| Selling one stock pool on two channels | **Per-variant Walmart allocation** (Jack's proposal): null = shared, N = split. Replaces the 10% buffer (§5.1) |
+| Default allocation | **Null (shared)** |
+| Allocation in this spec? | **Yes**, so storefront, Walmart and the stock dialog change together |
 
 Approach B was rejected because a variant missing from a stale payload would read
 as "delete it" — silent loss of a variant that may already have sold — and
@@ -55,7 +58,8 @@ All routes are under `/api/v1/admin` and inherit its existing guards:
 
 **Responses.** Every product or variant write returns the **full admin product
 DTO** — the shape `GET /api/v1/admin/products/:id` already returns — extended
-with per-variant `inventory: { onHand, reserved, available }` and per-variant
+with per-variant `inventory: { onHand, reserved, walmartAllocation,
+storefrontAvailable, walmartAvailable }` (§5.1) and per-variant
 `locked: { sku: boolean, delete: boolean }`, plus product-level
 `locked: { slug: boolean }` and `firstPublishedAt`. The console re-renders from
 the response; it never patches local state optimistically.
@@ -79,6 +83,7 @@ the others.
 | `VARIANT_HAS_SALES` | 409 | Delete of such a variant |
 | `STOCK_BELOW_RESERVED` | 409 | Stock set below `reserved`. Message states the reserved count |
 | `STOCK_CHANGED` | 409 | `expectedOnHand` no longer matches. Body carries current `onHand` and `reserved` |
+| `ALLOCATION_EXCEEDS_AVAILABLE` | 409 | `reserved + walmartAllocation > onHand` would result (§5.1 rule 4). Body carries current figures |
 
 `SKU_TAKEN` and `SLUG_TAKEN` are produced from the unique-constraint violation
 (Prisma `P2002`), not from a read-then-write check, so two concurrent creates
@@ -191,8 +196,69 @@ and after.
   `enqueueInventoryPushesAfterCommit` in `orders.service.ts`: a failure is
   logged, never surfaced as a failed stock change. It is a no-op for variants
   without a listing — all of them today.
-- **The console shows** on hand, reserved and available (`onHand − reserved`) per
-  variant. Only on hand is editable.
+- **The console shows** on hand, reserved, Walmart allocation, and what each
+  channel can sell (§5.1). On hand and Walmart allocation are editable.
+
+### 5.1 Walmart allocation (Jack, 2026-09-24)
+
+**Problem.** Stock is one shared pool per variant; a listing does not lock
+anything from the storefront. Walmart learns of stock changes asynchronously
+(outbox push; orders arrive by webhook or a 15-minute poll), so a one-off
+collectible can sell on both channels. The existing mitigation — a 10% safety
+buffer, never below 1 unit (`computeAvailableToSell`) — tells Walmart **0** for a
+single unit, so every one-off is silently storefront-only. For a business whose
+Walmart approval is to sell collectibles, that default works against the plan.
+
+**Model.** A nullable `walmartAllocation` per variant, on `Inventory`:
+
+| Walmart allocation | Walmart can sell | Storefront can sell | Double-sale risk |
+|---|---|---|---|
+| **null** — shared | `onHand − reserved` | `onHand − reserved` | Accepted, per variant |
+| **N ≥ 0** — split | `min(N, onHand − reserved)` | `onHand − reserved − N` | None |
+
+A single collectible listed Walmart-only is allocation **1**; storefront-only is
+**0**; both-at-risk is **null**. Null is the default for new variants.
+
+**Rules — every one is a single guarded statement, like the existing
+reservations:**
+
+1. **Storefront checkout** (`placeOrder`) reserves only where
+   `on_hand − reserved − COALESCE(walmart_allocation, 0) >= qty`.
+2. **Walmart order ingest** reserves where `on_hand − reserved >= qty AND
+   (walmart_allocation IS NULL OR walmart_allocation >= qty)`, and in the same
+   statement sets `walmart_allocation = walmart_allocation − qty` when not null.
+   A Walmart sale consumes its allocation; otherwise the storefront's share would
+   be understated after every Walmart sale, and a sold one-off would still show
+   an allocation of 1.
+3. **Cancelling a Walmart-channel order** releases its reservation and returns
+   the quantity to `walmart_allocation` when that is not null. A Walmart unit
+   that did not sell stays Walmart's.
+4. **Setting stock or allocation** requires `reserved + COALESCE(allocation, 0)
+   <= onHand`. Both may be set in one `PUT …/stock` request
+   (`{ onHand?, walmartAllocation?, expectedOnHand?, note? }`;
+   `walmartAllocation: null` means shared). Violations return
+   `ALLOCATION_EXCEEDS_AVAILABLE` (409) with the current figures, so lowering
+   on-hand below what is reserved plus allocated asks the admin to lower the
+   allocation too, rather than silently shrinking it.
+5. **The push to Walmart** sends the "Walmart can sell" figure above. **The
+   percentage buffer is removed** — `computeAvailableToSell` loses `bufferPct`,
+   and the unused `channel_listings.buffer_pct` column is dropped in the same
+   migration. Split stock cannot double-sell; shared stock is a deliberate
+   choice to take the risk.
+6. **The public catalog's `available`** (`catalog.service.ts`) becomes the
+   storefront figure, `onHand − reserved − COALESCE(allocation, 0)`, so the
+   storefront never shows a Walmart-allocated unit as buyable.
+7. **A change to allocation enqueues the Walmart inventory push**, exactly as an
+   on-hand change does (§5).
+
+Allocation changes are audited as part of `variant.stock.set`, with allocation in
+the before/after.
+
+**Still open, not built here:** alerting on a failed Walmart ingest
+(`insufficient_stock`). With shared stock, that is how a double sale surfaces,
+and the Walmart launch checklist already lists "no alert" as a gap. Until it
+exists, **choosing shared for a one-off means someone must watch for Walmart
+orders that failed to import** and cancel them on Walmart.
 
 ## 6. Console changes
 
@@ -212,8 +278,12 @@ No new pages; the Phase A screens are wired and extended.
   available, delete. Inline row edit with per-row save. SKU and delete render
   locked, with the reason, from `locked`. "Add variant" and the existing
   `BulkVariantForm` work, each with an optional starting quantity. **Set stock**
-  opens a dialog: new count, optional note, the `STOCK_CHANGED` confirmation, and
-  the last ten history entries.
+  opens a dialog: new count; **Walmart allocation** as a choice of *Shared* or a
+  number, with a live preview of what each channel will be able to sell and, for
+  Shared, the double-sale warning from §5.1; optional note; the `STOCK_CHANGED`
+  and `ALLOCATION_EXCEEDS_AVAILABLE` messages; and the last ten history entries.
+  The table's columns become on hand, reserved, allocation, storefront can sell,
+  Walmart can sell.
 - **Publish tab and Products list:** bulk publish / unpublish / archive enabled,
   with per-product failures listed from `results`.
 - **Images tab:** unchanged — disabled, "not in this phase".
@@ -222,7 +292,16 @@ No new pages; the Phase A screens are wired and extended.
 
 ## 7. Schema change
 
-One migration: `products.first_published_at TIMESTAMP(3) NULL`.
+One migration, three changes:
+
+- `products.first_published_at TIMESTAMP(3) NULL`
+- `inventory.walmart_allocation INTEGER NULL`, with `CHECK (walmart_allocation IS
+  NULL OR walmart_allocation >= 0)`. Null for every existing row — shared, which
+  is the chosen default.
+- Drop `channel_listings.buffer_pct` (§5.1 rule 5). No listings exist on any
+  environment, so nothing is lost.
+
+On `first_published_at`:
 
 - Set in the same transaction as the first `→ published` transition, only when
   currently null.
@@ -231,8 +310,8 @@ One migration: `products.first_published_at TIMESTAMP(3) NULL`.
   their slugs would stay editable — acceptable as a one-time gap, and noted in
   the migration comment.
 
-Nothing else changes in the schema: every product field, `Inventory` and
-`AuditLog` already exist.
+Nothing else changes in the schema: every product field, the rest of
+`Inventory`, and `AuditLog` already exist.
 
 ## 8. Testing
 
@@ -252,6 +331,19 @@ Nothing else changes in the schema: every product field, `Inventory` and
   never leaves `reserved > onHand`. Run repeatedly; **verified non-vacuous by
   mutation** — temporarily drop the `reserved <= $n` guard, confirm the test
   fails, restore (the PR #19 procedure).
+- **Allocation**, each rule of §5.1 on its own: storefront checkout refused when
+  only allocated units remain; Walmart ingest consumes allocation and is refused
+  beyond it; shared (null) lets both reserve; Walmart cancel returns the unit;
+  `ALLOCATION_EXCEEDS_AVAILABLE` on both a too-high allocation and an on-hand
+  lowered beneath reserved + allocation; the Walmart push sends
+  `min(N, onHand − reserved)` or, shared, `onHand − reserved` with no buffer; the
+  public catalog's `available` excludes allocated units.
+- **Concurrency, allocation:** a storefront checkout and a Walmart ingest racing
+  for the last unit of a split variant — each can take only its own share, and
+  neither can oversell. Mutation-verified like the stock test.
+- Existing Walmart and order tests updated for the removed buffer and the new
+  guards — a changed expectation there is a deliberate behaviour change, called
+  out in the PR, not a test to quietly re-baseline.
 - Atomicity: a forced audit failure rolls back the change.
 - Bulk variants: one invalid row → nothing created.
 - **Regression:** the public catalog still returns published products only.
@@ -285,3 +377,6 @@ waits for ADR-0002.
 | Deleting a variant erases a live Walmart listing record | Delete refused while any non-retired listing exists |
 | Console tests pass against a mock that differs from core | Fixtures captured from a running core |
 | A later refactor widens the public catalog to drafts | Explicit regression test |
+| A one-off on shared stock double-sells | Allowed by choice; console warns at the point of choosing; failed-ingest alert is a named open item (§5.1) |
+| Storefront shows a Walmart-allocated unit as buyable | Public `available` and the checkout guard both subtract allocation, tested |
+| Allocation drifts after Walmart sales | Consumed in the same statement that reserves; restored on Walmart cancel |
