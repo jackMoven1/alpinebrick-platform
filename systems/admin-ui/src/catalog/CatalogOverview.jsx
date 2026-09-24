@@ -49,15 +49,20 @@ export default function CatalogOverview() {
             ))}
           </ul>
         </Card>
-        <Card>
-          <h2 className="font-bold">Missing images</h2>
-          <ul className="mt-3 space-y-2 text-sm">
-            {stats.missingImages.length === 0 && <li className="text-gray-400">None 🎉</li>}
-            {stats.missingImages.map((p) => (
-              <li key={p.id}><Link to={`/products/${p.id}`} className="hover:underline">{p.name}</Link></li>
-            ))}
-          </ul>
-        </Card>
+        {/* Core deliberately omits missingImages until placeholder and real
+            photography can be told apart (phase B spec section 7). Hide the
+            panel rather than render it empty: empty reads as "all clear". */}
+        {Array.isArray(stats.missingImages) && (
+          <Card>
+            <h2 className="font-bold">Missing images</h2>
+            <ul className="mt-3 space-y-2 text-sm">
+              {stats.missingImages.length === 0 && <li className="text-gray-400">None 🎉</li>}
+              {stats.missingImages.map((p) => (
+                <li key={p.id}><Link to={`/products/${p.id}`} className="hover:underline">{p.name}</Link></li>
+              ))}
+            </ul>
+          </Card>
+        )}
         <Card>
           <h2 className="font-bold">Missing variants</h2>
           <ul className="mt-3 space-y-2 text-sm">
