@@ -12,7 +12,7 @@ Partner sign-off on the spend: received (Jack, 2026-09-24).
 |---|---|---|
 | **Render** (render.com) | Jack | Account, payment method, connect GitHub repo `jackMoven1/alpinebrick-platform` via Render's GitHub app |
 | **Google Cloud Console** | Jack (Google account that will own the OAuth client) | One OAuth 2.0 client for admin sign-in |
-| **DNS for alpinebrickexchange.com** | Whoever holds the DNS login: Cloudflare per the architecture doc, **confirm** | Three subdomain CNAMEs. The apex and `www` are **not** touched |
+| **DNS for alpinebrickexchange.com** | Jack. DNS is hosted at **name.com** (verified 2026-09-24), not Cloudflare | Three subdomain CNAMEs. The apex and `www` are **not** touched |
 | **GitHub** | Agent, with Jack's OK to push | Create the `staging` branch from `main` |
 
 **Not needed for staging:** Stripe (no code reads a Stripe key yet) and Walmart
@@ -58,9 +58,9 @@ It will prompt for every `sync: false` value. Staging values:
 
 Then, per the Blueprint bootstrap notes:
 - Enable **"wait for CI checks"** on each service's auto-deploy.
-- **Preview environments:** `render.yaml` sets `previews.generation: automatic`,
-  so **every PR spins up billed preview services**. Turn this off in the
-  dashboard for now unless you want that spend.
+- **Preview environments:** now `off` in `render.yaml`. Render rejects them on a
+  Hobby workspace (the Blueprint failed validation on 2026-09-24), and they are
+  billed per PR anyway.
 
 ### 4. Custom domains
 Render → each service → Settings → **Custom Domains**. Add:
@@ -68,10 +68,10 @@ Render → each service → Settings → **Custom Domains**. Add:
 - `storefront` → `staging.alpinebrickexchange.com`
 - `admin-ui` → `admin-staging.alpinebrickexchange.com`
 
-Render shows a CNAME target (`<service>.onrender.com`) for each. At the DNS
-provider, create the three **CNAME** records. On Cloudflare, set them **DNS only
-(grey cloud)** until Render shows the certificate issued. After that you can
-proxy them with SSL mode **Full (strict)**.
+Render shows a CNAME target (`<service>.onrender.com`) for each. In name.com
+(Manage DNS Records), create the three **CNAME** records: Host `api-staging` /
+`staging` / `admin-staging`, Answer the `.onrender.com` hostname, TTL 300.
+Leave the existing root `A` and `www` CNAME (both Shopify) untouched.
 
 The admin console **must** be on the `alpinebrickexchange.com` subdomain, not
 its `.onrender.com` URL. The session cookie crosses from `api-staging` to

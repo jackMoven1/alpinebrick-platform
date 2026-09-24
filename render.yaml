@@ -12,7 +12,10 @@
 # anything on its own.
 
 previews:
-  generation: automatic # PR preview environments (API + storefront)
+  # Off: Render rejects preview environments on a Hobby workspace (the whole
+  # Blueprint fails validation), and each preview is billed anyway. Switch to
+  # `automatic` only after upgrading the workspace plan.
+  generation: off
 
 services:
   # ---------------------------------------------------------------- core-api
@@ -217,15 +220,17 @@ envVarGroups:
 #    change `fromGroup` per instance. VERIFY THIS DURING BOOTSTRAP — it is the
 #    one part of this Blueprint that could not be checked without an account.
 #
-# 5. Point Cloudflare DNS at the Render services once they are up:
+# 5. Point DNS at the Render services once they are up. DNS for
+#    alpinebrickexchange.com is hosted at name.com (not Cloudflare) -- add
+#    CNAMEs to each service's .onrender.com hostname:
 #      www.alpinebrickexchange.com        -> storefront (production)
 #      api.alpinebrickexchange.com        -> core-api   (production)
 #      staging.alpinebrickexchange.com    -> storefront (staging)
 #      api-staging.alpinebrickexchange.com-> core-api   (staging)
 #      admin.alpinebrickexchange.com      -> admin-ui   (production)
 #      admin-staging.alpinebrickexchange.com -> admin-ui (staging)
-#    TLS mode Full (strict). The staging hostnames are still unconfirmed —
-#    see the amendment note in the deployment architecture doc.
+#    (TLS is Render-managed. The staging hostnames are still unconfirmed —
+#    see the amendment note in the deployment architecture doc.)
 #
 #    The apex and www currently resolve to the live Shopify store. Do NOT
 #    repoint them until the Phase 5 cutover; bring staging up first.
