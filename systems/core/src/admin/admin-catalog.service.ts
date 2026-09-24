@@ -149,7 +149,17 @@ export async function setProductStatus(id: string, target: string, actorId: stri
       )
     }
 
-    await tx.product.update({ where: { id }, data: { status: target as Status } })
+    await tx.product.update({
+      where: { id },
+      data: {
+        status: target as Status,
+        // First publish only. Unpublishing or archiving never clears it, so
+        // the slug stays locked (spec §4.1).
+        ...(target === 'published' && existing.firstPublishedAt === null
+          ? { firstPublishedAt: new Date() }
+          : {}),
+      },
+    })
 
     await recordAudit({
       actorId,
