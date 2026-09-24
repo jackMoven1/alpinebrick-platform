@@ -60,6 +60,34 @@ services:
       - key: VITE_API_BASE_URL
         sync: false
 
+  # ---------------------------------------------------------------- admin-ui
+  # Internal catalog console. Separate static site from the storefront so the
+  # storefront origin can never be granted admin CORS (see ADMIN_CONSOLE_ORIGIN
+  # below).
+  #
+  # Serve it from a subdomain of alpinebrickexchange.com (e.g.
+  # admin-staging.alpinebrickexchange.com), NOT the bare .onrender.com URL.
+  # The session cookie is SameSite=None on api.*; with the console on an
+  # unrelated registrable domain that cookie is third-party, and Safari (and
+  # Chrome with third-party cookies blocked) drops it -- sign-in "succeeds"
+  # and every admin call then 401s. On a sibling subdomain it is same-site.
+  - type: web
+    name: admin-ui
+    runtime: static
+    rootDir: systems/admin-ui
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Core's absolute origin, per instance -- same reasoning as the
+      # storefront's VITE_API_BASE_URL above. Empty = relative path = broken,
+      # which is the intended loud failure.
+      - key: VITE_API_BASE_URL
+        sync: false
+
   # ------------------------------------------------------------ core-worker
   # DELIBERATELY COMMENTED OUT.
   #
@@ -144,8 +172,26 @@ envVarGroups:
       # comma-separated, at that point.
       - key: STOREFRONT_ORIGIN
         sync: false
+      # Admin sign-in (Google OIDC). Per instance, like the origins above.
+      #   GOOGLE_REDIRECT_URI  -- https://<core host>/api/v1/auth/google/callback,
+      #                           and must be registered on the Google client.
+      #   ADMIN_ALLOWED_EMAILS -- comma-separated. Empty = nobody can sign in.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: ADMIN_ALLOWED_EMAILS
+        sync: false
+      # Where image URLs resolve. NOTE: image upload does not work in any
+      # deployed environment yet -- the local storage adapter hands out upload
+      # URLs under /assets that nothing in core receives or serves, and the
+      # container filesystem is ephemeral anyway. Needs the ADR-0002 CDN
+      # adapter. Catalog, admin and auth work without it; product photos don't.
+      - key: ASSET_PUBLIC_BASE_URL
+        sync: false
       # Secrets are NEVER declared here. Set these in the Render dashboard,
       # per environment, entered by Jack:
+      #   GOOGLE_CLIENT_SECRET,
       #   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
       #   WALMART_CLIENT_ID, WALMART_CLIENT_SECRET, WALMART_WEBHOOK_SECRET
       # Staging uses Stripe test mode and the Walmart sandbox base URL.
@@ -176,6 +222,8 @@ envVarGroups:
 #      api.alpinebrickexchange.com        -> core-api   (production)
 #      staging.alpinebrickexchange.com    -> storefront (staging)
 #      api-staging.alpinebrickexchange.com-> core-api   (staging)
+#      admin.alpinebrickexchange.com      -> admin-ui   (production)
+#      admin-staging.alpinebrickexchange.com -> admin-ui (staging)
 #    TLS mode Full (strict). The staging hostnames are still unconfirmed —
 #    see the amendment note in the deployment architecture doc.
 #
