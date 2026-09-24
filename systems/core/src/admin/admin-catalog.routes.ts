@@ -11,11 +11,24 @@ const STATUS_BY_CODE: Record<string, number> = {
   NOT_FOUND: 404,
   VALIDATION_ERROR: 400,
   INVALID_TRANSITION: 409,
+  SLUG_TAKEN: 409,
+  SKU_TAKEN: 409,
+  SLUG_LOCKED: 409,
+  SKU_LOCKED: 409,
+  VARIANT_HAS_SALES: 409,
+  STOCK_BELOW_RESERVED: 409,
+  STOCK_CHANGED: 409,
+  ALLOCATION_EXCEEDS_AVAILABLE: 409,
 }
 
 function fail(res: Response, err: unknown) {
   if (err instanceof AdminError) {
-    return res.status(STATUS_BY_CODE[err.code] ?? 400).json({ code: err.code, message: err.message })
+    return res.status(STATUS_BY_CODE[err.code] ?? 400).json({
+      code: err.code,
+      message: err.message,
+      ...(err.fields ? { fields: err.fields } : {}),
+      ...(err.details ? { details: err.details } : {}),
+    })
   }
   // Express 4 does not catch a rejection thrown out of an async handler, so
   // re-throwing an unknown error here (as this used to do) is the same

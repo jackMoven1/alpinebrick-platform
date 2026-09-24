@@ -1,13 +1,9 @@
 import { prisma } from '../prisma.js'
 import type { ProductDto } from '../catalog/catalog.service.js'
 import { recordAudit } from '../audit.js'
+import { AdminError } from './admin-errors.js'
 
-export class AdminError extends Error {
-  constructor(public code: string, message: string) {
-    super(message)
-    this.name = 'AdminError'
-  }
-}
+export { AdminError }
 
 export interface AdminProductSummary {
   id: string
