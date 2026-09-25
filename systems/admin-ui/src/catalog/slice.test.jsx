@@ -49,10 +49,9 @@ describe('unbacked tabs are disabled', () => {
     for (const b of screen.queryAllByRole('button')) expect(b).toBeDisabled()
   })
 
-  it('InfoTab renders its fields read-only', () => {
-    wrap(<InfoTab product={product} />)
-    expect(screen.getByText(/read-only/i)).toBeInTheDocument()
-    for (const f of screen.queryAllByRole('textbox')) expect(f).toHaveAttribute('readonly')
+  it('InfoTab requires an explicit edit before Save changes is enabled', () => {
+    wrap(<InfoTab product={product} onUpdated={() => {}} />)
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled()
   })
 
   // Images arrive as keys; the console must resolve them, not render the key.
