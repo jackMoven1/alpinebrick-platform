@@ -47,19 +47,20 @@ export default function ProductForm() {
       <p className="text-gray-500">Starts as a draft. Nothing reaches the storefront until you publish.</p>
       <Card className="mt-4">
         <form onSubmit={submit} className="space-y-4">
-          <label className="block" htmlFor="pf-name">
-            <span className="text-sm font-semibold">Name</span>
+          <div className="block">
+            <label className="text-sm font-semibold" htmlFor="pf-name">Name</label>
             <input id="pf-name" value={form.name} onChange={(e) => set('name', e.target.value)}
               className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2" />
             {errors.name && <span className="text-xs text-accent">{errors.name}</span>}
-          </label>
-          <label className="block" htmlFor="pf-slug">
-            <span className="text-sm font-semibold">URL slug <span className="text-gray-400">(optional)</span></span>
+          </div>
+          <div className="block">
+            <label className="text-sm font-semibold" htmlFor="pf-slug">URL slug</label>
+            <span className="text-gray-400"> (optional)</span>
             <input id="pf-slug" value={form.slug} placeholder={previewSlug} onChange={(e) => set('slug', e.target.value)}
               className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 font-mono text-sm" />
             <span className="mt-1 block text-xs text-gray-400">/products/{previewSlug || '…'} — locks once published</span>
             {errors.slug && <span className="text-xs text-accent">{errors.slug}</span>}
-          </label>
+          </div>
           <fieldset>
             <legend className="text-sm font-semibold">Type</legend>
             <div className="mt-1 flex gap-4">

@@ -49,4 +49,18 @@ describe('ProductForm', () => {
     await userEvent.click(screen.getByRole('button', { name: /create product/i }))
     expect(await screen.findByText('already in use')).toBeInTheDocument()
   })
+
+  it('keeps accessible names intact when name and slug errors are both shown', async () => {
+    vi.mocked(api.createProduct).mockRejectedValue(
+      new AdminApiError('invalid input', 'VALIDATION_ERROR', { name: 'required, 1–200 characters', slug: 'already in use' }),
+    )
+    renderForm()
+    await userEvent.type(screen.getByLabelText('Name'), 'Castle Set')
+    await userEvent.click(screen.getByLabelText(/resale/i))
+    await userEvent.click(screen.getByRole('button', { name: /create product/i }))
+    expect(await screen.findByText('required, 1–200 characters')).toBeInTheDocument()
+    expect(screen.getByText('already in use')).toBeInTheDocument()
+    expect(screen.getByLabelText('Name')).toBeInTheDocument()
+    expect(screen.getByLabelText('URL slug')).toBeInTheDocument()
+  })
 })
