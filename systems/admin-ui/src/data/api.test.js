@@ -85,10 +85,10 @@ describe('unimplemented methods', () => {
   // Falling back to the mock would show edits succeeding and losing them on
   // reload. Throwing is the safe failure.
   it('throws rather than silently succeeding', async () => {
-    await expect(api.createProduct({ name: 'x' })).rejects.toThrow(/not implemented/i)
-    await expect(api.createVariant('p1', {})).rejects.toThrow(/not implemented/i)
-    await expect(api.updateProduct('p1', {})).rejects.toThrow(/not implemented/i)
-    await expect(api.bulkSetStatus(['p1'], 'draft')).rejects.toThrow(/not implemented/i)
+    await expect(api.addImage('p1', {})).rejects.toThrow(/not implemented/i)
+    await expect(api.reorderImages('p1', [])).rejects.toThrow(/not implemented/i)
+    await expect(api.updateImageAlt('p1', 'img1', 'x')).rejects.toThrow(/not implemented/i)
+    await expect(api.deleteImage('p1', 'img1')).rejects.toThrow(/not implemented/i)
   })
 })
 

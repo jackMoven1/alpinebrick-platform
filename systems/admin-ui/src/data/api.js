@@ -50,7 +50,7 @@ async function call(path, options = {}) {
   if (!res.ok) {
     let body
     try { body = await res.json() } catch { throw new AdminApiError(GENERIC, 'INTERNAL') }
-    throw new AdminApiError(body?.message || GENERIC, body?.code || 'INTERNAL', body?.fields)
+    throw new AdminApiError(body?.message || GENERIC, body?.code || 'INTERNAL', body?.fields, body?.details)
   }
 
   if (res.status === 204) return null
@@ -58,7 +58,7 @@ async function call(path, options = {}) {
 }
 
 /**
- * Phase B slice: five methods are live, eleven are not.
+ * Only the four image methods remain unbacked (ADR-0002).
  *
  * These MUST throw rather than fall back to the mock. A mock fallback would
  * show an edit succeeding and lose it on reload — data loss disguised as
@@ -105,13 +105,34 @@ export const api = {
     return api.setProductStatus(id, 'archived')
   },
 
-  createProduct: notImplemented('createProduct'),
-  updateProduct: notImplemented('updateProduct'),
-  bulkSetStatus: notImplemented('bulkSetStatus'),
-  createVariant: notImplemented('createVariant'),
-  updateVariant: notImplemented('updateVariant'),
-  deleteVariant: notImplemented('deleteVariant'),
-  bulkCreateVariants: notImplemented('bulkCreateVariants'),
+  async createProduct(input) {
+    return call('/products', { method: 'POST', body: JSON.stringify(input) })
+  },
+  async updateProduct(id, patch) {
+    return call(`/products/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) })
+  },
+  async bulkSetStatus(ids, status) {
+    return call('/products/bulk-status', { method: 'POST', body: JSON.stringify({ ids, status }) })
+  },
+  async createVariant(productId, input) {
+    return call(`/products/${encodeURIComponent(productId)}/variants`, { method: 'POST', body: JSON.stringify(input) })
+  },
+  async bulkCreateVariants(productId, variants) {
+    return call(`/products/${encodeURIComponent(productId)}/variants/bulk`, { method: 'POST', body: JSON.stringify({ variants }) })
+  },
+  async updateVariant(variantId, patch) {
+    return call(`/variants/${encodeURIComponent(variantId)}`, { method: 'PATCH', body: JSON.stringify(patch) })
+  },
+  async deleteVariant(variantId) {
+    return call(`/variants/${encodeURIComponent(variantId)}`, { method: 'DELETE', body: '{}' })
+  },
+  async setStock(variantId, input) {
+    return call(`/variants/${encodeURIComponent(variantId)}/stock`, { method: 'PUT', body: JSON.stringify(input) })
+  },
+  async getStockHistory(variantId, limit = 10) {
+    return call(`/variants/${encodeURIComponent(variantId)}/stock-history?limit=${limit}`)
+  },
+
   addImage: notImplemented('addImage'),
   reorderImages: notImplemented('reorderImages'),
   updateImageAlt: notImplemented('updateImageAlt'),
