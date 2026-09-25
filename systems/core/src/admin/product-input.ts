@@ -56,9 +56,12 @@ function text(b: Obj, key: string, max: number, out: Obj, f: Fields) {
 function nullableText(b: Obj, key: string, max: number, out: Obj, f: Fields) {
   if (!(key in b)) return
   const v = b[key]
-  if (v === null || v === '') { out[key] = null; return }
-  if (typeof v !== 'string' || v.trim().length > max) f[key] = `text, at most ${max} characters, or empty`
-  else out[key] = v.trim()
+  if (v === null) { out[key] = null; return }
+  if (typeof v !== 'string') { f[key] = `text, at most ${max} characters, or empty`; return }
+  const trimmed = v.trim()
+  if (trimmed === '') { out[key] = null; return }
+  if (trimmed.length > max) f[key] = `text, at most ${max} characters, or empty`
+  else out[key] = trimmed
 }
 function nullableInt(b: Obj, key: string, min: number, out: Obj, f: Fields) {
   if (!(key in b)) return
@@ -152,6 +155,9 @@ export function parseVariantInput(body: unknown, mode: 'create' | 'patch', prefi
   }
   if ('priceCents' in b || mode === 'create') {
     const v = b.priceCents
+    // Upper bound is a sanity cap, not a spec rule (spec §4.2 states only > 0):
+    // Postgres INTEGER maxes out near 2.1B cents, and $1M/unit catches the
+    // common mistake of typing dollars into a cents field (dollars × 100).
     if (!isInt(v) || v <= 0 || v > 100_000_000) f[prefix + 'priceCents'] = 'a price above $0'
     else out.priceCents = v
   }

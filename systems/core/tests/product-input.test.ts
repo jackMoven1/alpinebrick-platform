@@ -49,6 +49,10 @@ describe('parseProductInput patch', () => {
     expect(parseProductInput({ pieces: null, difficulty: null, dimensions: null }, 'patch'))
       .toEqual({ pieces: null, difficulty: null, dimensions: null })
   })
+  it('treats a whitespace-only nullable text field as null', () => {
+    expect(parseProductInput({ ageRecommendation: '   ', dimensions: ' ' }, 'patch'))
+      .toEqual({ ageRecommendation: null, dimensions: null })
+  })
   it('lowercases and de-duplicates categories, trims list entries', () => {
     expect(parseProductInput({ categories: ['Star-Wars', 'star-wars'], features: [' Lights '] }, 'patch'))
       .toEqual({ categories: ['star-wars'], features: ['Lights'] })
