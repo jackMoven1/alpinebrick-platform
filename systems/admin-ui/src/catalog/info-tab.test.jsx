@@ -69,6 +69,18 @@ describe('InfoTab', () => {
     expect(await screen.findByText('a whole number of at least 1, or empty')).toBeInTheDocument()
   })
 
+  it('shows a failure without fields beside Save, not under Name', async () => {
+    vi.mocked(api.updateProduct).mockRejectedValue(new AdminApiError('product not found', 'NOT_FOUND'))
+    renderTab()
+    await userEvent.clear(screen.getByLabelText('Pieces'))
+    await userEvent.type(screen.getByLabelText('Pieces'), '5')
+    const save = screen.getByRole('button', { name: /save changes/i })
+    await userEvent.click(save)
+    const msg = await screen.findByText('product not found')
+    expect(save.parentElement).toContainElement(msg)
+    expect(screen.getByLabelText('Name').parentElement).not.toHaveTextContent('product not found')
+  })
+
   it('discard clears field errors along with the edits', async () => {
     vi.mocked(api.updateProduct).mockRejectedValue(new AdminApiError('invalid input', 'VALIDATION_ERROR', { pieces: 'a whole number of at least 1, or empty' }))
     renderTab()

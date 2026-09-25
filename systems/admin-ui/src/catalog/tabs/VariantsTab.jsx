@@ -4,10 +4,9 @@ import { dollarsToCents } from '../../lib/money.js'
 import { useToast } from '../../ui/toast.jsx'
 import BulkVariantForm from './BulkVariantForm.jsx'
 import StockDialog from './StockDialog.jsx'
+import { errorText } from '../../lib/errorText.js'
 
 const LOCK_REASON = 'Locked: this variant has been sold or listed on Walmart'
-
-const firstError = (e) => Object.values(e.fields ?? {})[0] ?? e.message
 
 /** Read-only: attributes are set at creation (spec §6). */
 const formatAttributes = (attrs) => {
@@ -24,20 +23,25 @@ function VariantRow({ v, onUpdated, onSetStock }) {
   const [sku, setSku] = useState(v.sku)
   const [price, setPrice] = useState((v.priceCents / 100).toFixed(2))
   const [error, setError] = useState(null)
+  // One request at a time per row: a double-click must not send it twice.
+  const [busy, setBusy] = useState(false)
   const cents = dollarsToCents(price)
   const dirty = sku !== v.sku || cents !== v.priceCents
 
-  const save = async () => {
-    setError(null)
+  const run = async (request, done) => {
+    if (busy) return
+    setError(null); setBusy(true)
+    try { onUpdated(await request()); toast.push(done) } catch (e) { setError(errorText(e)) } finally { setBusy(false) }
+  }
+  const save = () => {
     const patch = {}
     if (sku !== v.sku) patch.sku = sku
     if (cents !== v.priceCents) patch.priceCents = cents
-    try { onUpdated(await api.updateVariant(v.id, patch)); toast.push('Variant saved') } catch (e) { setError(firstError(e)) }
+    return run(() => api.updateVariant(v.id, patch), 'Variant saved')
   }
-  const remove = async () => {
-    if (!window.confirm(`Delete ${v.sku}? This cannot be undone.`)) return
-    setError(null)
-    try { onUpdated(await api.deleteVariant(v.id)); toast.push('Variant deleted') } catch (e) { setError(firstError(e)) }
+  const remove = () => {
+    if (busy || !window.confirm(`Delete ${v.sku}? This cannot be undone.`)) return undefined
+    return run(() => api.deleteVariant(v.id), 'Variant deleted')
   }
   const inv = v.inventory
   const walmart = inv.walmartAllocation === null ? 'Shared' : `Walmart ${inv.walmartAllocation}`
@@ -61,9 +65,9 @@ function VariantRow({ v, onUpdated, onSetStock }) {
       <td>{inv.storefrontAvailable}</td>
       <td>{inv.walmartAvailable}</td>
       <td className="space-x-2 whitespace-nowrap text-right">
-        {dirty && <button onClick={save} disabled={cents === null || !sku.trim()} className="text-xs font-semibold text-brand-dark disabled:text-gray-300">Save</button>}
+        {dirty && <button onClick={save} disabled={busy || cents === null || !sku.trim()} className="text-xs font-semibold text-brand-dark disabled:text-gray-300">Save</button>}
         <button onClick={() => onSetStock(v)} className="text-xs font-semibold">Set stock</button>
-        <button onClick={remove} disabled={v.locked.delete} title={v.locked.delete ? LOCK_REASON : undefined}
+        <button onClick={remove} disabled={busy || v.locked.delete} title={v.locked.delete ? LOCK_REASON : undefined}
           className="text-xs text-accent disabled:text-gray-300">Delete</button>
       </td>
     </tr>
@@ -75,22 +79,26 @@ export default function VariantsTab({ product, onUpdated }) {
   const [error, setError] = useState(null)
   // Held here, not in the row, so the dialog never renders inside a <tr>.
   const [stockFor, setStockFor] = useState(null)
+  const [adding, setAdding] = useState(false)
+  const [bulkBusy, setBulkBusy] = useState(false)
   const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }))
   const cents = dollarsToCents(draft.price)
   const qtyOk = draft.qty.trim() === '' || /^\d+$/.test(draft.qty.trim())
 
   const add = async () => {
-    setError(null)
+    if (adding) return
+    setError(null); setAdding(true)
     try {
       onUpdated(await api.createVariant(product.id, {
         sku: draft.sku.trim(), priceCents: cents, ...(draft.qty.trim() !== '' ? { onHand: Number(draft.qty.trim()) } : {}),
       }))
       setDraft({ sku: '', price: '', qty: '' })
-    } catch (e) { setError(firstError(e)) }
+    } catch (e) { setError(errorText(e)) } finally { setAdding(false) }
   }
   const bulk = async (rows) => {
-    setError(null)
-    try { onUpdated(await api.bulkCreateVariants(product.id, rows)) } catch (e) { setError(firstError(e)) }
+    if (bulkBusy) return
+    setError(null); setBulkBusy(true)
+    try { onUpdated(await api.bulkCreateVariants(product.id, rows)) } catch (e) { setError(errorText(e)) } finally { setBulkBusy(false) }
   }
 
   return (
@@ -112,12 +120,12 @@ export default function VariantsTab({ product, onUpdated }) {
         <input placeholder="SKU" value={draft.sku} onChange={set('sku')} className="rounded-lg border border-gray-200 px-2 py-1 text-sm" />
         <input placeholder="Price $" value={draft.price} onChange={set('price')} className="w-24 rounded-lg border border-gray-200 px-2 py-1 text-sm" />
         <input placeholder="Qty" inputMode="numeric" value={draft.qty} onChange={set('qty')} className="w-16 rounded-lg border border-gray-200 px-2 py-1 text-sm" />
-        <button onClick={add} disabled={!draft.sku.trim() || cents === null || !qtyOk}
+        <button onClick={add} disabled={adding || !draft.sku.trim() || cents === null || !qtyOk}
           className="rounded-pill bg-ink px-4 py-2 text-sm text-white disabled:bg-gray-200 disabled:text-gray-500">Add variant</button>
       </div>
       {error && <p className="text-sm text-accent">{error}</p>}
 
-      <BulkVariantForm onCreate={bulk} />
+      <BulkVariantForm onCreate={bulk} disabled={bulkBusy} />
       <p className="text-xs text-gray-400">Prices are in US dollars.</p>
 
       {stockFor && (

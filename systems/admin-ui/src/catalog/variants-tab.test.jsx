@@ -84,10 +84,11 @@ describe('VariantsTab', () => {
     await userEvent.clear(onHand); await userEvent.type(onHand, '4')
     await userEvent.click(screen.getByLabelText(/split/i))
     const alloc = screen.getByLabelText('Walmart allocation')
-    await userEvent.clear(alloc); await userEvent.type(alloc, '1')
+    // 2, not the fixture's 1: an unchanged allocation is no longer sent.
+    await userEvent.clear(alloc); await userEvent.type(alloc, '2')
     await userEvent.click(screen.getByRole('button', { name: /save stock/i }))
     expect(api.setStock).toHaveBeenCalledWith(v.id, expect.objectContaining({
-      onHand: 4, walmartAllocation: 1, expectedOnHand: v.inventory.onHand,
+      onHand: 4, walmartAllocation: 2, expectedOnHand: v.inventory.onHand,
     }))
   })
 
@@ -139,6 +140,7 @@ describe('VariantsTab', () => {
       .mockResolvedValueOnce(withStock)
     renderTab()
     await userEvent.click(screen.getByRole('button', { name: /set stock/i }))
+    await userEvent.clear(screen.getByLabelText('On hand')); await userEvent.type(screen.getByLabelText('On hand'), '4')
     await userEvent.click(screen.getByRole('button', { name: /save stock/i }))
     const confirm = await screen.findByRole('button', { name: /set it anyway/i })
     expect(screen.getByText(/stock changed to/i)).toHaveTextContent('Stock changed to 5 since you opened this')
@@ -155,8 +157,34 @@ describe('VariantsTab', () => {
     vi.mocked(api.setStock).mockRejectedValueOnce(new AdminApiError(message, code, fields, { onHand: 3, reserved: 0, walmartAllocation: 1 }))
     renderTab()
     await userEvent.click(screen.getByRole('button', { name: /set stock/i }))
+    // Save stock is disabled until something changes.
+    await userEvent.clear(screen.getByLabelText('On hand')); await userEvent.type(screen.getByLabelText('On hand'), '1')
     await userEvent.click(screen.getByRole('button', { name: /save stock/i }))
     expect(await screen.findByText(message, { exact: false })).toBeInTheDocument()
+  })
+
+  it('shows a bulk-row field error as "Row N <field>: hint"', async () => {
+    vi.mocked(api.bulkCreateVariants).mockRejectedValue(
+      new AdminApiError('invalid input', 'VALIDATION_ERROR', { 'variants.2.sku': 'duplicates row 2' }))
+    renderTab({ ...withStock, variants: [] })
+    await userEvent.type(screen.getByPlaceholderText('SKU prefix'), 'T-')
+    await userEvent.type(screen.getByPlaceholderText('Price each $'), '1')
+    await userEvent.type(screen.getByPlaceholderText('Values: S,M,L'), 's,m,s')
+    await userEvent.click(screen.getByRole('button', { name: /create 3 variant/i }))
+    expect(await screen.findByText(/Row 3 SKU: duplicates row 2/)).toBeInTheDocument()
+  })
+
+  it('ignores a second Add variant click while the first request is in flight', async () => {
+    let resolve
+    vi.mocked(api.createVariant).mockReturnValue(new Promise((r) => { resolve = r }))
+    renderTab({ ...withStock, variants: [] })
+    await userEvent.type(screen.getByPlaceholderText('SKU'), 'abe-2')
+    await userEvent.type(screen.getByPlaceholderText('Price $'), '19.99')
+    const add = screen.getByRole('button', { name: /add variant/i })
+    await userEvent.click(add)
+    await userEvent.click(add)
+    expect(api.createVariant).toHaveBeenCalledTimes(1)
+    resolve(withStock)
   })
 
   it('shows attributes read-only as key: value', () => {
@@ -170,5 +198,54 @@ describe('VariantsTab', () => {
     renderTab({ ...withStock, variants: [{ ...v, attributes: {} }] })
     const row = screen.getByRole('row', { name: new RegExp(v.sku) })
     expect(within(row).getByText('—')).toBeInTheDocument()
+  })
+})
+
+describe('StockDialog sends only what changed', () => {
+  // Fixture: onHand 3, reserved 0, walmartAllocation 1 (split).
+  const open = async () => {
+    vi.mocked(api.getStockHistory).mockResolvedValue([])
+    vi.mocked(api.setStock).mockResolvedValue(withStock)
+    renderTab()
+    await userEvent.click(screen.getByRole('button', { name: /set stock/i }))
+  }
+  const sent = () => vi.mocked(api.setStock).mock.calls[0][1]
+
+  it('changing only on-hand sends no walmartAllocation key', async () => {
+    await open()
+    const onHand = screen.getByLabelText('On hand')
+    await userEvent.clear(onHand); await userEvent.type(onHand, '4')
+    await userEvent.click(screen.getByRole('button', { name: /save stock/i }))
+    expect(sent()).toEqual({ onHand: 4, expectedOnHand: 3 })
+  })
+
+  it('changing only the allocation sends no onHand key', async () => {
+    await open()
+    const alloc = screen.getByLabelText('Walmart allocation')
+    await userEvent.clear(alloc); await userEvent.type(alloc, '2')
+    await userEvent.click(screen.getByRole('button', { name: /save stock/i }))
+    expect(sent()).toEqual({ walmartAllocation: 2, expectedOnHand: 3 })
+  })
+
+  it('switching to Shared sends walmartAllocation null and no onHand', async () => {
+    await open()
+    await userEvent.click(screen.getByLabelText(/shared/i))
+    await userEvent.click(screen.getByRole('button', { name: /save stock/i }))
+    expect(sent()).toEqual({ walmartAllocation: null, expectedOnHand: 3 })
+  })
+
+  it('a note alone sends just expectedOnHand and the note', async () => {
+    await open()
+    await userEvent.type(screen.getByLabelText('Note'), '  recount  ')
+    await userEvent.click(screen.getByRole('button', { name: /save stock/i }))
+    expect(sent()).toEqual({ expectedOnHand: 3, note: 'recount' })
+  })
+
+  it('disables Save stock when nothing changed and the note is empty', async () => {
+    await open()
+    const save = screen.getByRole('button', { name: /save stock/i })
+    expect(save).toBeDisabled()
+    await userEvent.click(save)
+    expect(api.setStock).not.toHaveBeenCalled()
   })
 })

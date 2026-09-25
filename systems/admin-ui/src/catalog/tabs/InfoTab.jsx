@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import api from '../../data/api.js'
 import Button from '../../ui/Button.jsx'
 import { useToast } from '../../ui/toast.jsx'
+import { errorText } from '../../lib/errorText.js'
 
 /**
  * Explicit Save, never auto-save: on a published product every keystroke
@@ -75,9 +76,12 @@ export default function InfoTab({ product, onUpdated, onDirtyChange }) {
   const toast = useToast()
   const [form, setForm] = useState(() => toForm(product))
   const [errors, setErrors] = useState({})
+  // A failure that belongs to no field shown here (e.g. NOT_FOUND, a 500):
+  // rendered beside Save, never under Name.
+  const [formError, setFormError] = useState(null)
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { setForm(toForm(product)); setErrors({}) }, [product])
+  useEffect(() => { setForm(toForm(product)); setErrors({}); setFormError(null) }, [product])
   const patch = useMemo(() => diffPatch(product, form), [product, form])
   const dirty = Object.keys(patch).length > 0
 
@@ -101,12 +105,16 @@ export default function InfoTab({ product, onUpdated, onDirtyChange }) {
   const f = (id, label, extra = {}) => ({ id: `info-${id}`, label, error: errors[id], ...extra })
 
   const save = async () => {
-    setSaving(true); setErrors({})
+    if (saving) return
+    setSaving(true); setErrors({}); setFormError(null)
     try {
       onUpdated(await api.updateProduct(product.id, patch))
       toast.push(product.status === 'published' ? 'Saved — live on the storefront now' : 'Saved')
     } catch (err) {
-      setErrors(err.fields || { name: err.message })
+      const fields = err.fields ?? {}
+      setErrors(fields)
+      const shown = Object.keys(toForm(product))
+      if (Object.keys(fields).length === 0 || Object.keys(fields).some((k) => !shown.includes(k))) setFormError(errorText(err))
     } finally {
       setSaving(false)
     }
@@ -173,7 +181,8 @@ export default function InfoTab({ product, onUpdated, onDirtyChange }) {
       <div className="sticky bottom-0 flex items-center gap-3 border-t border-gray-100 bg-white py-3">
         <Button onClick={save} disabled={!dirty || saving}>{saving ? 'Saving…' : 'Save changes'}</Button>
         {dirty && <span className="text-sm text-gray-500">Unsaved changes{product.status === 'published' ? ' — saving updates the live storefront' : ''}</span>}
-        {dirty && <Button variant="ghost" onClick={() => { setForm(toForm(product)); setErrors({}) }}>Discard</Button>}
+        {dirty && <Button variant="ghost" onClick={() => { setForm(toForm(product)); setErrors({}); setFormError(null) }}>Discard</Button>}
+        {formError && <span role="alert" className="text-sm text-accent">{formError}</span>}
       </div>
     </div>
   )

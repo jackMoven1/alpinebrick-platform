@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import api from '../../data/api.js'
 import Modal from '../../ui/Modal.jsx'
 import Button from '../../ui/Button.jsx'
+import { errorText } from '../../lib/errorText.js'
 
 /**
  * Mirrors core's src/inventory/allocation.ts (storefrontSellable /
@@ -28,6 +29,7 @@ export default function StockDialog({ variant, onClose, onSaved }) {
   const [conflict, setConflict] = useState(null)
   const [error, setError] = useState(null)
   const [history, setHistory] = useState([])
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -46,24 +48,43 @@ export default function StockDialog({ variant, onClose, onSaved }) {
   const listing = variant.walmartListing ?? null
   const unlisted = mode === 'split' && a > 0 && (listing === null || listing.status === 'retired')
 
+  // Send only what changed: resending an untouched field would overwrite a
+  // concurrent change to it (e.g. an allocation edited elsewhere) with the
+  // value this dialog happened to open with. Invalid text counts as changed so
+  // the validation message below still shows.
+  const onHandChanged = !onHandOk || n !== inv.onHand
+  const allocChanged = !allocOk || a !== inv.walmartAllocation
+  const noteText = note.trim()
+  const nothingToSave = !onHandChanged && !allocChanged && noteText === ''
+
   const save = async (expectedOnHand = expected) => {
+    if (saving) return
     setError(null)
     if (!onHandOk) { setError('On hand must be a whole number, 0 or more.'); return }
     if (!allocOk) { setError('Walmart allocation must be a whole number, 0 or more.'); return }
+    const body = {
+      ...(onHandChanged ? { onHand: n } : {}),
+      ...(allocChanged ? { walmartAllocation: a } : {}),
+      expectedOnHand,
+      ...(noteText ? { note: noteText } : {}),
+    }
+    setSaving(true)
     try {
-      onSaved(await api.setStock(variant.id, { onHand: n, walmartAllocation: a, expectedOnHand, ...(note.trim() ? { note: note.trim() } : {}) }))
+      onSaved(await api.setStock(variant.id, body))
       onClose()
     } catch (err) {
       if (err.code === 'STOCK_CHANGED') { setConflict(err.details); return }
       // Core's message says what is wrong and what to do (spec §3/§6); the
-      // field hint ("at least 2") alone does not, so it only follows it.
-      const hint = Object.values(err.fields ?? {})[0]
-      setError(hint ? `${err.message} (${hint})` : err.message)
+      // field hints only follow it.
+      setError(errorText(err))
+    } finally {
+      setSaving(false)
     }
   }
 
   return (
-    <Modal open title={`Stock — ${variant.sku}`} onClose={onClose} onConfirm={() => save()} confirmLabel="Save stock">
+    <Modal open title={`Stock — ${variant.sku}`} onClose={onClose} onConfirm={() => save()} confirmLabel="Save stock"
+      confirmDisabled={nothingToSave || saving}>
       <div className="space-y-4 text-sm">
         <div>
           <label className="block font-semibold" htmlFor="sd-onhand">On hand</label>
@@ -111,7 +132,7 @@ export default function StockDialog({ variant, onClose, onSaved }) {
         {conflict && (
           <div className="rounded-lg bg-gray-100 p-3">
             <p>Stock changed to <b>{conflict.onHand}</b> since you opened this. Set it to {onHand} anyway?</p>
-            <Button className="mt-2" onClick={() => { setExpected(conflict.onHand); setConflict(null); save(conflict.onHand) }}>Set it anyway</Button>
+            <Button className="mt-2" disabled={saving} onClick={() => { setExpected(conflict.onHand); setConflict(null); save(conflict.onHand) }}>Set it anyway</Button>
           </div>
         )}
 

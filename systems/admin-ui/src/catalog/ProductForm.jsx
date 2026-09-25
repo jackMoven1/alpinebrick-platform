@@ -5,6 +5,10 @@ import { slugify } from '../lib/slug.js'
 import Card from '../ui/Card.jsx'
 import Button from '../ui/Button.jsx'
 import { useToast } from '../ui/toast.jsx'
+import { errorText } from '../lib/errorText.js'
+
+// Fields this form renders an error beside; any other key is reported beside Create.
+const SHOWN = ['name', 'slug', 'productType']
 
 const TYPES = [
   { value: 'resale', label: 'Resale / collectible', hint: 'A set we bought to sell on' },
@@ -16,6 +20,8 @@ export default function ProductForm() {
   const toast = useToast()
   const [form, setForm] = useState({ name: '', productType: '', description: '', slug: '' })
   const [errors, setErrors] = useState({})
+  // A failure with no field shown on this form goes beside Create, not under Name.
+  const [formError, setFormError] = useState(null)
   const [saving, setSaving] = useState(false)
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
@@ -24,8 +30,8 @@ export default function ProductForm() {
 
   const submit = async (e) => {
     e.preventDefault()
-    if (!valid) return
-    setSaving(true)
+    if (!valid || saving) return
+    setSaving(true); setErrors({}); setFormError(null)
     try {
       const p = await api.createProduct({
         name: form.name.trim(),
@@ -36,7 +42,9 @@ export default function ProductForm() {
       toast.push('Draft created')
       nav(`/products/${p.id}`)
     } catch (err) {
-      setErrors(err.fields || { name: err.message })
+      const fields = err.fields ?? {}
+      setErrors(fields)
+      if (Object.keys(fields).length === 0 || Object.keys(fields).some((k) => !SHOWN.includes(k))) setFormError(errorText(err))
       setSaving(false)
     }
   }
@@ -82,6 +90,7 @@ export default function ProductForm() {
           <div className="flex gap-2">
             <Button type="submit" disabled={!valid || saving}>{saving ? 'Creating…' : 'Create product'}</Button>
             <Button type="button" variant="ghost" onClick={() => nav('/products')}>Cancel</Button>
+            {formError && <span role="alert" className="self-center text-sm text-accent">{formError}</span>}
           </div>
         </form>
       </Card>

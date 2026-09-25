@@ -50,6 +50,18 @@ describe('ProductForm', () => {
     expect(await screen.findByText('already in use')).toBeInTheDocument()
   })
 
+  it('shows a failure without fields beside Create, not under Name', async () => {
+    vi.mocked(api.createProduct).mockRejectedValue(new AdminApiError('internal error', 'INTERNAL'))
+    renderForm()
+    await userEvent.type(screen.getByLabelText('Name'), 'Castle Set')
+    await userEvent.click(screen.getByLabelText(/resale/i))
+    const create = screen.getByRole('button', { name: /create product/i })
+    await userEvent.click(create)
+    const msg = await screen.findByText('internal error')
+    expect(create.parentElement).toContainElement(msg)
+    expect(screen.getByLabelText('Name').parentElement).not.toHaveTextContent('internal error')
+  })
+
   it('keeps accessible names intact when name and slug errors are both shown', async () => {
     vi.mocked(api.createProduct).mockRejectedValue(
       new AdminApiError('invalid input', 'VALIDATION_ERROR', { name: 'required, 1–200 characters', slug: 'already in use' }),

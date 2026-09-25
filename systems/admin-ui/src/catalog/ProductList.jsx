@@ -5,6 +5,7 @@ import Card from '../ui/Card.jsx'
 import Pill from '../ui/Pill.jsx'
 import Button from '../ui/Button.jsx'
 import { useToast } from '../ui/toast.jsx'
+import { errorText } from '../lib/errorText.js'
 
 const PAGE_SIZE = 20
 
@@ -17,6 +18,7 @@ export default function ProductList() {
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState(new Set())
   const [failures, setFailures] = useState([])
+  const [bulkBusy, setBulkBusy] = useState(false)
 
   const load = useCallback(() => {
     api.listProducts({ search, status, page, limit: PAGE_SIZE }).then(setData)
@@ -30,6 +32,8 @@ export default function ProductList() {
 
   // Each product is its own transaction in core; report failures per product.
   const bulkSet = async (newStatus) => {
+    if (bulkBusy) return
+    setBulkBusy(true)
     try {
       const { results } = await api.bulkSetStatus([...selected], newStatus)
       const failed = results.filter((r) => !r.ok)
@@ -40,9 +44,10 @@ export default function ProductList() {
       // Core commits each product in its own transaction, so an outright
       // failure (e.g. a 500 mid-bulk) can still have changed some products —
       // clear the selection and reload the same as the normal path (finally).
-      setFailures([{ id: 'bulk', name: 'Bulk update', message: err.message || 'Request failed' }])
+      setFailures([{ id: 'bulk', name: 'Bulk update', message: errorText(err) }])
     } finally {
       setSelected(new Set())
+      setBulkBusy(false)
       load()
     }
   }
@@ -76,9 +81,9 @@ export default function ProductList() {
         </select>
         {selected.size > 0 && (
           <div className="ml-auto flex gap-2">
-            <Button variant="brand" onClick={() => bulkSet('published')}>Publish ({selected.size})</Button>
-            <Button variant="ghost" onClick={() => bulkSet('draft')}>Unpublish</Button>
-            <Button variant="danger" onClick={() => bulkSet('archived')}>Archive</Button>
+            <Button variant="brand" disabled={bulkBusy} onClick={() => bulkSet('published')}>Publish ({selected.size})</Button>
+            <Button variant="ghost" disabled={bulkBusy} onClick={() => bulkSet('draft')}>Unpublish</Button>
+            <Button variant="danger" disabled={bulkBusy} onClick={() => bulkSet('archived')}>Archive</Button>
           </div>
         )}
       </div>
