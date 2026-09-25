@@ -1,0 +1,9 @@
+{
+  "code": "STOCK_CHANGED",
+  "message": "stock changed to 3 since you opened this",
+  "details": {
+    "onHand": 3,
+    "reserved": 0,
+    "walmartAllocation": 1
+  }
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "at": "2026-09-25T00:26:57.917Z",
+    "actor": "jack@example.com",
+    "before": {
+      "onHand": 3,
+      "reserved": 0,
+      "walmartAllocation": null
+    },
+    "after": {
+      "note": "one for Walmart",
+      "onHand": 3,
+      "reserved": 0,
+      "walmartAllocation": 1
+    },
+    "note": "one for Walmart"
+  }
+]
