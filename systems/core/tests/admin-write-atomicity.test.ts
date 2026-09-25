@@ -8,6 +8,7 @@ import { prisma } from '../src/prisma.js'
 import { resetDb } from './helpers/db.js'
 import { createProduct, updateProduct } from '../src/admin/product-write.service.js'
 import { createVariant } from '../src/admin/variant-write.service.js'
+import { setStock } from '../src/admin/stock.service.js'
 
 let actorId: string
 beforeEach(async () => {
@@ -31,5 +32,12 @@ describe('a write whose audit fails is undone', () => {
     await expect(createVariant(p.id, { sku: 'A-1', priceCents: 100 }, actorId)).rejects.toThrow('audit down')
     expect(await prisma.variant.count()).toBe(0)
     expect(await prisma.inventory.count()).toBe(0)
+  })
+  it('setStock', async () => {
+    const p = await prisma.product.create({ data: { slug: 'a', name: 'A', productType: 'resale' } })
+    const v = await prisma.variant.create({ data: { productId: p.id, sku: 'A-1', priceCents: 100 } })
+    await prisma.inventory.create({ data: { variantId: v.id, onHand: 5, reserved: 2 } })
+    await expect(setStock(v.id, { onHand: 9 }, actorId)).rejects.toThrow('audit down')
+    expect((await prisma.inventory.findUniqueOrThrow({ where: { variantId: v.id } })).onHand).toBe(5)
   })
 })

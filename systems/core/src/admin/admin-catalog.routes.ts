@@ -4,6 +4,7 @@ import {
 } from './admin-catalog.service.js'
 import { createProduct, updateProduct, bulkSetStatus } from './product-write.service.js'
 import { createVariant, bulkCreateVariants, updateVariant, deleteVariant } from './variant-write.service.js'
+import { setStock, getStockHistory } from './stock.service.js'
 import { scrubError } from '../auth/scrub.js'
 
 // Error codes here are UPPER_SNAKE, matching the catalog routes and the
@@ -117,6 +118,14 @@ adminCatalogRouter.patch('/variants/:id', async (req, res) => {
 
 adminCatalogRouter.delete('/variants/:id', async (req, res) => {
   try { res.json(await deleteVariant(req.params.id, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.put('/variants/:id/stock', async (req, res) => {
+  try { res.json(await setStock(req.params.id, req.body, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.get('/variants/:id/stock-history', async (req, res) => {
+  try { res.json(await getStockHistory(req.params.id, intParam(req.query.limit) ?? 10)) } catch (err) { fail(res, err) }
 })
 
 adminCatalogRouter.get('/overview', async (_req, res) => {
