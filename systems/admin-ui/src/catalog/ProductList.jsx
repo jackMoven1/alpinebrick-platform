@@ -45,7 +45,7 @@ export default function ProductList() {
           <h1 className="text-3xl font-bold">Products</h1>
           <p className="text-gray-500">{data.total} total</p>
         </div>
-        <span className="text-xs text-gray-500">Creating products is not in this phase.</span>
+        <Link to="/products/new"><Button>+ New product</Button></Link>
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
