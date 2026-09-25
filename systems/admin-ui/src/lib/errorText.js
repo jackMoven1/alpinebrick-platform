@@ -9,14 +9,16 @@ const LABELS = {
   walmartAllocation: 'Walmart allocation', expectedOnHand: 'expected on hand', note: 'note',
 }
 
-const label = (key) => {
+const label = (key, labels) => {
   const m = /^variants\.(\d+)\.(.+)$/.exec(key)
-  if (m) return `Row ${Number(m[1]) + 1} ${LABELS[m[2]] ?? m[2]}`
-  return LABELS[key] ?? key
+  if (m) return `Row ${Number(m[1]) + 1} ${labels[m[2]] ?? m[2]}`
+  return labels[key] ?? key
 }
 
-export function errorText(err) {
+/** `overrides` renames fields for a screen whose label differs (e.g. "On hand"). */
+export function errorText(err, overrides = {}) {
+  const labels = { ...LABELS, ...overrides }
   const message = err?.message || 'Request failed'
-  const hints = Object.entries(err?.fields ?? {}).map(([k, hint]) => `${label(k)}: ${hint}`)
+  const hints = Object.entries(err?.fields ?? {}).map(([k, hint]) => `${label(k, labels)}: ${hint}`)
   return hints.length ? `${message} (${hints.join('; ')})` : message
 }

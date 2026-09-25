@@ -21,6 +21,11 @@ describe('errorText', () => {
       .toBe('invalid input (SKU: already in use)')
   })
 
+  it('accepts label overrides for a screen that names a field differently', () => {
+    expect(errorText(new AdminApiError('bad', 'VALIDATION_ERROR', { onHand: 'at least 2' }), { onHand: 'On hand' }))
+      .toBe('bad (On hand: at least 2)')
+  })
+
   it('falls back when there is no message', () => {
     expect(errorText(new Error(''))).toBe('Request failed')
   })

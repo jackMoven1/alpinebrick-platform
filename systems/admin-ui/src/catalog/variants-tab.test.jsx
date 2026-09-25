@@ -234,11 +234,24 @@ describe('StockDialog sends only what changed', () => {
     expect(sent()).toEqual({ walmartAllocation: null, expectedOnHand: 3 })
   })
 
-  it('a note alone sends just expectedOnHand and the note', async () => {
+  // Core requires onHand or walmartAllocation (parseStockInput), so a note
+  // alone carries the current on-hand; expectedOnHand still guards staleness.
+  it('a note alone sends the current on-hand, expectedOnHand and the note', async () => {
     await open()
     await userEvent.type(screen.getByLabelText('Note'), '  recount  ')
     await userEvent.click(screen.getByRole('button', { name: /save stock/i }))
-    expect(sent()).toEqual({ expectedOnHand: 3, note: 'recount' })
+    expect(sent()).toEqual({ onHand: 3, expectedOnHand: 3, note: 'recount' })
+  })
+
+  it('labels the onHand field hint "On hand" in the dialog', async () => {
+    vi.mocked(api.getStockHistory).mockResolvedValue([])
+    vi.mocked(api.setStock).mockRejectedValueOnce(
+      new AdminApiError('on hand cannot go below the 2 reserved by open orders', 'STOCK_BELOW_RESERVED', { onHand: 'at least 2' }))
+    renderTab()
+    await userEvent.click(screen.getByRole('button', { name: /set stock/i }))
+    await userEvent.clear(screen.getByLabelText('On hand')); await userEvent.type(screen.getByLabelText('On hand'), '1')
+    await userEvent.click(screen.getByRole('button', { name: /save stock/i }))
+    expect(await screen.findByText(/\(On hand: at least 2\)/)).toBeInTheDocument()
   })
 
   it('disables Save stock when nothing changed and the note is empty', async () => {

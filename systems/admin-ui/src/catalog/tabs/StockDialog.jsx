@@ -63,7 +63,9 @@ export default function StockDialog({ variant, onClose, onSaved }) {
     if (!onHandOk) { setError('On hand must be a whole number, 0 or more.'); return }
     if (!allocOk) { setError('Walmart allocation must be a whole number, 0 or more.'); return }
     const body = {
-      ...(onHandChanged ? { onHand: n } : {}),
+      // Core requires onHand or walmartAllocation, so a note-only save carries
+      // the current on-hand; expectedOnHand makes a stale value STOCK_CHANGED.
+      ...(onHandChanged || !allocChanged ? { onHand: n } : {}),
       ...(allocChanged ? { walmartAllocation: a } : {}),
       expectedOnHand,
       ...(noteText ? { note: noteText } : {}),
@@ -76,7 +78,7 @@ export default function StockDialog({ variant, onClose, onSaved }) {
       if (err.code === 'STOCK_CHANGED') { setConflict(err.details); return }
       // Core's message says what is wrong and what to do (spec §3/§6); the
       // field hints only follow it.
-      setError(errorText(err))
+      setError(errorText(err, { onHand: 'On hand' }))
     } finally {
       setSaving(false)
     }
