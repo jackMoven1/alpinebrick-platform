@@ -38,6 +38,15 @@ describe('loadAdminProduct', () => {
       .toEqual({ onHand: 0, reserved: 0, walmartAllocation: null, storefrontAvailable: 0, walmartAvailable: 0 })
   })
 
+  it('reports the Walmart listing status, or null when there is none', async () => {
+    const p = await product()
+    await variant(p.id, 'N-1')
+    const listed = await variant(p.id, 'W-1')
+    await prisma.channelListing.create({ data: { variantId: listed.id, walmartSku: 'W-1-W', status: 'live' } })
+    const bySku = Object.fromEntries((await loadAdminProduct(p.id))!.variants.map((v) => [v.sku, v.walmartListing]))
+    expect(bySku).toEqual({ 'N-1': null, 'W-1': { status: 'live' } })
+  })
+
   it('locks the slug once first published', async () => {
     expect((await loadAdminProduct((await product()).id))!.locked.slug).toBe(false)
     await resetDb()
