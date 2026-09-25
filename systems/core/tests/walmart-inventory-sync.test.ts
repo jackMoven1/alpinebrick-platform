@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import { prisma } from '../src/prisma.js'
 import { resetDb } from './helpers/db.js'
 import {
-  computeAvailableToSell,
   pushInventoryForVariant,
   reconcileAllInventory,
   enqueueInventoryPush,
@@ -17,69 +16,17 @@ function recordingClient() {
   return { client, calls }
 }
 
-async function seed(onHand: number, reserved: number, bufferPct?: number) {
+async function seed(onHand: number, reserved: number, walmartAllocation: number | null = null) {
   const p = await prisma.product.create({ data: { slug: 's', name: 'S', productType: 'own_designed', status: 'published' } })
   const v = await prisma.variant.create({ data: { productId: p.id, sku: 'ABE-9', priceCents: 1000 } })
-  await prisma.inventory.create({ data: { variantId: v.id, onHand, reserved } })
-  await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-9-W', status: 'live', bufferPct } })
+  await prisma.inventory.create({ data: { variantId: v.id, onHand, reserved, walmartAllocation } })
+  await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: 'ABE-9-W', status: 'live' } })
   return v
 }
 
-describe('computeAvailableToSell', () => {
-  it('applies the default 10%-min-1 buffer', () => {
-    expect(computeAvailableToSell(10, 0)).toBe(9)   // buffer ceil(1)=1
-    expect(computeAvailableToSell(10, 3)).toBe(6)
-    expect(computeAvailableToSell(2, 0)).toBe(1)    // min 1 buffer
-    expect(computeAvailableToSell(1, 0)).toBe(0)
-    expect(computeAvailableToSell(0, 0)).toBe(0)
-    expect(computeAvailableToSell(25, 0)).toBe(22)  // ceil(2.5)=3
-  })
-  it('honors overrides including 0', () => {
-    expect(computeAvailableToSell(10, 0, 20)).toBe(8)
-    expect(computeAvailableToSell(10, 0, 0)).toBe(10)
-    expect(computeAvailableToSell(5, 6)).toBe(0)    // never negative
-  })
-
-  // --- Boundary pins beyond the brief's own worked examples ---
-
-  it('pins on-hand zero regardless of reserved (buffer is always 0 when on-hand is 0)', () => {
-    expect(computeAvailableToSell(0, 0)).toBe(0)
-    expect(computeAvailableToSell(0, 5)).toBe(0) // never goes negative even with reserved > on-hand=0
-  })
-
-  it('pins on-hand equal to reserved: fully committed stock, buffer pushes further negative, clamped to 0', () => {
-    expect(computeAvailableToSell(5, 5)).toBe(0)
-    expect(computeAvailableToSell(1, 1)).toBe(0)
-  })
-
-  it('pins the minimum-1 rule exactly at on-hand=1 (10% of 1 rounds to a fraction, floor would give 0)', () => {
-    expect(computeAvailableToSell(1, 0)).toBe(0) // onHand 1 - buffer 1 (min-1) = 0
-  })
-
-  it('pins buffer rounding where 10% lands exactly on an integer (no min-1 needed to distinguish)', () => {
-    expect(computeAvailableToSell(20, 0)).toBe(18) // 20*10/100 = 2.0 exactly, ceil(2)=2
-    expect(computeAvailableToSell(100, 0)).toBe(90) // 100*10/100 = 10.0 exactly
-  })
-
-  it('pins buffer rounding where 10% does NOT land on an integer', () => {
-    expect(computeAvailableToSell(11, 0)).toBe(9) // 11*10/100=1.1, ceil=2 -> 11-0-2=9
-    expect(computeAvailableToSell(25, 0)).toBe(22) // 25*10/100=2.5, ceil=3
-  })
-
-  it('pins a bufferPct override of 0: no buffer at all, even with the min-1 rule in play elsewhere', () => {
-    expect(computeAvailableToSell(10, 0, 0)).toBe(10)
-    expect(computeAvailableToSell(1, 0, 0)).toBe(1) // would be 0 under the default 10%-min-1 buffer
-  })
-
-  it('pins a bufferPct override of 100: the entire on-hand is buffered away', () => {
-    expect(computeAvailableToSell(10, 0, 100)).toBe(0)
-    expect(computeAvailableToSell(1, 0, 100)).toBe(0)
-  })
-
-  it('treats null bufferPct the same as undefined (falls back to the 10% default)', () => {
-    expect(computeAvailableToSell(10, 0, null as any)).toBe(9)
-  })
-})
+// The 10%-min-1 buffer was removed 2026-09-24 (spec §5.1 rule 5): it told
+// Walmart 0 for every one-off. The figure pushed is walmartSellable, whose
+// unit tests live in allocation.test.ts.
 
 describe('inventory push', () => {
   beforeEach(resetDb)
@@ -89,9 +36,9 @@ describe('inventory push', () => {
     const v = await seed(10, 2)
     const { client, calls } = recordingClient()
     await pushInventoryForVariant(v.id, client)
-    expect(calls).toEqual([{ method: 'PUT', path: '/v3/inventory', opts: { query: { sku: 'ABE-9-W' }, body: { sku: 'ABE-9-W', quantity: { unit: 'EACH', amount: 7 } } } }])
+    expect(calls).toEqual([{ method: 'PUT', path: '/v3/inventory', opts: { query: { sku: 'ABE-9-W' }, body: { sku: 'ABE-9-W', quantity: { unit: 'EACH', amount: 8 } } } }])
     const listing = await prisma.channelListing.findFirstOrThrow()
-    expect(listing.lastPushedQty).toBe(7)
+    expect(listing.lastPushedQty).toBe(8)
     expect(listing.lastSyncedAt).not.toBeNull()
   })
 
@@ -215,14 +162,14 @@ describe('enqueueInventoryPush', () => {
   })
 
   it('registerInventoryHandlers wires walmart_push_inventory through processDueJobs end-to-end', async () => {
-    const v = await seed(10, 2) // ATS = 10 - 2 - buffer(ceil(1)=1) = 7
+    const v = await seed(10, 2) // sellable = 10 - 2, no buffer = 8
     const { client, calls } = recordingClient()
     registerInventoryHandlers(client)
     await enqueueInventoryPush(v.id)
     const r = await processDueJobs()
     expect(r).toEqual({ processed: 1, failed: 0 })
-    expect(calls).toEqual([{ method: 'PUT', path: '/v3/inventory', opts: { query: { sku: 'ABE-9-W' }, body: { sku: 'ABE-9-W', quantity: { unit: 'EACH', amount: 7 } } } }])
+    expect(calls).toEqual([{ method: 'PUT', path: '/v3/inventory', opts: { query: { sku: 'ABE-9-W' }, body: { sku: 'ABE-9-W', quantity: { unit: 'EACH', amount: 8 } } } }])
     const listing = await prisma.channelListing.findFirstOrThrow()
-    expect(listing.lastPushedQty).toBe(7)
+    expect(listing.lastPushedQty).toBe(8)
   })
 })

@@ -9,7 +9,7 @@ import { imageUrl } from '../../assets/image-url.js'
 export async function createListing(
   variantId: string,
   walmartSku: string,
-  opts: { bufferPct?: number; priceOverrideCents?: number } = {},
+  opts: { priceOverrideCents?: number } = {},
 ): Promise<{ id: string }> {
   const variant = await prisma.variant.findUniqueOrThrow({ where: { id: variantId }, include: { product: true } })
   if (variant.product.status !== 'published') {
@@ -22,7 +22,7 @@ export async function createListing(
   // both change afterward without going through createListing again.
   resolveListingPriceCents({ priceOverrideCents: opts.priceOverrideCents ?? null, variant: { priceCents: variant.priceCents } })
   const listing = await prisma.channelListing.create({
-    data: { variantId, walmartSku, bufferPct: opts.bufferPct, priceOverrideCents: opts.priceOverrideCents },
+    data: { variantId, walmartSku, priceOverrideCents: opts.priceOverrideCents },
     select: { id: true },
   })
   return listing

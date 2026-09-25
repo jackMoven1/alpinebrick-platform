@@ -129,11 +129,14 @@ export async function placeOrder(input: PlaceOrderInput, taxPort: TaxPort = defa
       resolved.push({ variantId: variant.id, sku: variant.sku, quantity: line.quantity, unitPriceCents: variant.priceCents })
     }
 
-    // 2. Reserve each line atomically: only reserve if enough is available RIGHT NOW.
+    // 2. Reserve each line atomically: only reserve if enough is available RIGHT
+    //    NOW. Units allocated to Walmart are not the storefront's to sell
+    //    (spec §5.1 rule 1).
     for (const line of resolved) {
       const affected = await tx.$executeRaw`
         UPDATE inventory SET reserved = reserved + ${line.quantity}
-        WHERE variant_id = ${line.variantId} AND on_hand - reserved >= ${line.quantity}`
+        WHERE variant_id = ${line.variantId}
+          AND on_hand - reserved - COALESCE(walmart_allocation, 0) >= ${line.quantity}`
       if (affected === 0) throw new OrderError('insufficient_stock', `not enough stock for variant ${line.variantId}`)
     }
 
@@ -242,9 +245,20 @@ export async function cancelOrder(orderId: string, actorId = 'system', opts: Tra
       // quantity, the order still becomes cancelled, and the remaining hold is
       // stranded forever — stock that can never be sold again, with no error
       // raised. Failing loudly here is recoverable; the silent version is not.
-      const affected = await tx.$executeRaw`
-        UPDATE inventory SET reserved = reserved - ${line.quantity}
-        WHERE variant_id = ${line.variantId} AND reserved >= ${line.quantity}`
+      //
+      // A Walmart unit that did not sell stays Walmart's (spec §5.1 rule 3):
+      // reserved - q and allocation + q keeps reserved + allocation constant,
+      // so the invariant holds.
+      const affected = order.channel === 'walmart'
+        ? await tx.$executeRaw`
+            UPDATE inventory
+            SET reserved = reserved - ${line.quantity},
+                walmart_allocation = CASE WHEN walmart_allocation IS NULL THEN NULL
+                                          ELSE walmart_allocation + ${line.quantity} END
+            WHERE variant_id = ${line.variantId} AND reserved >= ${line.quantity}`
+        : await tx.$executeRaw`
+            UPDATE inventory SET reserved = reserved - ${line.quantity}
+            WHERE variant_id = ${line.variantId} AND reserved >= ${line.quantity}`
       if (affected === 0) throw new OrderError('inventory_conflict', `cannot release reservation for variant ${line.variantId}`)
     }
     const next = await tx.order.update({ where: { id: orderId }, data: { status: 'cancelled' }, include: { lines: true } })

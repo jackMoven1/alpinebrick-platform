@@ -18,3 +18,13 @@ export async function resetDb() {
   await prisma.product.deleteMany()
   await prisma.actor.deleteMany()
 }
+
+// placeOrder / cancelOrder audit as actor 'system'. resetDb deletes every
+// actor, so tests that exercise orders must put it back.
+export async function ensureSystemActor() {
+  await prisma.actor.upsert({
+    where: { id: 'system' },
+    create: { id: 'system', type: 'agent', name: 'system' },
+    update: {},
+  })
+}

@@ -1,0 +1,51 @@
+{
+  "id": "cmug80wcj00041gx1yu0ttybq",
+  "slug": "castle-set",
+  "name": "Castle Set",
+  "description": "",
+  "productType": "resale",
+  "releaseType": "standard",
+  "status": "draft",
+  "images": [],
+  "categories": [],
+  "pieces": 900,
+  "difficulty": null,
+  "ageRecommendation": null,
+  "dimensions": null,
+  "longDescription": "",
+  "features": [
+    "Opening gate"
+  ],
+  "includes": [],
+  "builderNotes": "",
+  "homePosition": null,
+  "collectionPosition": null,
+  "createdAt": "2026-09-25T00:26:57.859Z",
+  "updatedAt": "2026-09-25T00:26:57.859Z",
+  "firstPublishedAt": null,
+  "locked": {
+    "slug": false
+  },
+  "variants": [
+    {
+      "id": "cmug80wdb00091gx12to195e9",
+      "sku": "ABE-1001",
+      "priceCents": 18900,
+      "currency": "USD",
+      "attributes": {
+        "condition": "sealed"
+      },
+      "inventory": {
+        "onHand": 3,
+        "reserved": 0,
+        "walmartAllocation": 1,
+        "storefrontAvailable": 2,
+        "walmartAvailable": 1
+      },
+      "locked": {
+        "sku": false,
+        "delete": false
+      }
+    }
+  ]
+}

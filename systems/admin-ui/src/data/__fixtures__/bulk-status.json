@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "id": "cmug80wcj00041gx1yu0ttybq",
+      "ok": true
+    },
+    {
+      "id": "missing-id",
+      "ok": false,
+      "code": "NOT_FOUND",
+      "message": "product not found"
+    }
+  ]
+}

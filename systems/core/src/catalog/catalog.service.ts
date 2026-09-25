@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from '../prisma.js'
+import { storefrontSellable } from '../inventory/allocation.js'
 
 export interface ProductImage {
   storageKey: string
@@ -182,6 +183,6 @@ export async function getAvailability(idOrSlug: string) {
   if (!p) return null
   return p.variants.map(v => ({
     variantId: v.id, sku: v.sku,
-    available: (v.inventory?.onHand ?? 0) - (v.inventory?.reserved ?? 0),
+    available: storefrontSellable(v.inventory?.onHand ?? 0, v.inventory?.reserved ?? 0, v.inventory?.walmartAllocation ?? null),
   }))
 }

@@ -136,6 +136,10 @@ model Product {
   homePosition       Int? @map("home_position")
   collectionPosition Int? @map("collection_position")
 
+  // Set on the first transition into `published`, never cleared. Locks the
+  // slug: a product that has ever been live may already be linked or indexed.
+  firstPublishedAt   DateTime? @map("first_published_at")
+
   createdAt   DateTime      @default(now()) @map("created_at")
   updatedAt   DateTime      @updatedAt @map("updated_at")
   variants    Variant[]
@@ -194,6 +198,12 @@ model Inventory {
   // and we order the same thing twice — cash committed twice, storage twice.
   // See docs/2026-08-07-cogs-and-margin-model.md (business repo) §2.
   onOrder   Int     @default(0) @map("on_order")
+  // Units set aside for Walmart. NULL = shared: both channels sell all of
+  // on_hand - reserved. N = split: Walmart sells up to N, the storefront the
+  // rest. Consumed by Walmart sales, returned on Walmart cancels. Invariant,
+  // kept by every writer: reserved + COALESCE(walmart_allocation, 0) <= on_hand.
+  // Spec: docs/superpowers/specs/2026-09-24-catalog-product-and-variant-editing-design.md §5.1
+  walmartAllocation Int? @map("walmart_allocation")
   @@map("inventory")
 }
 
@@ -284,7 +294,6 @@ model ChannelListing {
   variant              Variant              @relation(fields: [variantId], references: [id], onDelete: Cascade)
   walmartSku           String               @unique @map("walmart_sku")
   status               ChannelListingStatus @default(draft)
-  bufferPct            Int?                 @map("buffer_pct")
   priceOverrideCents   Int?                 @map("price_override_cents")
   lastPushedQty        Int?                 @map("last_pushed_qty")
   lastPushedPriceCents Int?                 @map("last_pushed_price_cents")

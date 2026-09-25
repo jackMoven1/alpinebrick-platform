@@ -127,9 +127,16 @@ export async function ingestWalmartOrder(
       // ingests that turns out to satisfy.
       for (const line of canonical.lines) {
         const listing = byWalmartSku.get(line.walmartSku)!
+        // A Walmart sale consumes its allocation in the same statement that
+        // reserves (spec §5.1 rule 2); shared stock (NULL) stays NULL.
         const affected = await tx.$executeRaw`
-          UPDATE inventory SET reserved = reserved + ${line.quantity}
-          WHERE variant_id = ${listing.variantId} AND on_hand - reserved >= ${line.quantity}`
+          UPDATE inventory
+          SET reserved = reserved + ${line.quantity},
+              walmart_allocation = CASE WHEN walmart_allocation IS NULL THEN NULL
+                                        ELSE walmart_allocation - ${line.quantity} END
+          WHERE variant_id = ${listing.variantId}
+            AND on_hand - reserved >= ${line.quantity}
+            AND (walmart_allocation IS NULL OR walmart_allocation >= ${line.quantity})`
         if (affected === 0) {
           throw new ChannelError('insufficient_stock', `not enough stock for walmart sku ${line.walmartSku}`)
         }

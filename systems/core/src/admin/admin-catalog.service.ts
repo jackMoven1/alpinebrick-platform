@@ -1,13 +1,9 @@
 import { prisma } from '../prisma.js'
-import type { ProductDto } from '../catalog/catalog.service.js'
 import { recordAudit } from '../audit.js'
+import { AdminError } from './admin-errors.js'
+import { loadAdminProduct, type AdminProductDto } from './admin-product.dto.js'
 
-export class AdminError extends Error {
-  constructor(public code: string, message: string) {
-    super(message)
-    this.name = 'AdminError'
-  }
-}
+export { AdminError }
 
 export interface AdminProductSummary {
   id: string
@@ -79,38 +75,8 @@ export async function adminListProducts(opts: {
 }
 
 /** Admin detail. Loads a product in ANY status, including drafts. */
-export async function adminGetProduct(id: string): Promise<ProductDto | null> {
-  const p = await prisma.product.findUnique({
-    where: { id },
-    include: {
-      variants: true,
-      images: { where: { status: 'ready' }, orderBy: { position: 'asc' } },
-    },
-  })
-  if (!p) return null
-  return {
-    id: p.id, slug: p.slug, name: p.name, description: p.description,
-    productType: p.productType, releaseType: p.releaseType, status: p.status,
-    images: p.images.map(i => ({
-      storageKey: i.storageKey, alt: i.alt, width: i.width, height: i.height, position: i.position,
-    })),
-    categories: Array.isArray(p.categories) ? (p.categories as string[]) : [],
-    pieces: p.pieces ?? null,
-    difficulty: p.difficulty ?? null,
-    ageRecommendation: p.ageRecommendation ?? null,
-    dimensions: p.dimensions ?? null,
-    longDescription: p.longDescription ?? '',
-    features: Array.isArray(p.features) ? (p.features as string[]) : [],
-    includes: Array.isArray(p.includes) ? (p.includes as string[]) : [],
-    builderNotes: p.builderNotes ?? '',
-    homePosition: p.homePosition ?? null,
-    collectionPosition: p.collectionPosition ?? null,
-    createdAt: p.createdAt,
-    updatedAt: p.updatedAt,
-    variants: p.variants.map(v => ({
-      id: v.id, sku: v.sku, priceCents: v.priceCents, currency: v.currency,
-    })),
-  }
+export async function adminGetProduct(id: string): Promise<AdminProductDto | null> {
+  return loadAdminProduct(id)
 }
 
 /**
@@ -129,7 +95,7 @@ export const ALLOWED_TRANSITIONS: Record<string, string[]> = {
   archived: ['draft'],
 }
 
-export async function setProductStatus(id: string, target: string, actorId: string): Promise<ProductDto> {
+export async function setProductStatus(id: string, target: string, actorId: string): Promise<AdminProductDto> {
   if (!STATUSES.includes(target as Status)) {
     throw new AdminError('VALIDATION_ERROR', `status must be one of: ${STATUSES.join(', ')}`)
   }
@@ -149,7 +115,17 @@ export async function setProductStatus(id: string, target: string, actorId: stri
       )
     }
 
-    await tx.product.update({ where: { id }, data: { status: target as Status } })
+    await tx.product.update({
+      where: { id },
+      data: {
+        status: target as Status,
+        // First publish only. Unpublishing or archiving never clears it, so
+        // the slug stays locked (spec §4.1).
+        ...(target === 'published' && existing.firstPublishedAt === null
+          ? { firstPublishedAt: new Date() }
+          : {}),
+      },
+    })
 
     await recordAudit({
       actorId,

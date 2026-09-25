@@ -2,6 +2,9 @@ import { Router, type Response } from 'express'
 import {
   adminListProducts, adminGetProduct, setProductStatus, getOverview, AdminError,
 } from './admin-catalog.service.js'
+import { createProduct, updateProduct, bulkSetStatus } from './product-write.service.js'
+import { createVariant, bulkCreateVariants, updateVariant, deleteVariant } from './variant-write.service.js'
+import { setStock, getStockHistory } from './stock.service.js'
 import { scrubError } from '../auth/scrub.js'
 
 // Error codes here are UPPER_SNAKE, matching the catalog routes and the
@@ -11,11 +14,24 @@ const STATUS_BY_CODE: Record<string, number> = {
   NOT_FOUND: 404,
   VALIDATION_ERROR: 400,
   INVALID_TRANSITION: 409,
+  SLUG_TAKEN: 409,
+  SKU_TAKEN: 409,
+  SLUG_LOCKED: 409,
+  SKU_LOCKED: 409,
+  VARIANT_HAS_SALES: 409,
+  STOCK_BELOW_RESERVED: 409,
+  STOCK_CHANGED: 409,
+  ALLOCATION_EXCEEDS_AVAILABLE: 409,
 }
 
 function fail(res: Response, err: unknown) {
   if (err instanceof AdminError) {
-    return res.status(STATUS_BY_CODE[err.code] ?? 400).json({ code: err.code, message: err.message })
+    return res.status(STATUS_BY_CODE[err.code] ?? 400).json({
+      code: err.code,
+      message: err.message,
+      ...(err.fields ? { fields: err.fields } : {}),
+      ...(err.details ? { details: err.details } : {}),
+    })
   }
   // Express 4 does not catch a rejection thrown out of an async handler, so
   // re-throwing an unknown error here (as this used to do) is the same
@@ -58,6 +74,18 @@ adminCatalogRouter.get('/products', async (req, res) => {
   } catch (err) { fail(res, err) }
 })
 
+adminCatalogRouter.post('/products', async (req, res) => {
+  try { res.status(201).json(await createProduct(req.body, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.post('/products/bulk-status', async (req, res) => {
+  try { res.json(await bulkSetStatus(req.body, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.patch('/products/:id', async (req, res) => {
+  try { res.json(await updateProduct(req.params.id, req.body, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
 adminCatalogRouter.get('/products/:id', async (req, res) => {
   try {
     const p = await adminGetProduct(req.params.id)
@@ -74,6 +102,30 @@ adminCatalogRouter.post('/products/:id/status', async (req, res) => {
   try {
     res.json(await setProductStatus(req.params.id, status, req.actor!.id))
   } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.post('/products/:id/variants/bulk', async (req, res) => {
+  try { res.status(201).json(await bulkCreateVariants(req.params.id, req.body, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.post('/products/:id/variants', async (req, res) => {
+  try { res.status(201).json(await createVariant(req.params.id, req.body, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.patch('/variants/:id', async (req, res) => {
+  try { res.json(await updateVariant(req.params.id, req.body, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.delete('/variants/:id', async (req, res) => {
+  try { res.json(await deleteVariant(req.params.id, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.put('/variants/:id/stock', async (req, res) => {
+  try { res.json(await setStock(req.params.id, req.body, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.get('/variants/:id/stock-history', async (req, res) => {
+  try { res.json(await getStockHistory(req.params.id, intParam(req.query.limit) ?? 10)) } catch (err) { fail(res, err) }
 })
 
 adminCatalogRouter.get('/overview', async (_req, res) => {
