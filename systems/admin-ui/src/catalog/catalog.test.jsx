@@ -69,4 +69,38 @@ describe('ProductDetail', () => {
     await user.click(screen.getByRole('button', { name: 'Variants' }))
     expect(screen.getByText('$12.50')).toBeInTheDocument()
   })
+
+  // spec §6: leaving Info with unsaved edits asks first, everywhere — not
+  // just on a browser tab close.
+  describe('unsaved Info edits guard tab switching', () => {
+    it('stays on Info when the confirm is declined', async () => {
+      vi.mocked(api.getProduct).mockResolvedValue(PRODUCT)
+      const user = userEvent.setup()
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+      renderDetail()
+      await screen.findByText('Classic Brick Set')
+      await user.clear(screen.getByLabelText('Name'))
+      await user.type(screen.getByLabelText('Name'), 'Renamed Set')
+      await user.click(screen.getByRole('button', { name: 'Variants' }))
+
+      expect(confirmSpy).toHaveBeenCalledWith('Discard unsaved changes to this product?')
+      expect(screen.getByLabelText('Name')).toHaveValue('Renamed Set')
+      confirmSpy.mockRestore()
+    })
+
+    it('switches tabs when the confirm is accepted', async () => {
+      vi.mocked(api.getProduct).mockResolvedValue(PRODUCT)
+      const user = userEvent.setup()
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+      renderDetail()
+      await screen.findByText('Classic Brick Set')
+      await user.clear(screen.getByLabelText('Name'))
+      await user.type(screen.getByLabelText('Name'), 'Renamed Set')
+      await user.click(screen.getByRole('button', { name: 'Variants' }))
+
+      expect(confirmSpy).toHaveBeenCalledWith('Discard unsaved changes to this product?')
+      expect(screen.getByText(/not in this phase/i)).toBeInTheDocument()
+      confirmSpy.mockRestore()
+    })
+  })
 })

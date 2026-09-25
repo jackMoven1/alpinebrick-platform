@@ -20,7 +20,16 @@ export function toForm(p) {
   }
 }
 
-const intOrNull = (v) => (String(v).trim() === '' ? null : Number(v))
+// Blank -> null. A string of digits only -> a Number. Anything else (e.g.
+// "1oo") -> the trimmed raw string, so the edit is detected as dirty and
+// sent to core, which rejects it with its own field error — rather than
+// silently coercing to NaN, whose JSON.stringify is "null" and would either
+// clear a populated field or hide the edit entirely on an empty one.
+const intOrNull = (v) => {
+  const s = String(v).trim()
+  if (s === '') return null
+  return /^\d+$/.test(s) ? Number(s) : s
+}
 const textOrNull = (v) => (String(v).trim() === '' ? null : String(v).trim())
 const splitLines = (v) => String(v).split('\n').map((s) => s.trim()).filter(Boolean)
 const splitCsv = (v) => [...new Set(String(v).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean))]
@@ -62,7 +71,7 @@ function Field({ id, label, error, hint, children }) {
 
 const input = 'mt-1 w-full rounded-xl border border-gray-200 px-3 py-2'
 
-export default function InfoTab({ product, onUpdated }) {
+export default function InfoTab({ product, onUpdated, onDirtyChange }) {
   const toast = useToast()
   const [form, setForm] = useState(() => toForm(product))
   const [errors, setErrors] = useState({})
@@ -78,6 +87,15 @@ export default function InfoTab({ product, onUpdated }) {
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
   }, [dirty])
+
+  // Tells the parent whenever dirtiness changes, and clears it on unmount —
+  // ProductDetail uses this to ask before switching away from an unsaved
+  // Info edit (spec §6), the same rule the beforeunload guard enforces for
+  // a browser tab close.
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+    return () => onDirtyChange?.(false)
+  }, [dirty, onDirtyChange])
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
   const f = (id, label, extra = {}) => ({ id: `info-${id}`, label, error: errors[id], ...extra })
@@ -155,7 +173,7 @@ export default function InfoTab({ product, onUpdated }) {
       <div className="sticky bottom-0 flex items-center gap-3 border-t border-gray-100 bg-white py-3">
         <Button onClick={save} disabled={!dirty || saving}>{saving ? 'Saving…' : 'Save changes'}</Button>
         {dirty && <span className="text-sm text-gray-500">Unsaved changes{product.status === 'published' ? ' — saving updates the live storefront' : ''}</span>}
-        {dirty && <Button variant="ghost" onClick={() => setForm(toForm(product))}>Discard</Button>}
+        {dirty && <Button variant="ghost" onClick={() => { setForm(toForm(product)); setErrors({}) }}>Discard</Button>}
       </div>
     </div>
   )

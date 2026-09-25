@@ -19,6 +19,23 @@ describe('diffPatch', () => {
     expect(diffPatch(product, form)).toEqual({ pieces: 1200, features: ['Opening gate', 'Lights'], categories: ['castle', 'medieval'] })
   })
   it('is empty when nothing changed', () => expect(diffPatch(product, toForm(product))).toEqual({}))
+
+  it('sends non-numeric pieces input as the raw string, not null, so core rejects it with a field error', () => {
+    // product.pieces is 900 (populated); typing "1oo" must not silently clear it.
+    const form = { ...toForm(product), pieces: '1oo' }
+    expect(diffPatch(product, form)).toEqual({ pieces: '1oo' })
+  })
+
+  it('detects non-numeric input as dirty even when starting from an empty pieces value', () => {
+    const emptyPieces = { ...product, pieces: null }
+    const form = { ...toForm(emptyPieces), pieces: 'abc' }
+    expect(diffPatch(emptyPieces, form)).toEqual({ pieces: 'abc' })
+  })
+
+  it('still converts a blank pieces value to null', () => {
+    const form = { ...toForm(product), pieces: '' }
+    expect(diffPatch(product, form)).toEqual({ pieces: null })
+  })
 })
 
 describe('InfoTab', () => {
@@ -50,5 +67,30 @@ describe('InfoTab', () => {
     await userEvent.type(screen.getByLabelText('Pieces'), '0')
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }))
     expect(await screen.findByText('a whole number of at least 1, or empty')).toBeInTheDocument()
+  })
+
+  it('discard clears field errors along with the edits', async () => {
+    vi.mocked(api.updateProduct).mockRejectedValue(new AdminApiError('invalid input', 'VALIDATION_ERROR', { pieces: 'a whole number of at least 1, or empty' }))
+    renderTab()
+    await userEvent.clear(screen.getByLabelText('Pieces'))
+    await userEvent.type(screen.getByLabelText('Pieces'), '0')
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }))
+    expect(await screen.findByText('a whole number of at least 1, or empty')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /discard/i }))
+    expect(screen.queryByText('a whole number of at least 1, or empty')).not.toBeInTheDocument()
+  })
+
+  it('reports dirty state changes via onDirtyChange, including false on unmount', async () => {
+    const onDirtyChange = vi.fn()
+    const { unmount } = render(
+      <ToastProvider><InfoTab product={product} onUpdated={vi.fn()} onDirtyChange={onDirtyChange} /></ToastProvider>,
+    )
+    expect(onDirtyChange).toHaveBeenCalledWith(false)
+    onDirtyChange.mockClear()
+    await userEvent.clear(screen.getByLabelText('Name'))
+    await userEvent.type(screen.getByLabelText('Name'), 'Castle Deluxe')
+    expect(onDirtyChange).toHaveBeenCalledWith(true)
+    unmount()
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false)
   })
 })

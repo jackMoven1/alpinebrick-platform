@@ -15,10 +15,19 @@ export default function ProductDetail() {
   const [product, setProduct] = useState(null)
   const [tab, setTab] = useState('Info')
   const [error, setError] = useState(null)
+  const [infoDirty, setInfoDirty] = useState(false)
 
   useEffect(() => {
     api.getProduct(id).then(setProduct).catch((e) => setError(e.message))
   }, [id])
+
+  // spec §6: leaving Info with unsaved edits asks first — switching tabs is
+  // one more way to "leave" besides closing the browser tab, which InfoTab's
+  // own beforeunload guard already covers.
+  const selectTab = (t) => {
+    if (t !== tab && infoDirty && !window.confirm('Discard unsaved changes to this product?')) return
+    setTab(t)
+  }
 
   if (error) return <p className="text-accent">{error}</p>
   if (!product) return <p className="text-gray-400">Loading…</p>
@@ -33,7 +42,7 @@ export default function ProductDetail() {
 
       <div className="mt-4 flex gap-1">
         {TABS.map((t) => (
-          <button key={t} onClick={() => setTab(t)}
+          <button key={t} onClick={() => selectTab(t)}
             className={`rounded-pill px-4 py-2 text-sm font-semibold ${tab === t ? 'bg-ink text-white' : 'text-gray-600 hover:bg-white'}`}>
             {t}
           </button>
@@ -41,7 +50,7 @@ export default function ProductDetail() {
       </div>
 
       <Card className="mt-4">
-        {tab === 'Info' && <InfoTab product={product} onUpdated={setProduct} />}
+        {tab === 'Info' && <InfoTab product={product} onUpdated={setProduct} onDirtyChange={setInfoDirty} />}
         {tab === 'Variants' && <VariantsTab product={product} onUpdated={setProduct} />}
         {tab === 'Images' && <ImagesTab product={product} onUpdated={setProduct} />}
         {tab === 'Publish' && <PublishTab product={product} onUpdated={setProduct} />}
