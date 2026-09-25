@@ -55,7 +55,10 @@ export default function StockDialog({ variant, onClose, onSaved }) {
       onClose()
     } catch (err) {
       if (err.code === 'STOCK_CHANGED') { setConflict(err.details); return }
-      setError(Object.values(err.fields ?? {})[0] ?? err.message)
+      // Core's message says what is wrong and what to do (spec §3/§6); the
+      // field hint ("at least 2") alone does not, so it only follows it.
+      const hint = Object.values(err.fields ?? {})[0]
+      setError(hint ? `${err.message} (${hint})` : err.message)
     }
   }
 

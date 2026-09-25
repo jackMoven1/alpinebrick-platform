@@ -9,6 +9,12 @@ const LOCK_REASON = 'Locked: this variant has been sold or listed on Walmart'
 
 const firstError = (e) => Object.values(e.fields ?? {})[0] ?? e.message
 
+/** Read-only: attributes are set at creation (spec §6). */
+const formatAttributes = (attrs) => {
+  const pairs = Object.entries(attrs ?? {})
+  return pairs.length ? pairs.map(([k, val]) => `${k}: ${val}`).join(', ') : '—'
+}
+
 /**
  * Money: core speaks integer cents. Dollars text becomes cents exactly once,
  * through dollarsToCents, and cents become dollars text only for display.
@@ -48,6 +54,7 @@ function VariantRow({ v, onUpdated, onSetStock }) {
         <input aria-label={`Price ${v.sku}`} value={price} onChange={(e) => setPrice(e.target.value)}
           className="w-24 rounded-lg border border-gray-200 px-2 py-1" />
       </td>
+      <td className="text-gray-500">{formatAttributes(v.attributes)}</td>
       <td>{inv.onHand}</td>
       <td className="text-gray-500">{inv.reserved}</td>
       <td className="text-gray-500">{walmart}</td>
@@ -90,14 +97,14 @@ export default function VariantsTab({ product, onUpdated }) {
     <div className="space-y-4">
       <table className="w-full text-sm">
         <thead className="text-left text-gray-500">
-          <tr><th className="py-2">SKU</th><th>Price</th><th>On hand</th><th>Reserved</th><th>Walmart</th><th>Store can sell</th><th>Walmart can sell</th><th></th></tr>
+          <tr><th className="py-2">SKU</th><th>Price</th><th>Attributes</th><th>On hand</th><th>Reserved</th><th>Walmart</th><th>Store can sell</th><th>Walmart can sell</th><th></th></tr>
         </thead>
         <tbody>
           {product.variants.map((v) => (
             // Keyed on the saved values so a server update resets the row's edit state.
             <VariantRow key={`${v.id}:${v.sku}:${v.priceCents}`} v={v} onUpdated={onUpdated} onSetStock={setStockFor} />
           ))}
-          {product.variants.length === 0 && <tr><td colSpan={8} className="py-4 text-gray-400">No variants yet.</td></tr>}
+          {product.variants.length === 0 && <tr><td colSpan={9} className="py-4 text-gray-400">No variants yet.</td></tr>}
         </tbody>
       </table>
 

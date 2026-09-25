@@ -129,16 +129,46 @@ describe('VariantsTab', () => {
     expect(screen.getByText(UNLISTED)).toBeInTheDocument()
   })
 
-  it('offers to overwrite when stock changed underneath', async () => {
+  it('offers to overwrite when stock changed underneath, retrying against the new value', async () => {
     vi.mocked(api.getStockHistory).mockResolvedValue([])
+    // 5, not the fixture's 3: the variant was opened at 3, so a retry that
+    // resent the original expectation would be indistinguishable from 3.
+    const details = { ...stockChanged.details, onHand: 5 }
     vi.mocked(api.setStock)
-      .mockRejectedValueOnce(new AdminApiError(stockChanged.message, stockChanged.code, undefined, stockChanged.details))
+      .mockRejectedValueOnce(new AdminApiError('stock changed to 5 since you opened this', stockChanged.code, undefined, details))
       .mockResolvedValueOnce(withStock)
     renderTab()
     await userEvent.click(screen.getByRole('button', { name: /set stock/i }))
     await userEvent.click(screen.getByRole('button', { name: /save stock/i }))
     const confirm = await screen.findByRole('button', { name: /set it anyway/i })
+    expect(screen.getByText(/stock changed to/i)).toHaveTextContent('Stock changed to 5 since you opened this')
     await userEvent.click(confirm)
-    expect(vi.mocked(api.setStock).mock.calls[1][1].expectedOnHand).toBe(stockChanged.details.onHand)
+    expect(vi.mocked(api.setStock).mock.calls[0][1].expectedOnHand).toBe(v.inventory.onHand)
+    expect(vi.mocked(api.setStock).mock.calls[1][1].expectedOnHand).toBe(5)
+  })
+
+  it.each([
+    ['STOCK_BELOW_RESERVED', 'on hand cannot go below the 2 reserved by open orders', { onHand: 'at least 2' }],
+    ['ALLOCATION_EXCEEDS_AVAILABLE', 'reserved (0) plus Walmart allocation (4) cannot exceed on hand (3); lower the allocation too', { walmartAllocation: 'at most 3' }],
+  ])("shows core's full message for %s, not just the field hint", async (code, message, fields) => {
+    vi.mocked(api.getStockHistory).mockResolvedValue([])
+    vi.mocked(api.setStock).mockRejectedValueOnce(new AdminApiError(message, code, fields, { onHand: 3, reserved: 0, walmartAllocation: 1 }))
+    renderTab()
+    await userEvent.click(screen.getByRole('button', { name: /set stock/i }))
+    await userEvent.click(screen.getByRole('button', { name: /save stock/i }))
+    expect(await screen.findByText(message, { exact: false })).toBeInTheDocument()
+  })
+
+  it('shows attributes read-only as key: value', () => {
+    renderTab()
+    const row = screen.getByRole('row', { name: new RegExp(v.sku) })
+    expect(within(row).getByText('condition: sealed')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Attributes' })).toBeInTheDocument()
+  })
+
+  it('shows a dash for a variant without attributes', () => {
+    renderTab({ ...withStock, variants: [{ ...v, attributes: {} }] })
+    const row = screen.getByRole('row', { name: new RegExp(v.sku) })
+    expect(within(row).getByText('—')).toBeInTheDocument()
   })
 })
