@@ -71,6 +71,15 @@ describe('bulk create', () => {
     expect(res.status).toBe(400)
     expect(await prisma.variant.count()).toBe(0)
   })
+  it('reports the duplicate SKU under its original row index when an earlier row is also invalid', async () => {
+    const res = await send('post', `/products/${productId}/variants/bulk`, {
+      variants: [{ sku: 'B-S', priceCents: 0 }, { sku: 'A', priceCents: 1 }, { sku: 'a', priceCents: 1 }],
+    })
+    expect(res.status).toBe(400)
+    expect(res.body.fields['variants.0.priceCents']).toBeTruthy()
+    expect(res.body.fields['variants.2.sku']).toBe('duplicates row 2')
+    expect(await prisma.variant.count()).toBe(0)
+  })
 })
 
 describe('update and delete', () => {

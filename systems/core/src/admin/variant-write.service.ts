@@ -48,15 +48,15 @@ export async function bulkCreateVariants(productId: string, body: unknown, actor
     throw new AdminError('VALIDATION_ERROR', 'invalid input', { variants: 'a list of 1–50 variants' })
   }
   const fields: Record<string, string> = {}
-  const parsed: VariantData[] = []
+  const parsed: { i: number; v: VariantData }[] = []
   rows.forEach((row, i) => {
-    try { parsed.push(parseVariantInput(row, 'create', `variants.${i}.`)) } catch (e) {
+    try { parsed.push({ i, v: parseVariantInput(row, 'create', `variants.${i}.`) }) } catch (e) {
       if (!(e instanceof AdminError) || !e.fields) throw e
       Object.assign(fields, e.fields)
     }
   })
   const seen = new Map<string, number>()
-  parsed.forEach((v, i) => {
+  parsed.forEach(({ i, v }) => {
     if (seen.has(v.sku!)) fields[`variants.${i}.sku`] = `duplicates row ${seen.get(v.sku!)! + 1}`
     else seen.set(v.sku!, i)
   })
@@ -65,7 +65,7 @@ export async function bulkCreateVariants(productId: string, body: unknown, actor
   try {
     await prisma.$transaction(async (tx) => {
       await requireProduct(tx, productId)
-      for (const v of parsed) await insert(tx, productId, v, actorId)
+      for (const { v } of parsed) await insert(tx, productId, v, actorId)
     })
   } catch (e) { throw mapUniqueViolation(e) }
   return reload(productId)
