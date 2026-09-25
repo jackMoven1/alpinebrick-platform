@@ -3,6 +3,7 @@ import {
   adminListProducts, adminGetProduct, setProductStatus, getOverview, AdminError,
 } from './admin-catalog.service.js'
 import { createProduct, updateProduct, bulkSetStatus } from './product-write.service.js'
+import { createVariant, bulkCreateVariants, updateVariant, deleteVariant } from './variant-write.service.js'
 import { scrubError } from '../auth/scrub.js'
 
 // Error codes here are UPPER_SNAKE, matching the catalog routes and the
@@ -100,6 +101,22 @@ adminCatalogRouter.post('/products/:id/status', async (req, res) => {
   try {
     res.json(await setProductStatus(req.params.id, status, req.actor!.id))
   } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.post('/products/:id/variants/bulk', async (req, res) => {
+  try { res.status(201).json(await bulkCreateVariants(req.params.id, req.body, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.post('/products/:id/variants', async (req, res) => {
+  try { res.status(201).json(await createVariant(req.params.id, req.body, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.patch('/variants/:id', async (req, res) => {
+  try { res.json(await updateVariant(req.params.id, req.body, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.delete('/variants/:id', async (req, res) => {
+  try { res.json(await deleteVariant(req.params.id, req.actor!.id)) } catch (err) { fail(res, err) }
 })
 
 adminCatalogRouter.get('/overview', async (_req, res) => {
