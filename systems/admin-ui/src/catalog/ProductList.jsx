@@ -16,6 +16,7 @@ export default function ProductList() {
   const [sort, setSort] = useState('name_asc')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState(new Set())
+  const [failures, setFailures] = useState([])
 
   const load = useCallback(() => {
     api.listProducts({ search, status, page, limit: PAGE_SIZE }).then(setData)
@@ -27,11 +28,19 @@ export default function ProductList() {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n
   })
 
-  // Not backed in the Phase B slice; the controls below are disabled so this
-  // never runs. Kept so it goes live again when bulkSetStatus is implemented.
-  const bulkPublish = async (newStatus) => {
-    await api.bulkSetStatus([...selected], newStatus)
-    toast.push(`${selected.size} product(s) ${newStatus}`)
+  // Each product is its own transaction in core; report failures per product.
+  const bulkSet = async (newStatus) => {
+    let results
+    try {
+      ({ results } = await api.bulkSetStatus([...selected], newStatus))
+    } catch (err) {
+      setFailures([{ id: 'bulk', name: 'Bulk update', message: err.message || 'Request failed' }])
+      return
+    }
+    const failed = results.filter((r) => !r.ok)
+    const okCount = results.length - failed.length
+    if (okCount > 0) toast.push(`${okCount} product(s) ${newStatus}`)
+    setFailures(failed.map((r) => ({ ...r, name: data.items.find((i) => i.id === r.id)?.name ?? r.id })))
     setSelected(new Set())
     load()
   }
@@ -65,12 +74,18 @@ export default function ProductList() {
         </select>
         {selected.size > 0 && (
           <div className="ml-auto flex gap-2">
-            <Button variant="brand" disabled onClick={() => bulkPublish('published')}>Publish ({selected.size})</Button>
-            <Button variant="ghost" disabled onClick={() => bulkPublish('draft')}>Unpublish</Button>
-            <span className="self-center text-xs text-gray-500">Bulk status changes are not in this phase.</span>
+            <Button variant="brand" onClick={() => bulkSet('published')}>Publish ({selected.size})</Button>
+            <Button variant="ghost" onClick={() => bulkSet('draft')}>Unpublish</Button>
+            <Button variant="danger" onClick={() => bulkSet('archived')}>Archive</Button>
           </div>
         )}
       </div>
+
+      {failures.length > 0 && (
+        <ul className="mt-3 rounded-xl bg-accent-soft px-4 py-3 text-sm text-accent">
+          {failures.map((f) => <li key={f.id}>{f.name}: {f.message}</li>)}
+        </ul>
+      )}
 
       <Card className="mt-4 p-0 overflow-hidden">
         <table className="w-full text-sm">
