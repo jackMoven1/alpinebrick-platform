@@ -2,6 +2,7 @@ import { Router, type Response } from 'express'
 import {
   adminListProducts, adminGetProduct, setProductStatus, getOverview, AdminError,
 } from './admin-catalog.service.js'
+import { createProduct, updateProduct, bulkSetStatus } from './product-write.service.js'
 import { scrubError } from '../auth/scrub.js'
 
 // Error codes here are UPPER_SNAKE, matching the catalog routes and the
@@ -69,6 +70,18 @@ adminCatalogRouter.get('/products', async (req, res) => {
       pageSize: intParam(req.query.pageSize),
     }))
   } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.post('/products', async (req, res) => {
+  try { res.status(201).json(await createProduct(req.body, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.post('/products/bulk-status', async (req, res) => {
+  try { res.json(await bulkSetStatus(req.body, req.actor!.id)) } catch (err) { fail(res, err) }
+})
+
+adminCatalogRouter.patch('/products/:id', async (req, res) => {
+  try { res.json(await updateProduct(req.params.id, req.body, req.actor!.id)) } catch (err) { fail(res, err) }
 })
 
 adminCatalogRouter.get('/products/:id', async (req, res) => {
