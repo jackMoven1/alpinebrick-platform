@@ -1,26 +1,29 @@
 import { useState } from 'react'
 import { generateVariants } from '../../lib/variants.js'
+import { dollarsToCents } from '../../lib/money.js'
 import Button from '../../ui/Button.jsx'
 
 export default function BulkVariantForm({ onCreate, disabled = false }) {
   const [tpl, setTpl] = useState({ sku_prefix: '', price: '', attribute_key: 'size', values: '' })
   const set = (k, v) => setTpl((t) => ({ ...t, [k]: v }))
-  const preview = generateVariants({ ...tpl, price: Number(tpl.price) || 0, values: tpl.values.split(',') })
+  const cents = dollarsToCents(tpl.price)
+  // price is carried as cents below; generateVariants' own price field is unused.
+  const preview = generateVariants({ ...tpl, price: 0, values: tpl.values.split(',') })
 
   return (
     <div className="rounded-xl border border-dashed border-gray-300 p-4">
       <h4 className="font-semibold">Bulk create variants</h4>
       <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <input placeholder="SKU prefix" value={tpl.sku_prefix} onChange={(e) => set('sku_prefix', e.target.value)} disabled={disabled} className="rounded-lg border border-gray-200 px-2 py-1 text-sm disabled:bg-gray-50" />
-        <input placeholder="Price" type="number" value={tpl.price} onChange={(e) => set('price', e.target.value)} disabled={disabled} className="rounded-lg border border-gray-200 px-2 py-1 text-sm disabled:bg-gray-50" />
+        <input placeholder="Price each $" value={tpl.price} onChange={(e) => set('price', e.target.value)} disabled={disabled} className="rounded-lg border border-gray-200 px-2 py-1 text-sm disabled:bg-gray-50" />
         <input placeholder="Attribute (e.g. size)" value={tpl.attribute_key} onChange={(e) => set('attribute_key', e.target.value)} disabled={disabled} className="rounded-lg border border-gray-200 px-2 py-1 text-sm disabled:bg-gray-50" />
         <input placeholder="Values: S,M,L" value={tpl.values} onChange={(e) => set('values', e.target.value)} disabled={disabled} className="rounded-lg border border-gray-200 px-2 py-1 text-sm disabled:bg-gray-50" />
       </div>
       {preview.length > 0 && (
         <p className="mt-2 text-xs text-gray-500">Will create: {preview.map((v) => v.sku).join(', ')}</p>
       )}
-      <Button variant="brand" className="mt-3" disabled={disabled || preview.length === 0 || !tpl.sku_prefix.trim()}
-        onClick={() => onCreate({ ...tpl, price: Number(tpl.price) || 0, values: tpl.values.split(',') })}>
+      <Button variant="brand" className="mt-3" disabled={disabled || preview.length === 0 || !tpl.sku_prefix.trim() || !tpl.attribute_key.trim() || cents === null}
+        onClick={() => onCreate(preview.map((v) => ({ sku: v.sku, priceCents: cents, attributes: v.attributes })))}>
         Create {preview.length} variant(s)
       </Button>
     </div>

@@ -18,8 +18,7 @@ export default function App() {
         <Route element={<ConsoleShell />}>
           <Route index element={<CatalogOverview />} />
           <Route path="products" element={<ProductList />} />
-          {/* Product creation is not in the Phase B slice: createProduct has no
-              endpoint. Unrouted so it cannot be reached by URL either. */}
+          <Route path="products/new" element={<ProductForm />} />
           <Route path="products/:id" element={<ProductDetail />} />
         </Route>
       </Routes>

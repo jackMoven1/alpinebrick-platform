@@ -7,6 +7,8 @@ export interface AdminVariantDto {
   attributes: Record<string, string>
   inventory: { onHand: number; reserved: number; walmartAllocation: number | null; storefrontAvailable: number; walmartAvailable: number }
   locked: { sku: boolean; delete: boolean }
+  /** The variant's Walmart listing, if any. The console warns when units are allocated to an unlisted variant. */
+  walmartListing: { status: string } | null
 }
 
 export type AdminProductDto = Omit<ProductDto, 'variants'> & {
@@ -71,6 +73,7 @@ export async function loadAdminProduct(id: string): Promise<AdminProductDto | nu
           walmartAvailable: walmartSellable(onHand, reserved, walmartAllocation),
         },
         locked: { sku: locked, delete: locked },
+        walmartListing: v.channelListing ? { status: v.channelListing.status } : null,
       }
     }),
   }
