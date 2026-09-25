@@ -30,19 +30,21 @@ export default function ProductList() {
 
   // Each product is its own transaction in core; report failures per product.
   const bulkSet = async (newStatus) => {
-    let results
     try {
-      ({ results } = await api.bulkSetStatus([...selected], newStatus))
+      const { results } = await api.bulkSetStatus([...selected], newStatus)
+      const failed = results.filter((r) => !r.ok)
+      const okCount = results.length - failed.length
+      if (okCount > 0) toast.push(`${okCount} product(s) ${newStatus}`)
+      setFailures(failed.map((r) => ({ ...r, name: data.items.find((i) => i.id === r.id)?.name ?? r.id })))
     } catch (err) {
+      // Core commits each product in its own transaction, so an outright
+      // failure (e.g. a 500 mid-bulk) can still have changed some products —
+      // clear the selection and reload the same as the normal path (finally).
       setFailures([{ id: 'bulk', name: 'Bulk update', message: err.message || 'Request failed' }])
-      return
+    } finally {
+      setSelected(new Set())
+      load()
     }
-    const failed = results.filter((r) => !r.ok)
-    const okCount = results.length - failed.length
-    if (okCount > 0) toast.push(`${okCount} product(s) ${newStatus}`)
-    setFailures(failed.map((r) => ({ ...r, name: data.items.find((i) => i.id === r.id)?.name ?? r.id })))
-    setSelected(new Set())
-    load()
   }
 
   const totalPages = Math.max(1, Math.ceil(data.total / PAGE_SIZE))

@@ -29,7 +29,10 @@ describe('bulk status', () => {
     vi.mocked(api.bulkSetStatus).mockRejectedValue(new Error('network error'))
     render(<ToastProvider><MemoryRouter><ProductList /></MemoryRouter></ToastProvider>)
     for (const box of await screen.findAllByRole('checkbox')) await userEvent.click(box)
+    const callsBeforeClick = api.listProducts.mock.calls.length
     await userEvent.click(screen.getByRole('button', { name: /publish \(2\)/i }))
     expect(await screen.findByText(/network error/i)).toBeInTheDocument()
+    expect(api.listProducts.mock.calls.length).toBeGreaterThan(callsBeforeClick)
+    for (const box of screen.getAllByRole('checkbox')) expect(box).not.toBeChecked()
   })
 })
