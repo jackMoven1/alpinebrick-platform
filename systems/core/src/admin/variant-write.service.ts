@@ -74,7 +74,7 @@ export async function bulkCreateVariants(productId: string, body: unknown, actor
 async function loadForLock(tx: Prisma.TransactionClient, variantId: string) {
   const v = await tx.variant.findUnique({
     where: { id: variantId },
-    include: { channelListing: true, _count: { select: { orderLines: true } } },
+    include: { channelListing: true, inventory: true, _count: { select: { orderLines: true } } },
   })
   if (!v) throw new AdminError('NOT_FOUND', 'variant not found')
   const locked = v._count.orderLines > 0 || (v.channelListing !== null && v.channelListing.status !== 'retired')
@@ -125,7 +125,14 @@ export async function deleteVariant(variantId: string, actorId: string): Promise
     await tx.variant.delete({ where: { id: variantId } })
     await recordAudit({
       actorId, action: 'variant.delete', target: `variant:${variantId}`,
-      before: { productId: v.productId, sku: v.sku, priceCents: v.priceCents },
+      before: {
+        productId: v.productId, sku: v.sku, priceCents: v.priceCents, attributes: v.attributes,
+        onHand: v.inventory?.onHand ?? null,
+        reserved: v.inventory?.reserved ?? null,
+        walmartAllocation: v.inventory?.walmartAllocation ?? null,
+        walmartSku: v.channelListing?.walmartSku ?? null,
+        status: v.channelListing?.status ?? null,
+      },
     }, tx)
   })
   return reload(productId)

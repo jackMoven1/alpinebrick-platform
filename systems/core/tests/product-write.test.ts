@@ -5,7 +5,7 @@ import { prisma } from '../src/prisma.js'
 import { resetDb } from './helpers/db.js'
 import { createSession, SESSION_COOKIE } from '../src/auth/session.service.js'
 import { setProductStatus } from '../src/admin/admin-catalog.service.js'
-import { getProduct as publicGetProduct } from '../src/catalog/catalog.service.js'
+import { getProduct as publicGetProduct, listProducts } from '../src/catalog/catalog.service.js'
 
 const app = buildApp()
 const ORIGIN = 'https://admin-staging.alpinebrickexchange.com'
@@ -49,7 +49,10 @@ describe('POST /products', () => {
 
   it('is not visible on the public storefront until published', async () => {
     const res = await send('post', '/products', { name: 'Hidden', productType: 'resale' })
+    expect(res.status).toBe(201)
     expect(await publicGetProduct(res.body.id)).toBeNull()
+    const list = await listProducts({})
+    expect(list.items.map((i) => i.slug)).not.toContain('hidden')
   })
 })
 

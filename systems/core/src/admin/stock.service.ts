@@ -13,8 +13,13 @@ type Row = { on_hand: number; reserved: number; walmart_allocation: number | nul
  * The row is locked (SELECT ... FOR UPDATE) before anything is decided, so a
  * checkout or Walmart ingest racing this change waits for it and then
  * re-evaluates its own guard against the new figures. The UPDATE repeats the
- * invariant in its WHERE clause as a second line of defence. Remove the lock
- * and tests/stock-concurrency.test.ts fails.
+ * invariant in its WHERE clause as a second line of defence. The lock's own
+ * job is to make a racing set return the right 409 (STOCK_CHANGED /
+ * ALLOCATION_EXCEEDS_AVAILABLE, not a generic 500) and decide against current
+ * figures rather than stale ones; the UPDATE's WHERE-clause guard alone is
+ * what keeps the invariant (reserved + allocation <= on_hand) even if the
+ * lock were absent. Removing BOTH the lock and the guard is what makes
+ * tests/stock-concurrency.test.ts fail.
  */
 export async function setStock(variantId: string, body: unknown, actorId: string): Promise<AdminProductDto> {
   const input = parseStockInput(body)
@@ -78,7 +83,7 @@ export async function getStockHistory(variantId: string, limit = 10) {
   }
   const rows = await prisma.auditLog.findMany({
     where: { action: 'variant.stock.set', target: `variant:${variantId}` },
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit,
     include: { actor: true },
   })

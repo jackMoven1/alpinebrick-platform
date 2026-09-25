@@ -123,6 +123,8 @@ describe('update and delete', () => {
     expect([res.status, res.body.variants]).toEqual([200, []])
     expect(await prisma.inventory.count()).toBe(0)
     expect(await prisma.auditLog.count({ where: { action: 'variant.delete' } })).toBe(1)
+    const audit = await prisma.auditLog.findFirstOrThrow({ where: { action: 'variant.delete' } })
+    expect(audit.before).toMatchObject({ onHand: 2 })
   })
 
   it('refuses to delete a sold variant or one with a live listing', async () => {
