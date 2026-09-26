@@ -10,9 +10,10 @@ export const CARD_WIDTHS = [400, 600, 900] as const
 export const DETAIL_WIDTHS = [600, 900, 1400, 2000] as const
 
 /**
- * Empty by default: with no CDN chosen, keys resolve against the storefront's
- * own origin, which is where the placeholder art in public/ is served from.
- * Set VITE_ASSET_BASE_URL to the CDN origin once one exists.
+ * VITE_ASSET_BASE_URL is the imgix domain for each environment (ADR-0002),
+ * set per static site at build time. It is empty in local dev, where keys
+ * resolve against the storefront's own origin -- which is where the
+ * placeholder art in public/ is served from.
  *
  * Storage keys are relative and never start with a slash, so joining is always
  * `${BASE}/${key}` and never produces a doubled separator.
