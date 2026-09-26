@@ -80,7 +80,7 @@ pricing at decision time rather than recalled.
 
 ## Decided — 2026-09-25
 
-Design: `.superpowers/sdd/2026-09-25-product-image-upload/spec.md`.
+Design: `docs/superpowers/specs/2026-09-25-product-image-upload-design.md`.
 
 **CDN / origin host: imgix (Starter plan) in front of private S3, in
 `us-west-2`.** Account owner for both AWS and imgix: `alpinebrick@gmail.com`.
@@ -105,6 +105,8 @@ host" is removed from "Still open" above.
 - **`sweepPendingImages` now runs per product, on each upload request.** Core
   has no scheduler, so `requestUpload` sweeps that product's pending rows older
   than `PENDING_TTL_MS` (24h) before reserving a new one. A product with no
-  upload activity still accumulates abandoned pending rows indefinitely —
-  harmless, since they are excluded from every public response — but a
-  time-based sweep across all products still has no caller.
+  upload activity keeps its abandoned pending rows until its next upload
+  request, which sweeps any older than 24h. They are excluded from every
+  public response and no longer block reordering — `reorderImages` orders
+  ready rows only and renumbers pending rows after them — but a time-based
+  sweep across all products still has no caller.

@@ -1,6 +1,6 @@
 # Image storage setup runbook — AWS S3 + imgix
 
-Date: 2026-09-25. Design: `.superpowers/sdd/2026-09-25-product-image-upload/spec.md`.
+Date: 2026-09-25. Design: `docs/superpowers/specs/2026-09-25-product-image-upload-design.md`.
 
 ## 1. Who
 
@@ -156,7 +156,58 @@ Save with "Save, rebuild, and deploy".
   the presigned URL. Expect a `409` with `code: "object_missing"` ("no object
   was uploaded for this image") — not a `500` or an `AccessDenied`. A
   `500`/`AccessDenied` here means the core user's `ListBucket` grant is
-  missing or misconfigured.
+  missing or misconfigured. **It cannot tell a wrong bucket or region from a
+  right one** — an empty bucket answers `object_missing` just the same. The
+  round trip below can.
+- **Full round trip, no admin Images tab needed.** Run this once core is on S3.
+  Preferred route: **I (Claude) run it for you in your signed-in browser** —
+  you sign in to `https://admin-staging.alpinebrickexchange.com` with Google,
+  and I drive the steps below from that tab's devtools console and report each
+  result. To run it yourself instead, open that tab, press F12, choose
+  **Console**, and paste the steps one at a time. Running from the console
+  tab (not from a terminal) matters: every admin write must carry the
+  console's `Origin` and your session cookie, and the page supplies both.
+  1. Set up, and pick a product to attach the test photo to:
+     ```js
+     const API = 'https://api-staging.alpinebrickexchange.com/api/v1/admin'
+     const J = { credentials: 'include', headers: { 'Content-Type': 'application/json' } }
+     const productId = (await (await fetch(`${API}/products?pageSize=1`, J)).json()).items[0].id
+     ```
+  2. Make a real 640×480 PNG in the page (no file needed):
+     ```js
+     const c = Object.assign(document.createElement('canvas'), { width: 640, height: 480 })
+     const g = c.getContext('2d'); g.fillStyle = '#c33'; g.fillRect(0, 0, 640, 480)
+     const photo = await new Promise(r => c.toBlob(r, 'image/png'))
+     ```
+  3. Request an upload token — expect **201** with `uploadUrl`, `imageId`,
+     `storageKey`:
+     ```js
+     const t = await (await fetch(`${API}/images/upload-token`, { ...J, method: 'POST',
+       body: JSON.stringify({ productId, contentType: 'image/png', byteSize: photo.size }) })).json()
+     ```
+  4. PUT the bytes to the presigned URL — expect **200**. (From a terminal
+     this is `curl -X PUT -H "Content-Type: image/png" --data-binary @photo.png "<uploadUrl>"`;
+     the presigned URL needs no cookie.) A CORS error here means §4 is wrong:
+     ```js
+     (await fetch(t.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: photo })).status
+     ```
+  5. Confirm — expect **200** with `width: 640, height: 480` (read from the
+     real object, which is what proves bucket, region and `GetObject`):
+     ```js
+     await (await fetch(`${API}/images/${t.imageId}/confirm`, { ...J, method: 'POST' })).json()
+     ```
+  6. Open `https://alpinebrick-staging.imgix.net/<storageKey>?w=400` (print it
+     with `` `https://alpinebrick-staging.imgix.net/${t.storageKey}?w=400` ``)
+     — expect the red rectangle, 400 px wide. This proves imgix's read
+     credentials and source.
+  7. Delete — expect **204**:
+     ```js
+     (await fetch(`${API}/images/${t.imageId}`, { ...J, method: 'DELETE' })).status
+     ```
+     Then check the object is gone from the bucket: in the S3 console,
+     `alpinebrick-images-staging` → `products/<productId>/<imageId>/` should
+     be empty. (Do not use the imgix URL for this — imgix caches, so it can
+     keep serving the photo after the object is gone.)
 - The admin console's Images tab uploads. **This check needs the console PR
   (Tasks 6–8) deployed first** — it isn't available from PR 1 (core) alone.
 - `https://alpinebrick-staging.imgix.net/<key>?w=400` returns an image.
