@@ -1,6 +1,7 @@
 import { prisma } from '../prisma.js'
 import type { AssetStoragePort } from '../ports/storage/storage.port.js'
 import { recordAudit } from '../audit.js'
+import { scrubError } from '../auth/scrub.js'
 
 export class ImageError extends Error {
   constructor(public code: string, message: string) {
@@ -67,6 +68,9 @@ export async function requestUpload(
 
   const product = await prisma.product.findUnique({ where: { id: input.productId } })
   if (!product) throw new ImageError('product_not_found', 'product not found')
+
+  // No scheduler in core: abandoned uploads are cleared on real activity (spec §4.4).
+  await sweepPendingImages(port, new Date(Date.now() - PENDING_TTL_MS), input.productId)
 
   // Row creation and the audit write are both pure database work, so they run
   // in one transaction. The external port.createUploadTarget call below is
@@ -149,10 +153,14 @@ export async function confirmUpload(port: AssetStoragePort, imageId: string, act
     try {
       await port.delete(row.storageKey)
     } catch (err) {
-      console.error('[image] failed to delete rejected object', row.storageKey, err)
+      console.error('[image] failed to delete rejected object', row.storageKey, scrubError(err))
     }
     await prisma.$transaction(async (tx) => {
-      await tx.image.delete({ where: { id: imageId } })
+      // deleteMany, not delete: a sweep (or a second confirm) racing this one
+      // can already have removed the pending row. The rejection is still
+      // correct either way -- there is no ready row to protect -- so this must
+      // not surface a Prisma P2025 in place of the ImageError below.
+      await tx.image.deleteMany({ where: { id: imageId, status: 'pending' } })
       await recordAudit({
         actorId, action: 'image.upload.reject', target: `image:${imageId}`,
         before: { status: row.status, byteSize: row.byteSize, contentType: row.contentType },
@@ -272,13 +280,27 @@ export async function deleteImage(port: AssetStoragePort, imageId: string, actor
   await port.delete(row.storageKey)
 }
 
-export async function sweepPendingImages(port: AssetStoragePort, olderThan: Date): Promise<number> {
+export const PENDING_TTL_MS = 24 * 3600 * 1000
+
+/**
+ * Deletes pending image rows older than `olderThan`, optionally scoped to one
+ * product. There is no scheduler in core, so this runs inline at the top of
+ * `requestUpload` instead (spec §4.4) -- abandoned uploads are cleared on the
+ * next real activity for that product, not on a timer.
+ */
+export async function sweepPendingImages(port: AssetStoragePort, olderThan: Date, productId?: string): Promise<number> {
   const stale = await prisma.image.findMany({
-    where: { status: 'pending', createdAt: { lt: olderThan } },
+    where: { status: 'pending', createdAt: { lt: olderThan }, ...(productId ? { productId } : {}) },
   })
   for (const row of stale) {
+    // Row first, so a failed object delete leaves an orphaned object (harmless,
+    // unreferenced) rather than a row pointing at nothing.
     await prisma.image.delete({ where: { id: row.id } })
-    await port.delete(row.storageKey)
+    try {
+      await port.delete(row.storageKey)
+    } catch (e) {
+      console.error(`images: sweep could not delete object ${row.storageKey}:`, e)
+    }
   }
   return stale.length
 }

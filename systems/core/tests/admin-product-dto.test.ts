@@ -53,6 +53,18 @@ describe('loadAdminProduct', () => {
     expect((await loadAdminProduct((await product(new Date())).id))!.locked.slug).toBe(true)
   })
 
+  it('carries each image\'s id (the console needs it for reorder, alt and delete calls)', async () => {
+    const p = await product()
+    const image = await prisma.image.create({
+      data: {
+        productId: p.id, storageKey: 'products/x/y/original.png', position: 0,
+        width: 1, height: 1, contentType: 'image/png', byteSize: 1, status: 'ready',
+      },
+    })
+    const dto = await loadAdminProduct(p.id)
+    expect(dto!.images[0].id).toBe(image.id)
+  })
+
   it('locks SKU and delete for a sold variant and for a non-retired listing, not for a retired one', async () => {
     const p = await product()
     const sold = await variant(p.id, 'S-1')

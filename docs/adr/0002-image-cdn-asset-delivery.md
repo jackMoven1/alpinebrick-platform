@@ -84,7 +84,9 @@ pricing at decision time rather than recalled.
 - **An asset cannot be shared between products.** Each `Image` row belongs to
   exactly one product. Reuse would need an `Asset` table plus a join, which is
   an extra hop on every read for a case nothing needs yet.
-- **`sweepPendingImages` exists but nothing calls it.** Core has no scheduler,
-  so abandoned uploads accumulate as invisible pending rows. Harmless at current
-  volume — they are excluded from every public response — but it is a job
-  waiting to be wired, not a finished feature.
+- **`sweepPendingImages` now runs per product, on each upload request.** Core
+  has no scheduler, so `requestUpload` sweeps that product's pending rows older
+  than `PENDING_TTL_MS` (24h) before reserving a new one. A product with no
+  upload activity still accumulates abandoned pending rows indefinitely —
+  harmless, since they are excluded from every public response — but a
+  time-based sweep across all products still has no caller.

@@ -1,5 +1,5 @@
 import { prisma } from '../prisma.js'
-import type { ProductDto } from '../catalog/catalog.service.js'
+import type { ProductDto, ProductImage } from '../catalog/catalog.service.js'
 import { storefrontSellable, walmartSellable } from '../inventory/allocation.js'
 
 export interface AdminVariantDto {
@@ -11,10 +11,13 @@ export interface AdminVariantDto {
   walmartListing: { status: string } | null
 }
 
-export type AdminProductDto = Omit<ProductDto, 'variants'> & {
+export type AdminProductDto = Omit<ProductDto, 'variants' | 'images'> & {
   firstPublishedAt: Date | null
   locked: { slug: boolean }
   variants: AdminVariantDto[]
+  // The console's reorder, alt and delete calls need each image's id; the
+  // public ProductDto omits it because the storefront never needs it.
+  images: (ProductImage & { id: string })[]
 }
 
 const asStrings = (j: unknown): string[] => (Array.isArray(j) ? (j as string[]) : [])
@@ -42,7 +45,7 @@ export async function loadAdminProduct(id: string): Promise<AdminProductDto | nu
   return {
     id: p.id, slug: p.slug, name: p.name, description: p.description,
     productType: p.productType, releaseType: p.releaseType, status: p.status,
-    images: p.images.map((i) => ({ storageKey: i.storageKey, alt: i.alt, width: i.width, height: i.height, position: i.position })),
+    images: p.images.map((i) => ({ id: i.id, storageKey: i.storageKey, alt: i.alt, width: i.width, height: i.height, position: i.position })),
     categories: asStrings(p.categories),
     pieces: p.pieces ?? null,
     difficulty: p.difficulty ?? null,

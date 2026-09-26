@@ -154,6 +154,31 @@ describe('confirmUpload', () => {
   it('rejects an unknown image id', async () => {
     await expect(confirmUpload(fakePort(), 'nope', actorId)).rejects.toThrow(ImageError)
   })
+
+  // R3.1: a sweep (or a second confirm) racing this one can delete the pending
+  // row between the stat() call and the rejection transaction. The delete must
+  // tolerate that (deleteMany, not delete) so the caller still sees the
+  // ImageError rejection instead of a Prisma P2025.
+  it('still rejects with the ImageError code when the pending row is deleted out from under it', async () => {
+    const p = await makeProduct()
+    const port = fakePort()
+    const r = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
+
+    const racyPort: AssetStoragePort = {
+      createUploadTarget: vi.fn(async (key: string) => ({
+        uploadUrl: `https://upload.test/${key}`,
+        expiresAt: new Date(Date.now() + 60_000),
+      })),
+      stat: vi.fn(async () => {
+        // Simulate a concurrent sweep deleting the row right after stat() reads storage.
+        await prisma.image.delete({ where: { id: r.imageId } })
+        return { width: 1, height: 1, byteSize: 999_999_999, contentType: 'image/jpeg' }
+      }),
+      delete: vi.fn(async () => {}),
+    }
+
+    await expect(confirmUpload(racyPort, r.imageId, actorId)).rejects.toMatchObject({ code: 'upload_too_large' })
+  })
 })
 
 describe('updateImageAlt', () => {
@@ -266,5 +291,41 @@ describe('sweepPendingImages', () => {
     expect(removed).toBe(1)
     expect(await prisma.image.findUnique({ where: { id: stale.imageId } })).toBeNull()
     expect(await prisma.image.findUnique({ where: { id: good.imageId } })).not.toBeNull()
+  })
+
+  it('scopes the sweep to one product when asked', async () => {
+    const a = await makeProduct('a'); const b = await makeProduct('b')
+    const port = fakePort()
+    const ra = await requestUpload(port, { productId: a.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const rb = await requestUpload(port, { productId: b.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    await prisma.image.updateMany({ data: { createdAt: new Date(Date.now() - 48 * 3600 * 1000) } })
+    expect(await sweepPendingImages(fakePort(), new Date(Date.now() - 24 * 3600 * 1000), a.id)).toBe(1)
+    expect(await prisma.image.findUnique({ where: { id: ra.imageId } })).toBeNull()
+    expect(await prisma.image.findUnique({ where: { id: rb.imageId } })).not.toBeNull()
+  })
+
+  it('keeps sweeping when one object delete fails', async () => {
+    const p = await makeProduct()
+    const port = fakePort()
+    await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    await prisma.image.updateMany({ data: { createdAt: new Date(Date.now() - 48 * 3600 * 1000) } })
+    const flaky = fakePort()
+    ;(flaky.delete as any).mockRejectedValueOnce(new Error('S3 down'))
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(await sweepPendingImages(flaky, new Date(Date.now() - 24 * 3600 * 1000), p.id)).toBe(2)
+    expect(await prisma.image.count({ where: { status: 'pending' } })).toBe(0)
+    expect(err).toHaveBeenCalled()
+    err.mockRestore()
+  })
+
+  it('requestUpload sweeps that product\'s stale pending uploads first', async () => {
+    const p = await makeProduct()
+    const port = fakePort()
+    const old = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    await prisma.image.update({ where: { id: old.imageId }, data: { createdAt: new Date(Date.now() - 48 * 3600 * 1000) } })
+    await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    expect(await prisma.image.findUnique({ where: { id: old.imageId } })).toBeNull()
+    expect(port.delete).toHaveBeenCalledWith(old.storageKey)
   })
 })
