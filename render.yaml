@@ -62,6 +62,9 @@ services:
       # silently pointed at the wrong environment.
       - key: VITE_API_BASE_URL
         sync: false
+      # The imgix domain, baked in at build time.
+      - key: VITE_ASSET_BASE_URL
+        sync: false
 
   # ---------------------------------------------------------------- admin-ui
   # Internal catalog console. Separate static site from the storefront so the
@@ -89,6 +92,9 @@ services:
       # storefront's VITE_API_BASE_URL above. Empty = relative path = broken,
       # which is the intended loud failure.
       - key: VITE_API_BASE_URL
+        sync: false
+      # The imgix domain, baked in at build time.
+      - key: VITE_ASSET_BASE_URL
         sync: false
 
   # ------------------------------------------------------------ core-worker
@@ -185,18 +191,28 @@ envVarGroups:
         sync: false
       - key: ADMIN_ALLOWED_EMAILS
         sync: false
-      # Where image URLs resolve. NOTE: image upload does not work in any
-      # deployed environment yet -- the local storage adapter hands out upload
-      # URLs under /assets that nothing in core receives or serves, and the
-      # container filesystem is ephemeral anyway. Needs the ADR-0002 CDN
-      # adapter. Catalog, admin and auth work without it; product photos don't.
+      # imgix source domain for this environment (e.g.
+      # https://alpinebrick-staging.imgix.net). See
+      # docs/status/2026-09-25-image-storage-setup-runbook.md
       - key: ASSET_PUBLIC_BASE_URL
+        sync: false
+      # Storage adapter selection (see systems/core/src/ports/storage/index.ts).
+      # ASSET_STORAGE unset -> local filesystem adapter (dev only, ephemeral on
+      # Render). ASSET_STORAGE=s3 -> S3 adapter; ASSET_S3_ACCESS_KEY_ID and
+      # ASSET_S3_SECRET_ACCESS_KEY (below, never declared here) must also be
+      # set or the process refuses to start, naming every missing key.
+      - key: ASSET_STORAGE
+        sync: false
+      - key: ASSET_S3_BUCKET
+        sync: false
+      - key: ASSET_S3_REGION
         sync: false
       # Secrets are NEVER declared here. Set these in the Render dashboard,
       # per environment, entered by Jack:
       #   GOOGLE_CLIENT_SECRET,
       #   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
-      #   WALMART_CLIENT_ID, WALMART_CLIENT_SECRET, WALMART_WEBHOOK_SECRET
+      #   WALMART_CLIENT_ID, WALMART_CLIENT_SECRET, WALMART_WEBHOOK_SECRET,
+      #   ASSET_S3_ACCESS_KEY_ID, ASSET_S3_SECRET_ACCESS_KEY
       # Staging uses Stripe test mode and the Walmart sandbox base URL.
 # ---------------------------------------------------------------------------
 # Bootstrap — dashboard steps this file cannot express
