@@ -80,6 +80,13 @@ export async function requestUpload(
   // filesystem. The audit is atomic with the database change, not with the
   // I/O that follows it.
   const { created, storageKey } = await prisma.$transaction(async (tx) => {
+    // Lock the product row first so concurrent uploads to one product
+    // serialise here. Without it, two requests read the same last position
+    // before either commits and the loser dies on the position constraint
+    // (P2002, reproduced in the final review). Under READ COMMITTED the read
+    // below is a fresh statement, so once the lock is granted it sees the
+    // row the previous holder committed.
+    await tx.$queryRaw`SELECT id FROM products WHERE id = ${input.productId} FOR UPDATE`
     const last = await tx.image.findFirst({
       where: { productId: input.productId },
       orderBy: { position: 'desc' },
@@ -228,9 +235,16 @@ export async function listReadyImages(productId: string): Promise<ImageDto[]> {
 }
 
 export async function reorderImages(productId: string, orderedIds: string[], actorId: string): Promise<void> {
-  const rows = await prisma.image.findMany({ where: { productId }, orderBy: { position: 'asc' } })
+  // Validate against READY rows only: the admin can only see and order ready
+  // images, so a pending row (an upload in flight, or an abandoned one not yet
+  // swept) must neither be required in nor accepted into the ordering.
+  const rows = await prisma.image.findMany({ where: { productId, status: 'ready' }, orderBy: { position: 'asc' } })
   const known = new Set(rows.map(r => r.id))
-  if (orderedIds.length !== rows.length || orderedIds.some(id => !known.has(id))) {
+  if (
+    orderedIds.length !== rows.length
+    || new Set(orderedIds).size !== orderedIds.length
+    || orderedIds.some(id => !known.has(id))
+  ) {
     throw new ImageError('invalid_order', 'ordering must list every image of the product exactly once')
   }
   // One transaction: the position constraint is DEFERRABLE INITIALLY DEFERRED,
@@ -240,6 +254,16 @@ export async function reorderImages(productId: string, orderedIds: string[], act
   await prisma.$transaction(async (tx) => {
     for (const [position, id] of orderedIds.entries()) {
       await tx.image.update({ where: { id }, data: { position } })
+    }
+    // Ready rows now hold 0..n-1, which a pending row may already occupy.
+    // Renumber the pending rows n.. in their existing relative order so the
+    // committed state cannot collide.
+    const pending = await tx.image.findMany({
+      where: { productId, status: 'pending' },
+      orderBy: { position: 'asc' },
+    })
+    for (const [i, r] of pending.entries()) {
+      await tx.image.update({ where: { id: r.id }, data: { position: orderedIds.length + i } })
     }
     await recordAudit({
       actorId,
@@ -292,15 +316,22 @@ export async function sweepPendingImages(port: AssetStoragePort, olderThan: Date
   const stale = await prisma.image.findMany({
     where: { status: 'pending', createdAt: { lt: olderThan }, ...(productId ? { productId } : {}) },
   })
+  let swept = 0
   for (const row of stale) {
     // Row first, so a failed object delete leaves an orphaned object (harmless,
     // unreferenced) rather than a row pointing at nothing.
-    await prisma.image.delete({ where: { id: row.id } })
+    // deleteMany guarded on status: concurrent requestUpload calls on one
+    // product all sweep the same stale row. Only the call whose delete removed
+    // it (count === 1) owns the object delete; the others -- and a row that was
+    // confirmed in the meantime -- are skipped rather than raising P2025.
+    const { count } = await prisma.image.deleteMany({ where: { id: row.id, status: 'pending' } })
+    if (count !== 1) continue
+    swept++
     try {
       await port.delete(row.storageKey)
     } catch (e) {
-      console.error(`images: sweep could not delete object ${row.storageKey}:`, e)
+      console.error(`images: sweep could not delete object ${row.storageKey}:`, scrubError(e))
     }
   }
-  return stale.length
+  return swept
 }

@@ -65,6 +65,14 @@ describe('S3 storage adapter', () => {
     expect(await port().stat('missing')).toBeNull()
   })
 
+  // Ruling R2a: only NotFound means "no object". An auth or permission error
+  // must surface, or a wrong bucket/credential would read as "nothing uploaded".
+  it('propagates a non-NotFound HEAD error from stat() instead of returning null', async () => {
+    const denied = Object.assign(new Error('Access Denied'), { name: 'AccessDenied', $metadata: { httpStatusCode: 403 } })
+    s3.on(HeadObjectCommand).rejects(denied)
+    await expect(port().stat('products/p1/i1/original.png')).rejects.toMatchObject({ name: 'AccessDenied' })
+  })
+
   it('reports 0x0 for bytes that are not an image', async () => {
     const junk = Buffer.from('definitely not an image')
     s3.on(HeadObjectCommand).resolves({ ContentLength: junk.length, ContentType: 'image/png' })
