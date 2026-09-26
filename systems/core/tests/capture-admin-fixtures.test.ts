@@ -5,7 +5,7 @@
 import { describe, it, beforeAll, afterAll } from 'vitest'
 import request from 'supertest'
 import { writeFileSync, mkdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildApp } from '../src/app.js'
 import { prisma } from '../src/prisma.js'
@@ -16,6 +16,13 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const OUT = resolve(__dirname, '../../admin-ui/src/data/__fixtures__')
 const ORIGIN = 'https://admin-staging.alpinebrickexchange.com'
 const run = process.env.CAPTURE_ADMIN_FIXTURES === '1'
+
+// A 1x1 red PNG, base64. Same as storage-local-adapter.test.ts -- small enough
+// to inline, real enough for a header read.
+const PNG_1X1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+)
 
 describe.runIf(run)('capture admin fixtures', () => {
   const app = buildApp()
@@ -44,5 +51,16 @@ describe.runIf(run)('capture admin fixtures', () => {
     save('stock-changed', (await send('put', `/variants/${v.id}/stock`, { onHand: 5, expectedOnHand: 99 })).body)
     save('stock-history', (await send('get', `/variants/${v.id}/stock-history`)).body)
     save('bulk-status', (await send('post', '/products/bulk-status', { ids: [p.id, 'missing-id'], status: 'published' })).body)
+
+    const tok = (await send('post', '/images/upload-token', { productId: p.id, contentType: 'image/png', byteSize: PNG_1X1.length })).body
+    save('image-upload-token', tok)
+    const dir = process.env.ASSET_STORAGE_DIR ?? './var/assets'
+    mkdirSync(dirname(resolve(dir, tok.storageKey)), { recursive: true })
+    writeFileSync(resolve(dir, tok.storageKey), PNG_1X1)
+    save('image-confirmed', (await send('post', `/images/${tok.imageId}/confirm`, {})).body)
+    const bad = (await send('post', '/images/upload-token', { productId: p.id, contentType: 'image/png', byteSize: 999 })).body
+    mkdirSync(dirname(resolve(dir, bad.storageKey)), { recursive: true })
+    writeFileSync(resolve(dir, bad.storageKey), PNG_1X1)
+    save('image-rejected', (await send('post', `/images/${bad.imageId}/confirm`, {})).body)
   })
 })

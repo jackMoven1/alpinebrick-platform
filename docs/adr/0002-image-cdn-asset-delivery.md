@@ -1,9 +1,10 @@
 # ADR-0002 — Image CDN / Asset Delivery
 
-**Status:** PARTIALLY ACCEPTED (2026-08-13) — transforms, URL convention and
-ingestion are **decided and built**. **CDN host and spend remain OPEN and are
-Jack's.** See "Decided — 2026-08-13" at the end of this file; the text below is
-the original 2026-06-03 carve-out, kept for context.
+**Status:** ACCEPTED (2026-09-25) — the CDN/origin host and spend, the last
+open item, is now decided. See "Decided — 2026-09-25" at the end of this file.
+Transforms, URL convention and ingestion were decided and built on 2026-08-13
+(see "Decided — 2026-08-13" below); the text before that section is the
+original 2026-06-03 carve-out, kept for context.
 **Owners:** `catalog-engineer` (primary), `storefront-engineer` (consumer), `engineering-lead` (approver).
 **Decision maker:** **Jack** — this locks the platform into paid infrastructure (per ADR-0001 Process step 6).
 
@@ -64,7 +65,8 @@ local filesystem adapter, mirroring the existing `TaxPort` pattern. The
 
 ## Still open — Jack's
 
-- **CDN / origin host** and **cost model & spend approval.**
+- **Cost model & spend approval** beyond the imgix Starter plan decided below
+  (e.g. if usage outgrows Starter).
 
 The architecture requires only three things of a provider: object storage with
 signed uploads, transforms addressed by URL, and edge caching. Because storage
@@ -75,6 +77,22 @@ not changing the catalog, the schema, or any stored data.
 Cost *shapes* differ across candidates (per image stored, per delivery, per
 transform, per GB egress) and should be checked against current published
 pricing at decision time rather than recalled.
+
+## Decided — 2026-09-25
+
+Design: `.superpowers/sdd/2026-09-25-product-image-upload/spec.md`.
+
+**CDN / origin host: imgix (Starter plan) in front of private S3, in
+`us-west-2`.** Account owner for both AWS and imgix: `alpinebrick@gmail.com`.
+Originals stay in our own S3 buckets — `alpinebrick-images-staging` and
+`alpinebrick-images-prod` — with Block Public Access on; imgix reads them with
+its own read-only IAM credentials and serves transforms from `*.imgix.net`. A
+custom domain (`images.alpinebrickexchange.com`) is deferred; it is not needed
+to ship. Setup steps are in
+`docs/status/2026-09-25-image-storage-setup-runbook.md`.
+
+This closes the last open item from "Decided — 2026-08-13": "CDN / origin
+host" is removed from "Still open" above.
 
 ## Known limitations, accepted
 
