@@ -21,7 +21,13 @@ describe('imageUrl', () => {
 
   it('adds width and format together', () => {
     expect(imageUrl(KEY, { width: 800, format: 'webp' }))
-      .toBe('https://cdn.test/products/p1/i1/original.jpg?w=800&fmt=webp')
+      .toBe('https://cdn.test/products/p1/i1/original.jpg?w=800&fm=webp')
+  })
+
+  it('maps formats to imgix parameters', () => {
+    expect(imageUrl('k.jpg', { format: 'auto' })).toBe('https://cdn.test/k.jpg?auto=format')
+    expect(imageUrl('k.jpg', { format: 'webp' })).toBe('https://cdn.test/k.jpg?fm=webp')
+    expect(imageUrl('k.jpg', { width: 400, format: 'jpeg' })).toBe('https://cdn.test/k.jpg?w=400&fm=jpg')
   })
 
   it('does not double a slash when the base has a trailing one', () => {

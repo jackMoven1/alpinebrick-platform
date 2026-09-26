@@ -27,9 +27,18 @@ const BASE = (import.meta.env.VITE_ASSET_BASE_URL ?? '').replace(/\/+$/, '')
  * item feed, this copy serves srcset, and the two packages cannot import each
  * other. resolver-parity.test.ts fails if the grammars drift.
  *
- * Changing CDN provider means changing this grammar in both places and one
- * environment variable. No database rows change.
+ * The grammar is imgix's (ADR-0002, decided 2026-09-25). Changing provider
+ * means changing it here, in the other copy, and the base-URL environment
+ * variable. No database rows change.
  */
+
+/** imgix parameter for each supported format (spec 2026-09-25 §4.3). */
+const FORMAT_PARAM: Record<ImageFormat, [string, string]> = {
+  auto: ['auto', 'format'],
+  webp: ['fm', 'webp'],
+  jpeg: ['fm', 'jpg'],
+}
+
 export function imageUrl(storageKey: string, opts: ImageUrlOptions = {}): string {
   const params = new URLSearchParams()
 
@@ -39,7 +48,10 @@ export function imageUrl(storageKey: string, opts: ImageUrlOptions = {}): string
     }
     params.set('w', String(opts.width))
   }
-  if (opts.format) params.set('fmt', opts.format)
+  if (opts.format) {
+    const [name, value] = FORMAT_PARAM[opts.format]
+    params.set(name, value)
+  }
 
   const qs = params.toString()
   return `${BASE}/${storageKey}${qs ? `?${qs}` : ''}`
