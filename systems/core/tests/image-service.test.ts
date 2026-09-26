@@ -160,7 +160,7 @@ describe('updateImageAlt', () => {
   it('updates the alt text and audits before/after', async () => {
     const p = await makeProduct()
     const port = fakePort()
-    const r = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const r = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
     await confirmUpload(fakePort({ [r.storageKey]: OBJ }), r.imageId, actorId)
 
     const dto = await updateImageAlt(r.imageId, 'Front three-quarter view', actorId)
@@ -184,8 +184,8 @@ describe('listReadyImages', () => {
   it('returns ready images in position order and excludes pending ones', async () => {
     const p = await makeProduct()
     const port = fakePort()
-    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
-    const b = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
+    const b = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
     await confirmUpload(fakePort({ [a.storageKey]: OBJ }), a.imageId, actorId)
     await confirmUpload(fakePort({ [b.storageKey]: OBJ }), b.imageId, actorId)
     await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId) // left pending
@@ -199,8 +199,8 @@ describe('reorderImages', () => {
   it('swaps two images', async () => {
     const p = await makeProduct()
     const port = fakePort()
-    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
-    const b = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
+    const b = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
     await confirmUpload(fakePort({ [a.storageKey]: OBJ }), a.imageId, actorId)
     await confirmUpload(fakePort({ [b.storageKey]: OBJ }), b.imageId, actorId)
 
@@ -218,7 +218,7 @@ describe('reorderImages', () => {
   it('rejects an ordering that omits an image', async () => {
     const p = await makeProduct()
     const port = fakePort()
-    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
     await confirmUpload(fakePort({ [a.storageKey]: OBJ }), a.imageId, actorId)
     await expect(reorderImages(p.id, [], actorId)).rejects.toThrow(ImageError)
   })
@@ -228,8 +228,8 @@ describe('deleteImage', () => {
   it('removes the row, deletes the object, and closes the position gap', async () => {
     const p = await makeProduct()
     const port = fakePort()
-    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
-    const b = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
+    const b = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
     await confirmUpload(fakePort({ [a.storageKey]: OBJ }), a.imageId, actorId)
     await confirmUpload(fakePort({ [b.storageKey]: OBJ }), b.imageId, actorId)
 
@@ -253,7 +253,7 @@ describe('sweepPendingImages', () => {
     const p = await makeProduct()
     const port = fakePort()
     const stale = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
-    const good = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const good = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
     await confirmUpload(fakePort({ [good.storageKey]: OBJ }), good.imageId, actorId)
 
     // Age the pending row behind the service's back.

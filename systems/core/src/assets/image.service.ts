@@ -18,11 +18,12 @@ export interface ImageDto {
   height: number
 }
 
+// SVG is not accepted: an SVG served publicly can carry script, and product
+// photos never need it (spec 2026-09-25 §4.2).
 const EXT_BY_CONTENT_TYPE: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
   'image/webp': 'webp',
-  'image/svg+xml': 'svg',
 }
 
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024
@@ -122,6 +123,8 @@ export async function requestUpload(
 export async function confirmUpload(port: AssetStoragePort, imageId: string, actorId: string): Promise<ImageDto> {
   const row = await prisma.image.findUnique({ where: { id: imageId } })
   if (!row) throw new ImageError('image_not_found', 'image not found')
+  // A retried click after success must not re-verify or re-audit.
+  if (row.status === 'ready') return toDto(row)
 
   // Read the truth from storage. A client-supplied width that disagrees with
   // the real image reintroduces the layout shift width/height exist to prevent.
@@ -130,6 +133,34 @@ export async function confirmUpload(port: AssetStoragePort, imageId: string, act
   // that follow are pure database work, so only those two are transactional.
   const stat = await port.stat(row.storageKey)
   if (!stat) throw new ImageError('object_missing', 'no object was uploaded for this image')
+
+  // The signed URL let the browser put ANY bytes at this key. Verify them.
+  const rejection =
+    stat.byteSize > MAX_UPLOAD_BYTES ? { code: 'upload_too_large', message: `file exceeds ${MAX_UPLOAD_BYTES} bytes` }
+    : stat.byteSize !== row.byteSize || stat.contentType !== row.contentType
+      ? { code: 'upload_mismatch', message: 'the uploaded file does not match what was declared; please upload it again' }
+    : stat.width === 0 || stat.height === 0 ? { code: 'not_an_image', message: 'the uploaded file is not a readable JPEG, PNG or WebP image' }
+    : null
+
+  if (rejection) {
+    // Storage I/O outside the transaction, same reasoning as above. If the
+    // delete throws, the row still must not survive the rejection, so we log
+    // and continue into the transaction rather than letting the row linger.
+    try {
+      await port.delete(row.storageKey)
+    } catch (err) {
+      console.error('[image] failed to delete rejected object', row.storageKey, err)
+    }
+    await prisma.$transaction(async (tx) => {
+      await tx.image.delete({ where: { id: imageId } })
+      await recordAudit({
+        actorId, action: 'image.upload.reject', target: `image:${imageId}`,
+        before: { status: row.status, byteSize: row.byteSize, contentType: row.contentType },
+        after: { code: rejection.code, byteSize: stat.byteSize, contentType: stat.contentType, width: stat.width, height: stat.height },
+      }, tx)
+    })
+    throw new ImageError(rejection.code, rejection.message)
+  }
 
   const updated = await prisma.$transaction(async (tx) => {
     const updated = await tx.image.update({
