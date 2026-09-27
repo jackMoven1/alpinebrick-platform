@@ -18,6 +18,7 @@ import type { ShippingPort } from './ports/shipping/shipping.port.js'
 import { noopEmailAdapter } from './ports/email/noop.adapter.js'
 import type { EmailPort } from './ports/email/email.port.js'
 import { createCheckoutRouter } from './checkout/checkout.routes.js'
+import { createStripeWebhookHandler } from './payments/stripe-webhook.routes.js'
 import { createRateLimiter } from './lib/rate-limit.js'
 
 export interface AppDeps {
@@ -34,7 +35,6 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
   // to start rather than take money it can never mark paid (spec §8).
   const payments = deps.payments ?? createPaymentsPort()
   const shipping = deps.shipping ?? createFlatRateShippingPort()
-  // `email` is used by the Stripe webhook (Task 7).
   const email = deps.email ?? noopEmailAdapter
   const storefrontUrl = (deps.storefrontUrl !== undefined ? deps.storefrontUrl : (process.env.STOREFRONT_PUBLIC_URL ?? null))
     ?.replace(/\/+$/, '') ?? null
@@ -45,6 +45,15 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
   // req.ip is the proxy's address and the checkout rate limit (and the
   // session ip recorded at sign-in) would treat every customer as one.
   app.set('trust proxy', 1)
+  // Stripe webhook: raw body, registered BEFORE express.json. body-parser
+  // skips a request whose body was already read (req._body), so the JSON
+  // parser below never touches these bytes. Nothing else is mounted on this
+  // path -- see stripe-webhook.routes.ts.
+  app.post(
+    '/api/v1/webhooks/stripe',
+    express.raw({ type: 'application/json', limit: '1mb' }),
+    createStripeWebhookHandler({ payments, email }),
+  )
   app.use(express.json())
   app.get('/health', (_req, res) => res.json({ status: 'ok' }))
 
