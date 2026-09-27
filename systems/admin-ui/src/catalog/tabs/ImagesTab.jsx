@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { imageUrlFromKey } from '../../lib/imageUrl.js'
 import { errorText } from '../../lib/errorText.js'
 import api from '../../data/api.js'
@@ -33,8 +33,23 @@ import { checkImageFile, ACCEPTED_TYPES } from './imageFiles.js'
  *     while a refresh is already in flight stays visibly "Saved" until a
  *     refresh issued after it saved actually clears it.
  *
- * Task 8 adds the per-photo controls (reorder, alt save, delete) on the
- * read-only grid below.
+ * Per-photo controls (Task 8): left/right reorder, an explicitly saved
+ * "Description" (alt text, never saved on blur), and Delete behind a
+ * confirm. Photos are shown sorted by position and the FIRST shown photo is
+ * badged "Main" - positions can have gaps after deletes, so "position 0" is
+ * not the test. Only ready photos are shown or sent in a reorder; a pending
+ * (unconfirmed) row never appears. Each card has its own busy flag that
+ * disables its controls while its request is in flight. Reorder buttons are
+ * disabled on every card while any card is busy, and Delete while a reorder
+ * is in flight, because an order is computed from the whole list. Every
+ * mutation refreshes through refresh(), so card refreshes share the upload
+ * path's latest-response guard.
+ *
+ * The tab is keyed by product id, so switching products unmounts it - but a
+ * promise chain it started keeps running. mountedRef stops every async path
+ * (upload refresh, reorder, alt, delete) from calling onUpdated or setting
+ * state once this instance has unmounted, so a slow response for product A
+ * can never overwrite product B.
  */
 let nextUploadId = 0
 
@@ -47,17 +62,54 @@ const STAGE_LABELS = {
   error: 'Failed',
 }
 
+const DELETE_PROMPT = 'Delete this photo? This cannot be undone.'
+
+// Core's admin DTO already returns only ready photos; this is belt and braces
+// so a pending row can never be shown or sent in a reorder.
+const visibleImages = (images) => (images || [])
+  .filter((img) => img.status === undefined || img.status === 'ready')
+  .slice()
+  .sort((a, b) => a.position - b.position)
+
+const imageKey = (img) => img.id ?? img.storageKey
+
 export default function ImagesTab({ product, onUpdated = () => {} }) {
-  const images = product.images || []
+  const images = visibleImages(product.images)
   const [uploads, setUploadsState] = useState([])
   const uploadsRef = useRef([])
   const refreshSeqRef = useRef(0)
-  const [refreshInFlight, setRefreshInFlight] = useState(0)
+  const [refreshInFlight, setRefreshInFlightState] = useState(0)
+
+  const mountedRef = useRef(false)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
+
+  const setRefreshInFlight = useCallback((u) => {
+    if (mountedRef.current) setRefreshInFlightState(u)
+  }, [])
+
+  // Per-card state, keyed by image id. busy maps id -> the action in flight
+  // ('reorder' | 'alt' | 'delete'); busyRef mirrors it synchronously so a
+  // double click can't start a second request before the re-render lands.
+  const [busy, setBusyState] = useState({})
+  const busyRef = useRef({})
+  const [cardErrors, setCardErrors] = useState({})
+  const [drafts, setDrafts] = useState({})
+  const setBusy = useCallback((id, kind) => {
+    const next = { ...busyRef.current }
+    if (kind) next[id] = kind
+    else delete next[id]
+    busyRef.current = next
+    if (mountedRef.current) setBusyState(next)
+  }, [])
 
   // uploadsRef is kept in sync synchronously (plain JS, not via React's
   // deferred state updates) so a refresh's id snapshot always reflects the
   // truth at the exact moment it's taken, not a stale render.
   const setUploads = useCallback((updater) => {
+    if (!mountedRef.current) return
     const next = typeof updater === 'function' ? updater(uploadsRef.current) : updater
     uploadsRef.current = next
     setUploadsState(next)
@@ -71,8 +123,11 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
   // issued refresh's response is ever applied; an older one that resolves
   // late is dropped entirely (finding 1). On success it clears exactly the
   // rows that were 'saved'/'refresh-error' when THIS refresh was issued —
-  // never rows that saved afterward (finding 2).
+  // never rows that saved afterward (finding 2). Nothing is applied once the
+  // tab has unmounted. Returns what happened, so a card action can report a
+  // refresh failure on its own card.
   const refresh = useCallback(async () => {
+    if (!mountedRef.current) return { status: 'unmounted' }
     const seq = ++refreshSeqRef.current
     const idsAtIssue = uploadsRef.current
       .filter((u) => u.stage === 'saved' || u.stage === 'refresh-error')
@@ -80,17 +135,75 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
     setRefreshInFlight((n) => n + 1)
     try {
       const fresh = await api.getProduct(product.id)
-      if (seq !== refreshSeqRef.current) return // superseded by a newer refresh; stale, ignore
+      if (!mountedRef.current) return { status: 'unmounted' }
+      if (seq !== refreshSeqRef.current) return { status: 'stale' } // superseded by a newer refresh; ignore
       onUpdated(fresh)
       setUploads((prev) => prev.filter((u) => !idsAtIssue.includes(u.id)))
+      return { status: 'applied' }
     } catch (err) {
-      if (seq !== refreshSeqRef.current) return // stale, ignore
+      if (!mountedRef.current) return { status: 'unmounted' }
+      if (seq !== refreshSeqRef.current) return { status: 'stale' } // stale, ignore
       const message = errorText(err)
       setUploads((prev) => prev.map((u) => (idsAtIssue.includes(u.id) && u.stage === 'saved' ? { ...u, stage: 'refresh-error', error: message } : u)))
+      return { status: 'error', error: message }
     } finally {
       setRefreshInFlight((n) => n - 1)
     }
-  }, [product.id, onUpdated, setUploads])
+  }, [product.id, onUpdated, setUploads, setRefreshInFlight])
+
+  // One card action: refuse a second request while one is in flight, run the
+  // mutation, then refresh the product. Errors land on that card only.
+  const runCardAction = useCallback(async (id, kind, mutate) => {
+    if (busyRef.current[id]) return { ok: false }
+    setBusy(id, kind)
+    if (mountedRef.current) setCardErrors((prev) => ({ ...prev, [id]: null }))
+    try {
+      try {
+        await mutate()
+      } catch (err) {
+        if (mountedRef.current) setCardErrors((prev) => ({ ...prev, [id]: errorText(err) }))
+        return { ok: false }
+      }
+      if (!mountedRef.current) return { ok: true, refreshed: 'unmounted' }
+      const r = await refresh()
+      if (r.status === 'error' && mountedRef.current) {
+        setCardErrors((prev) => ({ ...prev, [id]: `Done, but the list couldn’t refresh (${r.error})` }))
+      }
+      return { ok: true, refreshed: r.status }
+    } finally {
+      setBusy(id, null)
+    }
+  }, [refresh, setBusy])
+
+  const move = (index, delta) => {
+    const target = index + delta
+    if (target < 0 || target >= images.length) return
+    if (Object.keys(busyRef.current).length > 0) return
+    const ids = images.map((img) => img.id)
+    ;[ids[index], ids[target]] = [ids[target], ids[index]]
+    runCardAction(images[index].id, 'reorder', () => api.reorderImages(product.id, ids))
+  }
+
+  const saveAlt = async (img) => {
+    const alt = drafts[img.id]
+    if (alt === undefined || alt === (img.alt ?? '')) return
+    const res = await runCardAction(img.id, 'alt', () => api.updateImageAlt(img.id, alt))
+    // Drop the draft only once the refreshed product (which carries it) is applied.
+    if (res.ok && res.refreshed === 'applied' && mountedRef.current) {
+      setDrafts((prev) => {
+        const next = { ...prev }
+        delete next[img.id]
+        return next
+      })
+    }
+  }
+
+  const remove = (img) => {
+    if (busyRef.current[img.id]) return
+    if (Object.values(busyRef.current).includes('reorder')) return
+    if (!window.confirm(DELETE_PROMPT)) return
+    runCardAction(img.id, 'delete', () => api.deleteImage(img.id))
+  }
 
   const uploadOne = useCallback(async (u) => {
     update(u.id, { stage: 'uploading', progress: 0, error: null })
@@ -230,23 +343,87 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
       )}
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-        {images.map((img) => (
-          <div key={img.storageKey} className="rounded-card bg-white p-2 shadow-card">
-            <img
-              src={imageUrlFromKey(img.storageKey, 400)}
-              alt={img.alt}
-              width={img.width}
-              height={img.height}
-              className="h-32 w-full rounded-lg object-cover"
-            />
-            <input value={img.alt} readOnly placeholder="alt text"
-              className="mt-2 w-full rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-600" />
-            <div className="mt-2 flex justify-between text-xs text-gray-400">
-              <span>position {img.position}</span>
-              <button disabled>Delete</button>
+        {images.map((img, index) => {
+          const key = imageKey(img)
+          const cardBusy = Boolean(busy[img.id])
+          const anyBusy = Object.keys(busy).length > 0
+          const reorderBusy = Object.values(busy).includes('reorder')
+          const savedAlt = img.alt ?? ''
+          const draft = drafts[img.id]
+          const altChanged = draft !== undefined && draft !== savedAlt
+          const inputId = `image-alt-${key}`
+          return (
+            <div key={key} data-testid={`image-${key}`} className="rounded-card bg-white p-2 shadow-card">
+              <div className="relative">
+                <img
+                  src={imageUrlFromKey(img.storageKey, 400)}
+                  alt={img.alt}
+                  width={img.width}
+                  height={img.height}
+                  className="h-32 w-full rounded-lg object-cover"
+                />
+                {index === 0 && (
+                  <span className="absolute left-2 top-2 rounded-pill bg-ink px-2 py-0.5 text-xs text-white">Main</span>
+                )}
+              </div>
+              <label htmlFor={inputId} className="mt-2 block text-xs font-medium text-ink">Description</label>
+              <div className="mt-1 flex gap-2">
+                <input
+                  id={inputId}
+                  value={draft ?? savedAlt}
+                  disabled={cardBusy}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    setDrafts((prev) => ({ ...prev, [img.id]: value }))
+                  }}
+                  className="min-w-0 flex-1 rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-700"
+                />
+                <button
+                  type="button"
+                  disabled={cardBusy || !altChanged}
+                  onClick={() => saveAlt(img)}
+                  className="rounded-pill bg-ink px-3 py-1 text-xs text-white disabled:opacity-50"
+                >
+                  Save
+                </button>
+              </div>
+              {!savedAlt && (
+                <p className="mt-1 text-xs text-gray-400">Add a description — used by screen readers and search engines.</p>
+              )}
+              {cardErrors[img.id] && <p className="mt-1 text-xs text-accent">{cardErrors[img.id]}</p>}
+              <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    aria-label="Move left"
+                    disabled={anyBusy || index === 0}
+                    onClick={() => move(index, -1)}
+                    className="rounded-pill bg-gray-200 px-2 py-1 text-gray-700 disabled:opacity-50"
+                  >
+                    ←
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Move right"
+                    disabled={anyBusy || index === images.length - 1}
+                    onClick={() => move(index, 1)}
+                    className="rounded-pill bg-gray-200 px-2 py-1 text-gray-700 disabled:opacity-50"
+                  >
+                    →
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  disabled={cardBusy || reorderBusy}
+                  onClick={() => remove(img)}
+                  className="rounded-pill bg-gray-200 px-3 py-1 text-accent disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
         {images.length === 0 && <p className="text-gray-400">No images yet.</p>}
       </div>
     </div>
