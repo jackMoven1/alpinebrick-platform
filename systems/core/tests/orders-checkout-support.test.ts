@@ -1,0 +1,177 @@
+import { describe, it, expect, beforeEach, afterAll } from 'vitest'
+import type { Prisma } from '@prisma/client'
+import { prisma } from '../src/prisma.js'
+import { resetDb } from './helpers/db.js'
+import { seed } from '../prisma/seed.js'
+import {
+  placeOrder, markOrderPaid, fulfillOrder, cancelOrder, refundOrderTx, OrderError, PENDING_CHECKOUT_EMAIL,
+  lockOrderRow, markOrderPaidTx, cancelOrderTx,
+} from '../src/orders/orders.service.js'
+import { deferredTaxAdapter } from '../src/ports/tax/deferred.adapter.js'
+
+beforeEach(async () => { await resetDb(); await seed() })
+afterAll(() => prisma.$disconnect())
+
+async function vid(sku: string) { return (await prisma.variant.findFirstOrThrow({ where: { sku } })).id }
+async function inv(variantId: string) { return prisma.inventory.findFirstOrThrow({ where: { variantId } }) }
+const pending = (variantId: string, quantity = 1) => placeOrder(
+  { email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId, quantity }] }, deferredTaxAdapter,
+)
+const refund = (orderId: string, refundedCents: number, full: boolean) =>
+  prisma.$transaction((tx) => refundOrderTx(tx, orderId, { refundedCents, full }))
+
+describe('placeOrder for checkout', () => {
+  it('records opt-in and referral, with tax deferred to Stripe', async () => {
+    const v = await vid('BBS-STD')
+    const o = await placeOrder({
+      email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId: v, quantity: 2 }],
+      marketingOptIn: true, referral: { code: 'club', firstSeenAt: new Date('2026-09-20T00:00:00Z') },
+    }, deferredTaxAdapter)
+    const row = await prisma.order.findUniqueOrThrow({ where: { id: o.id } })
+    expect(row).toMatchObject({
+      taxCents: 0, taxRateBps: 0, taxJurisdiction: 'stripe_tax_pending', totalCents: 9998,
+      marketingOptIn: true, referralCode: 'club', referralFirstSeenAt: new Date('2026-09-20T00:00:00Z'),
+    })
+  })
+
+  it('reports how many units are available on insufficient stock', async () => {
+    const v = await vid('CMP-LTD') // onHand 8
+    await pending(v, 3)
+    const err = await pending(v, 6).catch((e) => e)
+    expect(err).toBeInstanceOf(OrderError)
+    expect(err).toMatchObject({ code: 'insufficient_stock', details: { variantId: v, available: 5 } })
+  })
+
+  it('names the missing variant', async () => {
+    await expect(pending('nope')).rejects.toMatchObject({ code: 'variant_not_found', details: { variantId: 'nope' } })
+  })
+})
+
+describe('refundOrderTx', () => {
+  it('full refund of a paid order releases the reservation', async () => {
+    const v = await vid('BBS-STD')
+    const o = await pending(v, 2)
+    await markOrderPaid(o.id)
+    const { releasedVariantIds } = await refund(o.id, 9998, true)
+    expect(releasedVariantIds).toEqual([v])
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ status: 'refunded', refundedCents: 9998 })
+    expect(await inv(v)).toMatchObject({ onHand: 25, reserved: 0 })
+    expect(await prisma.auditLog.count({ where: { action: 'order.refunded', target: `order:${o.id}` } })).toBe(1)
+  })
+
+  it('full refund after shipment leaves stock alone', async () => {
+    const v = await vid('BBS-STD')
+    const o = await pending(v, 1)
+    await markOrderPaid(o.id)
+    await fulfillOrder(o.id)
+    const { releasedVariantIds } = await refund(o.id, 4999, true)
+    expect(releasedVariantIds).toEqual([])
+    expect(await inv(v)).toMatchObject({ onHand: 24, reserved: 0 })
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('refunded')
+  })
+
+  it('partial refund changes the amount only', async () => {
+    const v = await vid('BBS-STD')
+    const o = await pending(v, 2)
+    await markOrderPaid(o.id)
+    await refund(o.id, 1000, false)
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ status: 'paid', refundedCents: 1000 })
+    expect((await inv(v)).reserved).toBe(2)
+  })
+
+  it('full refund of a cancelled order does not release twice', async () => {
+    const v = await vid('BBS-STD')
+    const o = await pending(v, 1)
+    await cancelOrder(o.id)
+    await refund(o.id, 4999, true)
+    expect(await inv(v)).toMatchObject({ onHand: 25, reserved: 0 })
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('refunded')
+  })
+
+  it('refuses a full refund of a pending order', async () => {
+    const o = await pending(await vid('BBS-STD'))
+    await expect(refund(o.id, 4999, true)).rejects.toMatchObject({ code: 'invalid_transition' })
+  })
+})
+
+/**
+ * Deterministic lock tests (controller Ruling P3). Transaction A takes the
+ * order row lock and holds it on a gate; a second transition is started
+ * concurrently and must NOT complete while A holds the lock. A then applies
+ * its own transition and commits; the second transition must see A's
+ * committed status. Without `FOR UPDATE` in lockOrderRow, A holds no lock, the
+ * second transition runs to completion immediately, and the "still blocked"
+ * assertion fails.
+ */
+describe('transitions lock the order row', () => {
+  const HOLD_MS = 500
+
+  async function holdLockThen(orderId: string, transition: (tx: Prisma.TransactionClient) => Promise<unknown>) {
+    let open!: () => void
+    const gate = new Promise<void>((r) => { open = r })
+    let signalLocked!: () => void
+    const locked = new Promise<void>((r) => { signalLocked = r })
+    const txA = prisma.$transaction(async (tx) => {
+      await lockOrderRow(tx, orderId)
+      signalLocked()
+      await gate
+      await transition(tx)
+    }, { timeout: 15_000 })
+    await locked
+    return { txA, release: () => open() }
+  }
+
+  function track<T>(p: Promise<T>) {
+    const state = { settled: false }
+    const settled = p.then(
+      (value) => { state.settled = true; return { ok: true as const, value } },
+      (error) => { state.settled = true; return { ok: false as const, error } },
+    )
+    return { state, settled }
+  }
+
+  it('cancel blocks while paid holds the lock, then cancels the paid order and releases its hold', async () => {
+    const v = await vid('BBS-STD')
+    const o = await pending(v, 1)
+    const { txA, release } = await holdLockThen(o.id, (tx) => markOrderPaidTx(tx, o.id))
+
+    const cancel = track(cancelOrder(o.id))
+    await new Promise((r) => setTimeout(r, HOLD_MS))
+    // Read before releasing, and always release, so a failure here never
+    // leaves tx A holding its connection until the transaction timeout.
+    const blockedWhileLocked = !cancel.state.settled
+    release()
+    const aError = await txA.then(() => null, (e) => e)
+    expect(blockedWhileLocked).toBe(true)
+    expect(aError).toBeNull()
+    const result = await cancel.settled
+    // txA resolved, so paid committed first; paid -> cancelled is legal, so
+    // cancel must then succeed on the paid order and release the hold once.
+    expect(result.ok).toBe(true)
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('cancelled')
+    expect((await inv(v)).reserved).toBe(0)
+    const actions = (await prisma.auditLog.findMany({ where: { target: `order:${o.id}` } })).map((a) => a.action).sort()
+    expect(actions).toEqual(['order.cancelled', 'order.paid', 'order.place'])
+  })
+
+  it('paid blocks while cancel holds the lock, then refuses -- never a paid order with its hold released', async () => {
+    const v = await vid('BBS-STD')
+    const o = await pending(v, 1)
+    const { txA, release } = await holdLockThen(o.id, (tx) => cancelOrderTx(tx, o.id))
+
+    const paid = track(markOrderPaid(o.id))
+    await new Promise((r) => setTimeout(r, HOLD_MS))
+    // Read before releasing, and always release, so a failure here never
+    // leaves tx A holding its connection until the transaction timeout.
+    const blockedWhileLocked = !paid.state.settled
+    release()
+    const aError = await txA.then(() => null, (e) => e)
+    expect(blockedWhileLocked).toBe(true)
+    expect(aError).toBeNull()
+    const result = await paid.settled
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.error).toMatchObject({ code: 'invalid_transition' })
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('cancelled')
+    expect((await inv(v)).reserved).toBe(0)
+  })
+})

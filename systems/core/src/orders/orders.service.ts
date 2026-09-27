@@ -4,13 +4,19 @@ import { recordAudit } from '../audit.js'
 import type { TaxPort } from '../ports/tax/tax.port.js'
 import { createFlatRateTaxPort } from '../ports/tax/flat-rate.adapter.js'
 import { enqueueInventoryPush } from '../channels/walmart/inventory.sync.js'
+import { storefrontSellable } from '../inventory/allocation.js'
 
 export class OrderError extends Error {
-  constructor(public code: string, message: string) {
+  constructor(public code: string, message: string, public details?: Record<string, unknown>) {
     super(message)
     this.name = 'OrderError'
   }
 }
+
+/** A pending checkout order's email until Stripe's webhook writes the real one (spec §3). */
+export const PENDING_CHECKOUT_EMAIL = 'pending@checkout.invalid'
+
+export type OrderWithLines = Prisma.OrderGetPayload<{ include: { lines: true } }>
 
 export interface OrderLineDto {
   variantId: string
@@ -41,6 +47,10 @@ export interface PlaceOrderInput {
   shipToState: string
   lines: { variantId: string; quantity: number }[]
   actorId?: string
+  /** The storefront checkbox as submitted; applied to the Customer at payment. */
+  marketingOptIn?: boolean
+  /** Snapshotted now; partner and rate are resolved by the webhook at payment. */
+  referral?: { code: string; firstSeenAt: Date } | null
 }
 
 const defaultTaxPort = createFlatRateTaxPort()
@@ -73,7 +83,7 @@ export interface TransitionOptions {
  * hourly reconcile (final fix wave B4), so it is logged instead. Each line is
  * attempted even if an earlier one fails.
  */
-async function enqueueInventoryPushesAfterCommit(
+export async function enqueueInventoryPushesAfterCommit(
   variantIds: string[],
   context: string,
 ): Promise<void> {
@@ -125,7 +135,7 @@ export async function placeOrder(input: PlaceOrderInput, taxPort: TaxPort = defa
       const variant = await tx.variant.findFirst({
         where: { id: line.variantId, product: { status: 'published' } },
       })
-      if (!variant) throw new OrderError('variant_not_found', `no published variant ${line.variantId}`)
+      if (!variant) throw new OrderError('variant_not_found', `no published variant ${line.variantId}`, { variantId: line.variantId })
       resolved.push({ variantId: variant.id, sku: variant.sku, quantity: line.quantity, unitPriceCents: variant.priceCents })
     }
 
@@ -137,7 +147,14 @@ export async function placeOrder(input: PlaceOrderInput, taxPort: TaxPort = defa
         UPDATE inventory SET reserved = reserved + ${line.quantity}
         WHERE variant_id = ${line.variantId}
           AND on_hand - reserved - COALESCE(walmart_allocation, 0) >= ${line.quantity}`
-      if (affected === 0) throw new OrderError('insufficient_stock', `not enough stock for variant ${line.variantId}`)
+      if (affected === 0) {
+        // The UPDATE matched nothing (not an error), so the transaction is
+        // still usable: read what IS available so the storefront can say
+        // "Only N left" instead of a bare failure.
+        const row = await tx.inventory.findUnique({ where: { variantId: line.variantId } })
+        const available = row ? storefrontSellable(row.onHand, row.reserved, row.walmartAllocation) : 0
+        throw new OrderError('insufficient_stock', `not enough stock for variant ${line.variantId}`, { variantId: line.variantId, available })
+      }
     }
 
     // 3. Compute money from the snapshot; tax comes from the port.
@@ -165,6 +182,9 @@ export async function placeOrder(input: PlaceOrderInput, taxPort: TaxPort = defa
         totalCents: subtotalCents - discountCents + tax.taxCents,
         taxRateBps: tax.rateBps,
         taxJurisdiction: tax.jurisdiction,
+        marketingOptIn: input.marketingOptIn ?? false,
+        referralCode: input.referral?.code ?? null,
+        referralFirstSeenAt: input.referral?.firstSeenAt ?? null,
         lines: {
           create: resolved.map((l) => ({
             variantId: l.variantId, sku: l.sku, quantity: l.quantity,
@@ -193,23 +213,43 @@ export async function getOrder(id: string): Promise<OrderDto | null> {
   return o ? toDto(o) : null
 }
 
-async function loadOrderForUpdate(tx: any, orderId: string) {
-  const order = await tx.order.findUnique({ where: { id: orderId }, include: { lines: true } })
+/**
+ * Row-locks the order for the rest of the transaction. Every transition
+ * goes through here: without the lock, two transitions (the Stripe webhook's
+ * paid and the sweep's cancel, say) can both read `pending` and both write,
+ * leaving a paid order whose reservation was released. With it, the second
+ * waits, then re-reads the committed status (READ COMMITTED takes a fresh
+ * snapshot per statement) and refuses.
+ */
+export async function lockOrderRow(tx: Prisma.TransactionClient, orderId: string): Promise<OrderWithLines | null> {
+  await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`
+  return tx.order.findUnique({ where: { id: orderId }, include: { lines: true } })
+}
+
+async function loadOrderForUpdate(tx: Prisma.TransactionClient, orderId: string): Promise<OrderWithLines> {
+  const order = await lockOrderRow(tx, orderId)
   if (!order) throw new OrderError('order_not_found', `no order ${orderId}`)
   return order
 }
 
+/** pending -> paid inside the caller's transaction. `data` is written with the status change. */
+export async function markOrderPaidTx(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+  actorId = 'system',
+  data: Prisma.OrderUncheckedUpdateInput = {},
+): Promise<OrderWithLines> {
+  const order = await loadOrderForUpdate(tx, orderId)
+  if (order.status !== 'pending') {
+    throw new OrderError('invalid_transition', `cannot mark ${order.status} order as paid`)
+  }
+  const next = await tx.order.update({ where: { id: orderId }, data: { ...data, status: 'paid' }, include: { lines: true } })
+  await recordAudit({ actorId, action: 'order.paid', target: `order:${orderId}`, before: { status: 'pending' }, after: { status: 'paid' } }, tx)
+  return next
+}
+
 export async function markOrderPaid(orderId: string, actorId = 'system'): Promise<OrderDto> {
-  const updated = await prisma.$transaction(async (tx) => {
-    const order = await loadOrderForUpdate(tx, orderId)
-    if (order.status !== 'pending') {
-      throw new OrderError('invalid_transition', `cannot mark ${order.status} order as paid`)
-    }
-    const next = await tx.order.update({ where: { id: orderId }, data: { status: 'paid' }, include: { lines: true } })
-    await recordAudit({ actorId, action: 'order.paid', target: `order:${orderId}`, before: { status: 'pending' }, after: { status: 'paid' } }, tx)
-    return next
-  })
-  return toDto(updated)
+  return toDto(await prisma.$transaction((tx) => markOrderPaidTx(tx, orderId, actorId)))
 }
 
 export async function fulfillOrder(orderId: string, actorId = 'system', opts: TransitionOptions = {}): Promise<OrderDto> {
@@ -233,39 +273,96 @@ export async function fulfillOrder(orderId: string, actorId = 'system', opts: Tr
   return toDto(updated)
 }
 
+/**
+ * Releases the still-held reservation for every line of `order`, inside the
+ * caller's transaction. Shared by cancel and full refund so the release SQL
+ * exists once. Returns the released variant ids, in line order.
+ */
+async function releaseReservation(tx: Prisma.TransactionClient, order: OrderWithLines): Promise<string[]> {
+  const released: string[] = []
+  for (const line of order.lines) {
+    // Guarded exactly as fulfillOrder is. Without the affected-row check the
+    // UPDATE silently matches nothing when reserved has drifted below the line
+    // quantity, the order still becomes cancelled, and the remaining hold is
+    // stranded forever — stock that can never be sold again, with no error
+    // raised. Failing loudly here is recoverable; the silent version is not.
+    //
+    // A Walmart unit that did not sell stays Walmart's (spec §5.1 rule 3):
+    // reserved - q and allocation + q keeps reserved + allocation constant,
+    // so the invariant holds.
+    const affected = order.channel === 'walmart'
+      ? await tx.$executeRaw`
+          UPDATE inventory
+          SET reserved = reserved - ${line.quantity},
+              walmart_allocation = CASE WHEN walmart_allocation IS NULL THEN NULL
+                                        ELSE walmart_allocation + ${line.quantity} END
+          WHERE variant_id = ${line.variantId} AND reserved >= ${line.quantity}`
+      : await tx.$executeRaw`
+          UPDATE inventory SET reserved = reserved - ${line.quantity}
+          WHERE variant_id = ${line.variantId} AND reserved >= ${line.quantity}`
+    if (affected === 0) throw new OrderError('inventory_conflict', `cannot release reservation for variant ${line.variantId}`)
+    released.push(line.variantId)
+  }
+  return released
+}
+
+/** pending|paid -> cancelled inside the caller's transaction; releases the reservation. */
+export async function cancelOrderTx(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+  actorId = 'system',
+  opts: TransitionOptions = {},
+): Promise<OrderWithLines> {
+  const order = await loadOrderForUpdate(tx, orderId)
+  if (order.status !== 'pending' && order.status !== 'paid') {
+    throw new OrderError('invalid_transition', `cannot cancel a ${order.status} order`)
+  }
+  await releaseReservation(tx, order)
+  const next = await tx.order.update({ where: { id: orderId }, data: { status: 'cancelled' }, include: { lines: true } })
+  await recordAudit({ actorId, action: 'order.cancelled', target: `order:${orderId}`, after: { status: 'cancelled' } }, tx)
+  if (opts.inTransaction) await opts.inTransaction(tx)
+  return next
+}
+
 export async function cancelOrder(orderId: string, actorId = 'system', opts: TransitionOptions = {}): Promise<OrderDto> {
-  const updated = await prisma.$transaction(async (tx) => {
-    const order = await loadOrderForUpdate(tx, orderId)
-    if (order.status !== 'pending' && order.status !== 'paid') {
-      throw new OrderError('invalid_transition', `cannot cancel a ${order.status} order`)
-    }
-    for (const line of order.lines) {
-      // Guarded exactly as fulfillOrder is. Without the affected-row check the
-      // UPDATE silently matches nothing when reserved has drifted below the line
-      // quantity, the order still becomes cancelled, and the remaining hold is
-      // stranded forever — stock that can never be sold again, with no error
-      // raised. Failing loudly here is recoverable; the silent version is not.
-      //
-      // A Walmart unit that did not sell stays Walmart's (spec §5.1 rule 3):
-      // reserved - q and allocation + q keeps reserved + allocation constant,
-      // so the invariant holds.
-      const affected = order.channel === 'walmart'
-        ? await tx.$executeRaw`
-            UPDATE inventory
-            SET reserved = reserved - ${line.quantity},
-                walmart_allocation = CASE WHEN walmart_allocation IS NULL THEN NULL
-                                          ELSE walmart_allocation + ${line.quantity} END
-            WHERE variant_id = ${line.variantId} AND reserved >= ${line.quantity}`
-        : await tx.$executeRaw`
-            UPDATE inventory SET reserved = reserved - ${line.quantity}
-            WHERE variant_id = ${line.variantId} AND reserved >= ${line.quantity}`
-      if (affected === 0) throw new OrderError('inventory_conflict', `cannot release reservation for variant ${line.variantId}`)
-    }
-    const next = await tx.order.update({ where: { id: orderId }, data: { status: 'cancelled' }, include: { lines: true } })
-    await recordAudit({ actorId, action: 'order.cancelled', target: `order:${orderId}`, after: { status: 'cancelled' } }, tx)
-    if (opts.inTransaction) await opts.inTransaction(tx)
-    return next
-  })
-  await enqueueInventoryPushesAfterCommit(updated.lines.map((l: { variantId: string }) => l.variantId), `order.cancelled order:${orderId}`)
+  const updated = await prisma.$transaction((tx) => cancelOrderTx(tx, orderId, actorId, opts))
+  await enqueueInventoryPushesAfterCommit(updated.lines.map((l) => l.variantId), `order.cancelled order:${orderId}`)
   return toDto(updated)
+}
+
+/**
+ * A Stripe refund (charge.refunded, spec §5). Partial: amount only. Full:
+ * status `refunded`. A `paid` order (not yet shipped) also releases its
+ * reservation; `fulfilled` and `cancelled` have no hold left to release.
+ * Storefront only -- Walmart refunds go through returns.service.ts.
+ */
+export async function refundOrderTx(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+  input: { refundedCents: number; full: boolean },
+  actorId = 'system',
+): Promise<{ order: OrderWithLines; releasedVariantIds: string[] }> {
+  const order = await loadOrderForUpdate(tx, orderId)
+  if (order.channel !== 'storefront') {
+    throw new OrderError('invalid_transition', `refunds for ${order.channel} orders are not handled here`)
+  }
+  const target = `order:${orderId}`
+  const before = { status: order.status, refundedCents: order.refundedCents }
+
+  if (!input.full) {
+    const next = await tx.order.update({ where: { id: orderId }, data: { refundedCents: input.refundedCents }, include: { lines: true } })
+    await recordAudit({ actorId, action: 'order.refund_partial', target, before, after: { status: next.status, refundedCents: next.refundedCents } }, tx)
+    return { order: next, releasedVariantIds: [] }
+  }
+
+  if (order.status === 'pending') throw new OrderError('invalid_transition', 'cannot refund a pending order')
+
+  // Same release as cancel (Ruling P6). Storefront-only here, so the Walmart
+  // branch of the helper is never taken.
+  const releasedVariantIds = order.status === 'paid' ? await releaseReservation(tx, order) : []
+  const next = await tx.order.update({
+    where: { id: orderId }, data: { status: 'refunded', refundedCents: input.refundedCents }, include: { lines: true },
+  })
+  await recordAudit({ actorId, action: 'order.refunded', target, before, after: { status: 'refunded', refundedCents: input.refundedCents } }, tx)
+  return { order: next, releasedVariantIds }
 }
