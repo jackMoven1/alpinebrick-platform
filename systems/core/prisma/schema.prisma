@@ -54,6 +54,18 @@ enum OrderChannel {
   walmart
 }
 
+enum OrderReviewReason {
+  amount_mismatch
+  paid_after_cancel
+  outside_shipping_area
+  disputed
+}
+
+enum AffiliatePartnerStatus {
+  active
+  inactive
+}
+
 enum ChannelListingStatus {
   draft
   submitted
@@ -183,6 +195,12 @@ model Variant {
   inventory  Inventory?
   orderLines OrderLine[]
   channelListing ChannelListing?
+  // Optional shipping physicals (spec 2026-09-27 §3). Unused until a
+  // carrier-rate adapter exists; the flat-rate adapter ignores them.
+  weightGrams Int? @map("weight_grams")
+  lengthMm    Int? @map("length_mm")
+  widthMm     Int? @map("width_mm")
+  heightMm    Int? @map("height_mm")
   @@index([productId])
   @@map("variants")
 }
@@ -285,6 +303,36 @@ model Order {
   createdAt       DateTime    @default(now()) @map("created_at")
   updatedAt       DateTime    @updatedAt @map("updated_at")
   lines           OrderLine[]
+  // --- Storefront checkout (spec 2026-09-27 §3) ---------------------------
+  customerId              String?            @map("customer_id")
+  customer                Customer?          @relation(fields: [customerId], references: [id])
+  // Nullable: a pending checkout order has no address until Stripe's webhook
+  // writes it, and Walmart orders never carry one here.
+  shipName                String?            @map("ship_name")
+  shipLine1               String?            @map("ship_line1")
+  shipLine2               String?            @map("ship_line2")
+  shipCity                String?            @map("ship_city")
+  shipPostalCode          String?            @map("ship_postal_code")
+  shippingCents           Int                @default(0) @map("shipping_cents")
+  stripeCheckoutSessionId String?            @unique @map("stripe_checkout_session_id")
+  stripePaymentIntentId   String?            @unique @map("stripe_payment_intent_id")
+  paidAt                  DateTime?          @map("paid_at")
+  shippedAt               DateTime?          @map("shipped_at")
+  carrier                 String?
+  trackingNumber          String?            @map("tracking_number")
+  refundedCents           Int                @default(0) @map("refunded_cents")
+  reviewReason            OrderReviewReason? @map("review_reason")
+  // The checkbox as submitted; applied to the Customer only at payment.
+  marketingOptIn          Boolean            @default(false) @map("marketing_opt_in")
+  referralCode            String?            @map("referral_code")
+  referralFirstSeenAt     DateTime?          @map("referral_first_seen_at")
+  affiliatePartnerId      String?            @map("affiliate_partner_id")
+  affiliatePartner        AffiliatePartner?  @relation(fields: [affiliatePartnerId], references: [id])
+  commissionRateBps       Int?               @map("commission_rate_bps")
+  referralUnmatched       Boolean            @default(false) @map("referral_unmatched")
+  @@index([status, createdAt])
+  @@index([reviewReason])
+  @@index([customerId])
   @@map("orders")
 }
 
@@ -467,4 +515,60 @@ model OrderLine {
   @@index([orderId])
   @@index([variantId])
   @@map("order_lines")
+}
+
+model Customer {
+  id                     String    @id @default(cuid())
+  // Stored trimmed and lowercased (customers.service.ts normalises).
+  email                  String    @unique
+  name                   String?
+  // Only ever goes false -> true from checkout; an order placed without the
+  // box ticked never revokes an earlier opt-in (spec §3).
+  marketingConsent       Boolean   @default(false) @map("marketing_consent")
+  marketingConsentAt     DateTime? @map("marketing_consent_at")
+  marketingConsentSource String?   @map("marketing_consent_source")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  lastOrderAt            DateTime? @map("last_order_at")
+  orders                 Order[]
+  @@map("customers")
+}
+
+model AffiliatePartner {
+  id        String                 @id @default(cuid())
+  name      String
+  status    AffiliatePartnerStatus @default(active)
+  createdAt DateTime               @default(now()) @map("created_at")
+  codes     ReferralCode[]
+  orders    Order[]
+  @@map("affiliate_partners")
+}
+
+model ReferralCode {
+  // Lowercased, ^[a-z0-9-]{2,32}$ -- enforced by a CHECK in the migration.
+  code              String           @id
+  partnerId         String           @map("partner_id")
+  partner           AffiliatePartner @relation(fields: [partnerId], references: [id])
+  commissionRateBps Int              @map("commission_rate_bps")
+  active            Boolean          @default(true)
+  @@index([partnerId])
+  @@map("referral_codes")
+}
+
+// One row per Stripe event we have applied. Inserted in the SAME transaction
+// as the event's effects: a unique violation means "already processed".
+model StripeEvent {
+  id          String   @id
+  type        String
+  processedAt DateTime @default(now()) @map("processed_at")
+  @@map("stripe_events")
+}
+
+// Key/value shop configuration. Every current setting is an integer (cents or
+// minutes), so the value column is an INTEGER; NULL is meaningful
+// (shipping.free_threshold_cents NULL = no free shipping).
+model ShopSetting {
+  key       String   @id
+  value     Int?
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  @@map("shop_settings")
 }
