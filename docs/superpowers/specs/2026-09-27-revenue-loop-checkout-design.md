@@ -13,6 +13,19 @@ spec wins: no customer accounts, Stripe Tax instead of a nexus rate table,
 Embedded Checkout instead of a redirect, and stock is decremented at shipment
 (the existing order lifecycle) rather than at payment.
 
+> **Amended by the plan (2026-09-27), after checking current Stripe docs.**
+> Where this spec and `docs/superpowers/plans/2026-09-27-revenue-loop-checkout.md`
+> disagree on Stripe API details, the plan's verified table wins:
+> `ui_mode: 'embedded_page'` (not `'embedded'`, which fails on API version
+> `2026-08-26.dahlia`); `allowed_payment_method_types: ['card']`; the address
+> is `collected_information.shipping_details`; the amount check is
+> `subtotal + total_details.amount_shipping + total_details.amount_tax −
+> amount_discount` (§5's formula double-counts shipping tax); the session
+> lifetime is the setting + 1 min (30 min is Stripe's minimum). §9.1 is
+> resolved: Stripe cannot restrict an embedded page to states, so the webhook
+> backstop in §4 is the mechanism. New env key `STOREFRONT_PUBLIC_URL` is the
+> base of `return_url`.
+
 ## 1. Decisions (Jack, 2026-09-27)
 
 | # | Decision |
