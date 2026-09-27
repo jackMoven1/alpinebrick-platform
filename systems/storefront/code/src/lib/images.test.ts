@@ -14,7 +14,12 @@ describe('imageUrl', () => {
 
   it('adds width and format together, in that order', () => {
     expect(imageUrl(KEY, { width: 800, format: 'webp' }))
-      .toBe('/products/p1/i1/original.jpg?w=800&fmt=webp')
+      .toBe('/products/p1/i1/original.jpg?w=800&fm=webp')
+  })
+
+  it('maps formats to imgix parameters', () => {
+    expect(imageUrl(KEY, { format: 'auto' })).toBe('/products/p1/i1/original.jpg?auto=format')
+    expect(imageUrl(KEY, { width: 600, format: 'jpeg' })).toBe('/products/p1/i1/original.jpg?w=600&fm=jpg')
   })
 
   it('rejects a non-positive width rather than emitting a nonsense URL', () => {

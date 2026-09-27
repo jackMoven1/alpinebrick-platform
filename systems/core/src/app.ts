@@ -2,7 +2,7 @@ import express, { type Express } from 'express'
 import { catalogRouter } from './catalog/catalog.routes.js'
 import { ordersRouter } from './orders/orders.routes.js'
 import { createAssetsRouter } from './assets/assets.routes.js'
-import { createLocalStoragePort } from './ports/storage/local.adapter.js'
+import { createStoragePort } from './ports/storage/index.js'
 import { adminCatalogRouter } from './admin/admin-catalog.routes.js'
 import { requireAuth } from './auth/require-auth.js'
 import { requireOrigin, allowedOrigins, allowedStorefrontOrigins } from './auth/require-origin.js'
@@ -53,12 +53,7 @@ export function buildApp(): Express {
   app.use('/api/v1/auth', requireOrigin)
   app.use('/api/v1/auth', createAuthRouter(createGoogleOidcPort()))
 
-  // Local filesystem storage until a CDN provider is chosen (ADR-0002).
-  // Swapping the adapter is the only change required here.
-  const storagePort = createLocalStoragePort(
-    process.env.ASSET_STORAGE_DIR ?? './var/assets',
-    process.env.ASSET_PUBLIC_BASE_URL ?? 'http://localhost:4000/assets',
-  )
+  const storagePort = createStoragePort()
   // MUST come before both admin routers. Express matches in registration
   // order, and /api/v1/admin/images is registered first -- attaching auth to
   // the catalog router alone would leave image reorder and delete open while

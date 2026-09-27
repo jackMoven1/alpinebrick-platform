@@ -50,7 +50,7 @@ async function makeProduct() {
 async function readyImage(productId: string) {
   const t = await request(app)
     .post('/api/v1/admin/images/upload-token')
-    .send({ productId, contentType: 'image/jpeg', byteSize: 100 })
+    .send({ productId, contentType: 'image/jpeg', byteSize: OBJ.byteSize })
   uploaded[t.body.storageKey] = OBJ
   await request(app).post(`/api/v1/admin/images/${t.body.imageId}/confirm`).send({})
   return t.body as { imageId: string; storageKey: string }

@@ -10,9 +10,10 @@ export const CARD_WIDTHS = [400, 600, 900] as const
 export const DETAIL_WIDTHS = [600, 900, 1400, 2000] as const
 
 /**
- * Empty by default: with no CDN chosen, keys resolve against the storefront's
- * own origin, which is where the placeholder art in public/ is served from.
- * Set VITE_ASSET_BASE_URL to the CDN origin once one exists.
+ * VITE_ASSET_BASE_URL is the imgix domain for each environment (ADR-0002),
+ * set per static site at build time. It is empty in local dev, where keys
+ * resolve against the storefront's own origin -- which is where the
+ * placeholder art in public/ is served from.
  *
  * Storage keys are relative and never start with a slash, so joining is always
  * `${BASE}/${key}` and never produces a doubled separator.
@@ -27,9 +28,18 @@ const BASE = (import.meta.env.VITE_ASSET_BASE_URL ?? '').replace(/\/+$/, '')
  * item feed, this copy serves srcset, and the two packages cannot import each
  * other. resolver-parity.test.ts fails if the grammars drift.
  *
- * Changing CDN provider means changing this grammar in both places and one
- * environment variable. No database rows change.
+ * The grammar is imgix's (ADR-0002, decided 2026-09-25). Changing provider
+ * means changing it here, in the other copy, and the base-URL environment
+ * variable. No database rows change.
  */
+
+/** imgix parameter for each supported format (spec 2026-09-25 §4.3). */
+const FORMAT_PARAM: Record<ImageFormat, [string, string]> = {
+  auto: ['auto', 'format'],
+  webp: ['fm', 'webp'],
+  jpeg: ['fm', 'jpg'],
+}
+
 export function imageUrl(storageKey: string, opts: ImageUrlOptions = {}): string {
   const params = new URLSearchParams()
 
@@ -39,7 +49,10 @@ export function imageUrl(storageKey: string, opts: ImageUrlOptions = {}): string
     }
     params.set('w', String(opts.width))
   }
-  if (opts.format) params.set('fmt', opts.format)
+  if (opts.format) {
+    const [name, value] = FORMAT_PARAM[opts.format]
+    params.set(name, value)
+  }
 
   const qs = params.toString()
   return `${BASE}/${storageKey}${qs ? `?${qs}` : ''}`

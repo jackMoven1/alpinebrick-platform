@@ -21,7 +21,9 @@ describe('resolver parity with core', () => {
 
   it('core uses the same query parameter names', () => {
     expect(coreSource).toContain(`params.set('w', String(opts.width))`)
-    expect(coreSource).toContain(`params.set('fmt', opts.format)`)
+    expect(coreSource).toContain(`auto: ['auto', 'format']`)
+    expect(coreSource).toContain(`webp: ['fm', 'webp']`)
+    expect(coreSource).toContain(`jpeg: ['fm', 'jpg']`)
   })
 
   it('core strips trailing slashes from the base as this copy does', () => {
@@ -38,6 +40,6 @@ describe('resolver parity with core', () => {
 
   it('this copy produces the documented shape', () => {
     expect(imageUrl('products/p/i/original.jpg', { width: 800, format: 'webp' }))
-      .toContain('?w=800&fmt=webp')
+      .toContain('?w=800&fm=webp')
   })
 })

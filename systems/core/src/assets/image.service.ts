@@ -1,6 +1,7 @@
 import { prisma } from '../prisma.js'
 import type { AssetStoragePort } from '../ports/storage/storage.port.js'
 import { recordAudit } from '../audit.js'
+import { scrubError } from '../auth/scrub.js'
 
 export class ImageError extends Error {
   constructor(public code: string, message: string) {
@@ -18,11 +19,12 @@ export interface ImageDto {
   height: number
 }
 
+// SVG is not accepted: an SVG served publicly can carry script, and product
+// photos never need it (spec 2026-09-25 §4.2).
 const EXT_BY_CONTENT_TYPE: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
   'image/webp': 'webp',
-  'image/svg+xml': 'svg',
 }
 
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024
@@ -67,6 +69,9 @@ export async function requestUpload(
   const product = await prisma.product.findUnique({ where: { id: input.productId } })
   if (!product) throw new ImageError('product_not_found', 'product not found')
 
+  // No scheduler in core: abandoned uploads are cleared on real activity (spec §4.4).
+  await sweepPendingImages(port, new Date(Date.now() - PENDING_TTL_MS), input.productId)
+
   // Row creation and the audit write are both pure database work, so they run
   // in one transaction. The external port.createUploadTarget call below is
   // storage I/O and deliberately sits OUTSIDE it -- a transaction spanning a
@@ -75,6 +80,13 @@ export async function requestUpload(
   // filesystem. The audit is atomic with the database change, not with the
   // I/O that follows it.
   const { created, storageKey } = await prisma.$transaction(async (tx) => {
+    // Lock the product row first so concurrent uploads to one product
+    // serialise here. Without it, two requests read the same last position
+    // before either commits and the loser dies on the position constraint
+    // (P2002, reproduced in the final review). Under READ COMMITTED the read
+    // below is a fresh statement, so once the lock is granted it sees the
+    // row the previous holder committed.
+    await tx.$queryRaw`SELECT id FROM products WHERE id = ${input.productId} FOR UPDATE`
     const last = await tx.image.findFirst({
       where: { productId: input.productId },
       orderBy: { position: 'desc' },
@@ -122,6 +134,8 @@ export async function requestUpload(
 export async function confirmUpload(port: AssetStoragePort, imageId: string, actorId: string): Promise<ImageDto> {
   const row = await prisma.image.findUnique({ where: { id: imageId } })
   if (!row) throw new ImageError('image_not_found', 'image not found')
+  // A retried click after success must not re-verify or re-audit.
+  if (row.status === 'ready') return toDto(row)
 
   // Read the truth from storage. A client-supplied width that disagrees with
   // the real image reintroduces the layout shift width/height exist to prevent.
@@ -130,6 +144,38 @@ export async function confirmUpload(port: AssetStoragePort, imageId: string, act
   // that follow are pure database work, so only those two are transactional.
   const stat = await port.stat(row.storageKey)
   if (!stat) throw new ImageError('object_missing', 'no object was uploaded for this image')
+
+  // The signed URL let the browser put ANY bytes at this key. Verify them.
+  const rejection =
+    stat.byteSize > MAX_UPLOAD_BYTES ? { code: 'upload_too_large', message: `file exceeds ${MAX_UPLOAD_BYTES} bytes` }
+    : stat.byteSize !== row.byteSize || stat.contentType !== row.contentType
+      ? { code: 'upload_mismatch', message: 'the uploaded file does not match what was declared; please upload it again' }
+    : stat.width === 0 || stat.height === 0 ? { code: 'not_an_image', message: 'the uploaded file is not a readable JPEG, PNG or WebP image' }
+    : null
+
+  if (rejection) {
+    // Storage I/O outside the transaction, same reasoning as above. If the
+    // delete throws, the row still must not survive the rejection, so we log
+    // and continue into the transaction rather than letting the row linger.
+    try {
+      await port.delete(row.storageKey)
+    } catch (err) {
+      console.error('[image] failed to delete rejected object', row.storageKey, scrubError(err))
+    }
+    await prisma.$transaction(async (tx) => {
+      // deleteMany, not delete: a sweep (or a second confirm) racing this one
+      // can already have removed the pending row. The rejection is still
+      // correct either way -- there is no ready row to protect -- so this must
+      // not surface a Prisma P2025 in place of the ImageError below.
+      await tx.image.deleteMany({ where: { id: imageId, status: 'pending' } })
+      await recordAudit({
+        actorId, action: 'image.upload.reject', target: `image:${imageId}`,
+        before: { status: row.status, byteSize: row.byteSize, contentType: row.contentType },
+        after: { code: rejection.code, byteSize: stat.byteSize, contentType: stat.contentType, width: stat.width, height: stat.height },
+      }, tx)
+    })
+    throw new ImageError(rejection.code, rejection.message)
+  }
 
   const updated = await prisma.$transaction(async (tx) => {
     const updated = await tx.image.update({
@@ -189,9 +235,16 @@ export async function listReadyImages(productId: string): Promise<ImageDto[]> {
 }
 
 export async function reorderImages(productId: string, orderedIds: string[], actorId: string): Promise<void> {
-  const rows = await prisma.image.findMany({ where: { productId }, orderBy: { position: 'asc' } })
+  // Validate against READY rows only: the admin can only see and order ready
+  // images, so a pending row (an upload in flight, or an abandoned one not yet
+  // swept) must neither be required in nor accepted into the ordering.
+  const rows = await prisma.image.findMany({ where: { productId, status: 'ready' }, orderBy: { position: 'asc' } })
   const known = new Set(rows.map(r => r.id))
-  if (orderedIds.length !== rows.length || orderedIds.some(id => !known.has(id))) {
+  if (
+    orderedIds.length !== rows.length
+    || new Set(orderedIds).size !== orderedIds.length
+    || orderedIds.some(id => !known.has(id))
+  ) {
     throw new ImageError('invalid_order', 'ordering must list every image of the product exactly once')
   }
   // One transaction: the position constraint is DEFERRABLE INITIALLY DEFERRED,
@@ -201,6 +254,16 @@ export async function reorderImages(productId: string, orderedIds: string[], act
   await prisma.$transaction(async (tx) => {
     for (const [position, id] of orderedIds.entries()) {
       await tx.image.update({ where: { id }, data: { position } })
+    }
+    // Ready rows now hold 0..n-1, which a pending row may already occupy.
+    // Renumber the pending rows n.. in their existing relative order so the
+    // committed state cannot collide.
+    const pending = await tx.image.findMany({
+      where: { productId, status: 'pending' },
+      orderBy: { position: 'asc' },
+    })
+    for (const [i, r] of pending.entries()) {
+      await tx.image.update({ where: { id: r.id }, data: { position: orderedIds.length + i } })
     }
     await recordAudit({
       actorId,
@@ -241,13 +304,34 @@ export async function deleteImage(port: AssetStoragePort, imageId: string, actor
   await port.delete(row.storageKey)
 }
 
-export async function sweepPendingImages(port: AssetStoragePort, olderThan: Date): Promise<number> {
+export const PENDING_TTL_MS = 24 * 3600 * 1000
+
+/**
+ * Deletes pending image rows older than `olderThan`, optionally scoped to one
+ * product. There is no scheduler in core, so this runs inline at the top of
+ * `requestUpload` instead (spec §4.4) -- abandoned uploads are cleared on the
+ * next real activity for that product, not on a timer.
+ */
+export async function sweepPendingImages(port: AssetStoragePort, olderThan: Date, productId?: string): Promise<number> {
   const stale = await prisma.image.findMany({
-    where: { status: 'pending', createdAt: { lt: olderThan } },
+    where: { status: 'pending', createdAt: { lt: olderThan }, ...(productId ? { productId } : {}) },
   })
+  let swept = 0
   for (const row of stale) {
-    await prisma.image.delete({ where: { id: row.id } })
-    await port.delete(row.storageKey)
+    // Row first, so a failed object delete leaves an orphaned object (harmless,
+    // unreferenced) rather than a row pointing at nothing.
+    // deleteMany guarded on status: concurrent requestUpload calls on one
+    // product all sweep the same stale row. Only the call whose delete removed
+    // it (count === 1) owns the object delete; the others -- and a row that was
+    // confirmed in the meantime -- are skipped rather than raising P2025.
+    const { count } = await prisma.image.deleteMany({ where: { id: row.id, status: 'pending' } })
+    if (count !== 1) continue
+    swept++
+    try {
+      await port.delete(row.storageKey)
+    } catch (e) {
+      console.error(`images: sweep could not delete object ${row.storageKey}:`, scrubError(e))
+    }
   }
-  return stale.length
+  return swept
 }

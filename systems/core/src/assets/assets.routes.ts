@@ -15,6 +15,9 @@ const STATUS_BY_CODE: Record<string, number> = {
   file_too_large: 413,
   invalid_byte_size: 400,
   invalid_order: 400,
+  upload_too_large: 413,
+  upload_mismatch: 409,
+  not_an_image: 422,
 }
 
 function fail(res: Response, err: unknown) {

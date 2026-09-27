@@ -4,8 +4,8 @@
 // Skipped unless CAPTURE_ADMIN_FIXTURES=1. Re-run whenever a response shape changes.
 import { describe, it, beforeAll, afterAll } from 'vitest'
 import request from 'supertest'
-import { writeFileSync, mkdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildApp } from '../src/app.js'
 import { prisma } from '../src/prisma.js'
@@ -17,9 +17,20 @@ const OUT = resolve(__dirname, '../../admin-ui/src/data/__fixtures__')
 const ORIGIN = 'https://admin-staging.alpinebrickexchange.com'
 const run = process.env.CAPTURE_ADMIN_FIXTURES === '1'
 
+// A 1x1 red PNG, base64. Same as storage-local-adapter.test.ts -- small enough
+// to inline, real enough for a header read.
+const PNG_1X1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+)
+
 describe.runIf(run)('capture admin fixtures', () => {
   const app = buildApp()
   let cookie = ''
+  // Paths this run writes under the local storage dir (outside OUT), so
+  // afterAll can remove them -- otherwise a re-run leaves stray asset files
+  // behind under systems/core/var.
+  const writtenAssetPaths: string[] = []
   beforeAll(async () => {
     await resetDb()
     process.env.ADMIN_CONSOLE_ORIGIN = ORIGIN
@@ -27,7 +38,10 @@ describe.runIf(run)('capture admin fixtures', () => {
     cookie = `${SESSION_COOKIE}=${(await createSession(a.id)).token}`
     mkdirSync(OUT, { recursive: true })
   })
-  afterAll(() => prisma.$disconnect())
+  afterAll(async () => {
+    for (const p of writtenAssetPaths) rmSync(p, { force: true })
+    await prisma.$disconnect()
+  })
 
   const send = (m: 'post' | 'patch' | 'put' | 'get', path: string, body?: Record<string, unknown>) => {
     const r = request(app)[m](`/api/v1/admin${path}`).set('Cookie', cookie).set('Origin', ORIGIN)
@@ -44,5 +58,20 @@ describe.runIf(run)('capture admin fixtures', () => {
     save('stock-changed', (await send('put', `/variants/${v.id}/stock`, { onHand: 5, expectedOnHand: 99 })).body)
     save('stock-history', (await send('get', `/variants/${v.id}/stock-history`)).body)
     save('bulk-status', (await send('post', '/products/bulk-status', { ids: [p.id, 'missing-id'], status: 'published' })).body)
+
+    const tok = (await send('post', '/images/upload-token', { productId: p.id, contentType: 'image/png', byteSize: PNG_1X1.length })).body
+    save('image-upload-token', tok)
+    const dir = process.env.ASSET_STORAGE_DIR ?? './var/assets'
+    const tokPath = resolve(dir, tok.storageKey)
+    mkdirSync(dirname(tokPath), { recursive: true })
+    writeFileSync(tokPath, PNG_1X1)
+    writtenAssetPaths.push(tokPath)
+    save('image-confirmed', (await send('post', `/images/${tok.imageId}/confirm`, {})).body)
+    const bad = (await send('post', '/images/upload-token', { productId: p.id, contentType: 'image/png', byteSize: 999 })).body
+    const badPath = resolve(dir, bad.storageKey)
+    mkdirSync(dirname(badPath), { recursive: true })
+    writeFileSync(badPath, PNG_1X1)
+    writtenAssetPaths.push(badPath)
+    save('image-rejected', (await send('post', `/images/${bad.imageId}/confirm`, {})).body)
   })
 })

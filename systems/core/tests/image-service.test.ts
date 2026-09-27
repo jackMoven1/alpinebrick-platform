@@ -106,6 +106,39 @@ describe('requestUpload', () => {
   })
 })
 
+// Final review item 1: the reviewer reproduced [P2002, ok, P2002] from three
+// concurrent requestUpload calls on one product -- each read the same last
+// position before any of them committed.
+describe('requestUpload under concurrency', () => {
+  it('serialises concurrent uploads to one product: all succeed with distinct positions', async () => {
+    const p = await makeProduct()
+    const port = fakePort()
+    const results = await Promise.allSettled([0, 1, 2].map(() =>
+      requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)))
+    expect(results.map(r => r.status === 'fulfilled' ? 'ok' : String((r as any).reason?.code ?? (r as any).reason))).toEqual(['ok', 'ok', 'ok'])
+    const rows = await prisma.image.findMany({ where: { productId: p.id }, orderBy: { position: 'asc' } })
+    expect(rows.map(r => r.position)).toEqual([0, 1, 2])
+  })
+
+  it('concurrent uploads that all sweep the same stale row still succeed, deleting its object once', async () => {
+    const p = await makeProduct()
+    const stale = await requestUpload(fakePort(), { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    await prisma.image.update({ where: { id: stale.imageId }, data: { createdAt: new Date(Date.now() - 48 * 3600 * 1000) } })
+
+    const port = fakePort()
+    const results = await Promise.allSettled([0, 1, 2].map(() =>
+      requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)))
+    expect(results.map(r => r.status === 'fulfilled' ? 'ok' : String((r as any).reason?.code ?? (r as any).reason))).toEqual(['ok', 'ok', 'ok'])
+
+    expect(await prisma.image.findUnique({ where: { id: stale.imageId } })).toBeNull()
+    const staleDeletes = (port.delete as any).mock.calls.filter((c: unknown[]) => c[0] === stale.storageKey)
+    expect(staleDeletes).toHaveLength(1)
+    const rows = await prisma.image.findMany({ where: { productId: p.id } })
+    expect(rows).toHaveLength(3)
+    expect(new Set(rows.map(r => r.position)).size).toBe(3)
+  })
+})
+
 describe('confirmUpload', () => {
   it('reads dimensions FROM STORAGE and marks the row ready', async () => {
     const p = await makeProduct()
@@ -154,13 +187,38 @@ describe('confirmUpload', () => {
   it('rejects an unknown image id', async () => {
     await expect(confirmUpload(fakePort(), 'nope', actorId)).rejects.toThrow(ImageError)
   })
+
+  // R3.1: a sweep (or a second confirm) racing this one can delete the pending
+  // row between the stat() call and the rejection transaction. The delete must
+  // tolerate that (deleteMany, not delete) so the caller still sees the
+  // ImageError rejection instead of a Prisma P2025.
+  it('still rejects with the ImageError code when the pending row is deleted out from under it', async () => {
+    const p = await makeProduct()
+    const port = fakePort()
+    const r = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
+
+    const racyPort: AssetStoragePort = {
+      createUploadTarget: vi.fn(async (key: string) => ({
+        uploadUrl: `https://upload.test/${key}`,
+        expiresAt: new Date(Date.now() + 60_000),
+      })),
+      stat: vi.fn(async () => {
+        // Simulate a concurrent sweep deleting the row right after stat() reads storage.
+        await prisma.image.delete({ where: { id: r.imageId } })
+        return { width: 1, height: 1, byteSize: 999_999_999, contentType: 'image/jpeg' }
+      }),
+      delete: vi.fn(async () => {}),
+    }
+
+    await expect(confirmUpload(racyPort, r.imageId, actorId)).rejects.toMatchObject({ code: 'upload_too_large' })
+  })
 })
 
 describe('updateImageAlt', () => {
   it('updates the alt text and audits before/after', async () => {
     const p = await makeProduct()
     const port = fakePort()
-    const r = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const r = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
     await confirmUpload(fakePort({ [r.storageKey]: OBJ }), r.imageId, actorId)
 
     const dto = await updateImageAlt(r.imageId, 'Front three-quarter view', actorId)
@@ -184,8 +242,8 @@ describe('listReadyImages', () => {
   it('returns ready images in position order and excludes pending ones', async () => {
     const p = await makeProduct()
     const port = fakePort()
-    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
-    const b = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
+    const b = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
     await confirmUpload(fakePort({ [a.storageKey]: OBJ }), a.imageId, actorId)
     await confirmUpload(fakePort({ [b.storageKey]: OBJ }), b.imageId, actorId)
     await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId) // left pending
@@ -199,8 +257,8 @@ describe('reorderImages', () => {
   it('swaps two images', async () => {
     const p = await makeProduct()
     const port = fakePort()
-    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
-    const b = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
+    const b = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
     await confirmUpload(fakePort({ [a.storageKey]: OBJ }), a.imageId, actorId)
     await confirmUpload(fakePort({ [b.storageKey]: OBJ }), b.imageId, actorId)
 
@@ -215,10 +273,41 @@ describe('reorderImages', () => {
     expect(rows[0].target).toBe(`product:${p.id}`)
   })
 
+  // Final review item 2: a pending row (an upload in flight, or abandoned and
+  // not yet swept) must not block reordering the images the admin can see.
+  it('reorders the ready images while a pending row exists, keeping the pending row after them', async () => {
+    const p = await makeProduct()
+    const port = fakePort()
+    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
+    const c = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId) // left pending
+    const b = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
+    await confirmUpload(fakePort({ [a.storageKey]: OBJ }), a.imageId, actorId)
+    await confirmUpload(fakePort({ [b.storageKey]: OBJ }), b.imageId, actorId)
+
+    await reorderImages(p.id, [b.imageId, a.imageId], actorId)
+
+    const list = await listReadyImages(p.id)
+    expect(list.map(i => [i.id, i.position])).toEqual([[b.imageId, 0], [a.imageId, 1]])
+    const pending = await prisma.image.findUniqueOrThrow({ where: { id: c.imageId } })
+    expect(pending.status).toBe('pending')
+    expect(pending.position).toBe(2)
+  })
+
+  it('still rejects an ordering that includes a pending image', async () => {
+    const p = await makeProduct()
+    const port = fakePort()
+    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
+    const c = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId) // left pending
+    await confirmUpload(fakePort({ [a.storageKey]: OBJ }), a.imageId, actorId)
+
+    await expect(reorderImages(p.id, [a.imageId, c.imageId], actorId)).rejects.toMatchObject({ code: 'invalid_order' })
+    await expect(reorderImages(p.id, [c.imageId], actorId)).rejects.toMatchObject({ code: 'invalid_order' })
+  })
+
   it('rejects an ordering that omits an image', async () => {
     const p = await makeProduct()
     const port = fakePort()
-    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
     await confirmUpload(fakePort({ [a.storageKey]: OBJ }), a.imageId, actorId)
     await expect(reorderImages(p.id, [], actorId)).rejects.toThrow(ImageError)
   })
@@ -228,8 +317,8 @@ describe('deleteImage', () => {
   it('removes the row, deletes the object, and closes the position gap', async () => {
     const p = await makeProduct()
     const port = fakePort()
-    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
-    const b = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const a = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
+    const b = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
     await confirmUpload(fakePort({ [a.storageKey]: OBJ }), a.imageId, actorId)
     await confirmUpload(fakePort({ [b.storageKey]: OBJ }), b.imageId, actorId)
 
@@ -253,7 +342,7 @@ describe('sweepPendingImages', () => {
     const p = await makeProduct()
     const port = fakePort()
     const stale = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
-    const good = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const good = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 5000 }, actorId)
     await confirmUpload(fakePort({ [good.storageKey]: OBJ }), good.imageId, actorId)
 
     // Age the pending row behind the service's back.
@@ -266,5 +355,41 @@ describe('sweepPendingImages', () => {
     expect(removed).toBe(1)
     expect(await prisma.image.findUnique({ where: { id: stale.imageId } })).toBeNull()
     expect(await prisma.image.findUnique({ where: { id: good.imageId } })).not.toBeNull()
+  })
+
+  it('scopes the sweep to one product when asked', async () => {
+    const a = await makeProduct('a'); const b = await makeProduct('b')
+    const port = fakePort()
+    const ra = await requestUpload(port, { productId: a.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    const rb = await requestUpload(port, { productId: b.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    await prisma.image.updateMany({ data: { createdAt: new Date(Date.now() - 48 * 3600 * 1000) } })
+    expect(await sweepPendingImages(fakePort(), new Date(Date.now() - 24 * 3600 * 1000), a.id)).toBe(1)
+    expect(await prisma.image.findUnique({ where: { id: ra.imageId } })).toBeNull()
+    expect(await prisma.image.findUnique({ where: { id: rb.imageId } })).not.toBeNull()
+  })
+
+  it('keeps sweeping when one object delete fails', async () => {
+    const p = await makeProduct()
+    const port = fakePort()
+    await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    await prisma.image.updateMany({ data: { createdAt: new Date(Date.now() - 48 * 3600 * 1000) } })
+    const flaky = fakePort()
+    ;(flaky.delete as any).mockRejectedValueOnce(new Error('S3 down'))
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(await sweepPendingImages(flaky, new Date(Date.now() - 24 * 3600 * 1000), p.id)).toBe(2)
+    expect(await prisma.image.count({ where: { status: 'pending' } })).toBe(0)
+    expect(err).toHaveBeenCalled()
+    err.mockRestore()
+  })
+
+  it('requestUpload sweeps that product\'s stale pending uploads first', async () => {
+    const p = await makeProduct()
+    const port = fakePort()
+    const old = await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    await prisma.image.update({ where: { id: old.imageId }, data: { createdAt: new Date(Date.now() - 48 * 3600 * 1000) } })
+    await requestUpload(port, { productId: p.id, contentType: 'image/jpeg', byteSize: 1 }, actorId)
+    expect(await prisma.image.findUnique({ where: { id: old.imageId } })).toBeNull()
+    expect(port.delete).toHaveBeenCalledWith(old.storageKey)
   })
 })
