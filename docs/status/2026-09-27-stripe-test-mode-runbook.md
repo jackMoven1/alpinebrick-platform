@@ -53,6 +53,11 @@ of the three values saved together.
    half-configured" error. Redeploy the `storefront` (staging) so the
    publishable key is baked into the build.
 
+   **Two different deploy paths — don't confuse them:** saving env vars (as
+   above) makes Render redeploy automatically. Code changes reach staging
+   only when the `staging` branch is fast-forwarded to `main`, which is done
+   with Jack's OK. Merging to main alone does not deploy staging.
+
 ## 4. Payment methods and branding
 
 - Settings → Payment methods: **Cards** on; Apple Pay and Google Pay on (they
