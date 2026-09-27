@@ -94,6 +94,74 @@ describe('refundOrderTx', () => {
   })
 })
 
+// Fix round 1 (Ruling T4-R1): Stripe's amount_refunded is cumulative, but
+// charge.refunded events are distinct and can arrive out of order, so an
+// older, smaller figure must never lower the amount or downgrade the status.
+describe('refundOrderTx is monotonic and validated', () => {
+  const orderRow = (id: string) => prisma.order.findUniqueOrThrow({ where: { id } })
+  const audits = (id: string, action: string) => prisma.auditLog.count({ where: { action, target: `order:${id}` } })
+
+  it('an out-of-order partial after a full refund changes nothing', async () => {
+    const v = await vid('BBS-STD')
+    const o = await pending(v, 2)
+    await markOrderPaid(o.id)
+    await refund(o.id, 9998, true)
+    const { order, releasedVariantIds } = await refund(o.id, 1000, false)
+    expect(releasedVariantIds).toEqual([])
+    expect(order).toMatchObject({ status: 'refunded', refundedCents: 9998 })
+    expect(await orderRow(o.id)).toMatchObject({ status: 'refunded', refundedCents: 9998 })
+    expect(await audits(o.id, 'order.refund_partial')).toBe(0)
+    expect(await inv(v)).toMatchObject({ onHand: 25, reserved: 0 })
+  })
+
+  it('a lower partial after a higher one never lowers the amount', async () => {
+    const v = await vid('BBS-STD')
+    const o = await pending(v, 2)
+    await markOrderPaid(o.id)
+    await refund(o.id, 3000, false)
+    await refund(o.id, 1000, false)
+    expect(await orderRow(o.id)).toMatchObject({ status: 'paid', refundedCents: 3000 })
+    expect(await audits(o.id, 'order.refund_partial')).toBe(1)
+    expect((await inv(v)).reserved).toBe(2)
+  })
+
+  it('a full refund carrying a lower figure keeps the higher amount', async () => {
+    const v = await vid('BBS-STD')
+    const o = await pending(v, 2)
+    await markOrderPaid(o.id)
+    await refund(o.id, 9998, false)
+    await refund(o.id, 5000, true)
+    expect(await orderRow(o.id)).toMatchObject({ status: 'refunded', refundedCents: 9998 })
+  })
+
+  it.each([
+    ['non-integer', 10.5],
+    ['negative', -1],
+    ['greater than the order total', 9999],
+    ['NaN', Number.NaN],
+  ])('rejects a %s amount', async (_label, amount) => {
+    const v = await vid('BBS-STD')
+    const o = await pending(v, 2) // totalCents 9998
+    await markOrderPaid(o.id)
+    await expect(refund(o.id, amount, false)).rejects.toMatchObject({ code: 'invalid_refund' })
+    await expect(refund(o.id, amount, true)).rejects.toMatchObject({ code: 'invalid_refund' })
+    expect(await orderRow(o.id)).toMatchObject({ status: 'paid', refundedCents: 0 })
+    expect((await inv(v)).reserved).toBe(2)
+  })
+
+  it('a repeat full refund is a no-op: one audit row, stock released once', async () => {
+    const v = await vid('BBS-STD')
+    const o = await pending(v, 2)
+    await markOrderPaid(o.id)
+    await refund(o.id, 9998, true)
+    const again = await refund(o.id, 9998, true)
+    expect(again.releasedVariantIds).toEqual([])
+    expect(again.order).toMatchObject({ status: 'refunded', refundedCents: 9998 })
+    expect(await audits(o.id, 'order.refunded')).toBe(1)
+    expect(await inv(v)).toMatchObject({ onHand: 25, reserved: 0 })
+  })
+})
+
 /**
  * Deterministic lock tests (controller Ruling P3). Transaction A takes the
  * order row lock and holds it on a gate; a second transition is started

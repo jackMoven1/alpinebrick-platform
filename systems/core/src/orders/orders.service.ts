@@ -346,12 +346,27 @@ export async function refundOrderTx(
   if (order.channel !== 'storefront') {
     throw new OrderError('invalid_transition', `refunds for ${order.channel} orders are not handled here`)
   }
+  const amount = input.refundedCents
+  if (!Number.isInteger(amount) || amount < 0 || amount > order.totalCents) {
+    throw new OrderError('invalid_refund', `refund amount ${amount} is not an integer between 0 and ${order.totalCents}`, {
+      refundedCents: amount, totalCents: order.totalCents,
+    })
+  }
   const target = `order:${orderId}`
   const before = { status: order.status, refundedCents: order.refundedCents }
+  // Stripe's amount_refunded is cumulative, but distinct charge.refunded
+  // events can arrive out of order: an older, smaller figure must never lower
+  // the amount (and, below, never downgrade a `refunded` status).
+  const refundedCents = Math.max(order.refundedCents, amount)
+
+  // Already fully refunded: nothing a later event says can change that, and
+  // a repeat must not write a second audit row.
+  if (order.status === 'refunded') return { order, releasedVariantIds: [] }
 
   if (!input.full) {
-    const next = await tx.order.update({ where: { id: orderId }, data: { refundedCents: input.refundedCents }, include: { lines: true } })
-    await recordAudit({ actorId, action: 'order.refund_partial', target, before, after: { status: next.status, refundedCents: next.refundedCents } }, tx)
+    if (refundedCents === order.refundedCents) return { order, releasedVariantIds: [] }
+    const next = await tx.order.update({ where: { id: orderId }, data: { refundedCents }, include: { lines: true } })
+    await recordAudit({ actorId, action: 'order.refund_partial', target, before, after: { status: next.status, refundedCents } }, tx)
     return { order: next, releasedVariantIds: [] }
   }
 
@@ -361,8 +376,8 @@ export async function refundOrderTx(
   // branch of the helper is never taken.
   const releasedVariantIds = order.status === 'paid' ? await releaseReservation(tx, order) : []
   const next = await tx.order.update({
-    where: { id: orderId }, data: { status: 'refunded', refundedCents: input.refundedCents }, include: { lines: true },
+    where: { id: orderId }, data: { status: 'refunded', refundedCents }, include: { lines: true },
   })
-  await recordAudit({ actorId, action: 'order.refunded', target, before, after: { status: 'refunded', refundedCents: input.refundedCents } }, tx)
+  await recordAudit({ actorId, action: 'order.refunded', target, before, after: { status: 'refunded', refundedCents } }, tx)
   return { order: next, releasedVariantIds }
 }
