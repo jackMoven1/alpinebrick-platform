@@ -19,9 +19,15 @@ by Jack into Render; they never go into chat, the repo, or a ticket.
 4. Render → staging `core-env` group: set `STRIPE_SECRET_KEY` (the `sk_test_…`
    value), `STRIPE_WEBHOOK_SECRET` (the `whsec_…` value from step 3) and
    `STOREFRONT_PUBLIC_URL` = `https://staging.alpinebrickexchange.com`
-   **together, in one save**. Core refuses to start when any one of these
-   three is set without the other two — saving them separately means an
-   in-between deploy fails to boot, and Render redeploys on every save.
+   **together, in one save**. Render redeploys on every save, and the
+   in-between states are not all safe:
+   - Either Stripe key without the other, or both Stripe keys without
+     `STOREFRONT_PUBLIC_URL`: core **refuses to start** ("Stripe is
+     half-configured; missing: …").
+   - `STOREFRONT_PUBLIC_URL` on its own: core **boots fine, with Stripe
+     unconfigured** — checkout answers 503 `checkout_unavailable` and the
+     webhook answers 503 to every delivery. Nothing looks broken in the deploy log,
+     so don't mistake this for a finished setup.
 5. Render → staging `storefront` service: set `VITE_STRIPE_PUBLISHABLE_KEY` = the `pk_test_…` value.
 
 ## 2. Stripe Tax (test mode)
@@ -58,6 +64,19 @@ of the three values saved together.
    only when the `staging` branch is fast-forwarded to `main`, which is done
    with Jack's OK. Merging to main alone does not deploy staging.
 
+### After the first configured deploy: stale pending orders are cancelled
+
+The abandoned-checkout sweep only runs once Stripe is configured. Its first
+run is about **5 minutes after core boots** with the keys, and it cancels
+every pending storefront order older than the session lifetime + 10 minutes
+(40 minutes by default). Any pending storefront orders already sitting on
+staging from before this deploy (the retired public `POST /api/v1/orders`
+left some, with no Stripe session) are old enough on that first run, so they
+are all cancelled and their stock released in one go. **This is expected** —
+the deploy log shows `checkout sweep: cancelled N abandoned order(s)`. After
+that, a new abandoned checkout is cancelled roughly 40–45 minutes after it
+was started.
+
 ## 4. Payment methods and branding
 
 - Settings → Payment methods: **Cards** on; Apple Pay and Google Pay on (they
@@ -89,6 +108,36 @@ Card `4242 4242 4242 4242`, any future expiry, any CVC. Record each result in th
 | 8 | Visit `/?ref=nobody-here`, then buy | Order detail: referral "unmatched" |
 | 9 | Ship to an Alaska address | Paid, **Needs review** "outside_shipping_area"; refund it in Stripe |
 | 10 | Workbench → the endpoint → **Resend** a delivered `checkout.session.completed` | 200 `duplicate`; nothing changes |
+
+## 6a. Handling flagged orders
+
+**`paid_after_cancel`** (Needs review; the order shows **Closed** /
+`cancelled`). The customer paid after the sweep or an admin had already
+cancelled the order and released its stock. Stripe took the money, but the
+stock may already be sold to someone else.
+
+1. **Refund it in full in Stripe** (Payments → the payment → Refund). The
+   order detail's Stripe link goes straight there.
+2. **Never ship it.** The order is `cancelled`, holds no reservation, and
+   cannot be marked shipped — don't try to work around that.
+3. The refund's `charge.refunded` marks the order `refunded` with the amount.
+   Tell the customer why in your own words; Stripe's refund receipt goes out
+   automatically.
+
+**`disputed`** (Needs review; still **To ship** / `paid`). The customer
+opened a chargeback. Respond to the dispute in the Stripe dashboard first.
+
+- If you **won't ship** it — for example the dispute was lost, or you are
+  accepting it — use **Cancel** on the order and confirm the acknowledgement.
+  That releases its stock reservation. A lost dispute sends no
+  `charge.refunded`, so without this the stock stays held forever. (Only a
+  `disputed` paid order can be cancelled; every other paid order is refunded
+  in Stripe instead.)
+- If you **will ship** it, Mark shipped also requires the acknowledgement.
+
+Check #6 above extends to: with the dispute card, open the order, Cancel with
+acknowledgement, and confirm the order is **Closed** and its reserved stock
+has gone back.
 
 ## 7. Trust-proxy verification (carried from Task 6 review)
 
