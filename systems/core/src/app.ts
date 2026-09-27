@@ -1,6 +1,5 @@
-import express, { type Express } from 'express'
+import express, { type Express, type RequestHandler } from 'express'
 import { catalogRouter } from './catalog/catalog.routes.js'
-import { ordersRouter } from './orders/orders.routes.js'
 import { createAssetsRouter } from './assets/assets.routes.js'
 import { createStoragePort } from './ports/storage/index.js'
 import { adminCatalogRouter } from './admin/admin-catalog.routes.js'
@@ -12,9 +11,40 @@ import { createGoogleOidcPort } from './ports/oidc/google.adapter.js'
 import { createCors } from './auth/cors.js'
 import { walmartWebhookRouter } from './channels/walmart/webhooks.routes.js'
 import { errorHandler } from './error-handler.js'
+import { createPaymentsPort } from './ports/payments/index.js'
+import type { PaymentsPort } from './ports/payments/payments.port.js'
+import { createFlatRateShippingPort } from './ports/shipping/flat-rate.adapter.js'
+import type { ShippingPort } from './ports/shipping/shipping.port.js'
+import { noopEmailAdapter } from './ports/email/noop.adapter.js'
+import type { EmailPort } from './ports/email/email.port.js'
+import { createCheckoutRouter } from './checkout/checkout.routes.js'
+import { createRateLimiter } from './lib/rate-limit.js'
 
-export function buildApp(): Express {
+export interface AppDeps {
+  payments: PaymentsPort
+  shipping: ShippingPort
+  email: EmailPort
+  /** Base for Stripe's return_url; env STOREFRONT_PUBLIC_URL by default. */
+  storefrontUrl: string | null
+  checkoutRateLimit: RequestHandler
+}
+
+export function buildApp(deps: Partial<AppDeps> = {}): Express {
+  // createPaymentsPort throws on half-configured Stripe -- the process refuses
+  // to start rather than take money it can never mark paid (spec §8).
+  const payments = deps.payments ?? createPaymentsPort()
+  const shipping = deps.shipping ?? createFlatRateShippingPort()
+  // `email` is used by the Stripe webhook (Task 7).
+  const email = deps.email ?? noopEmailAdapter
+  const storefrontUrl = (deps.storefrontUrl !== undefined ? deps.storefrontUrl : (process.env.STOREFRONT_PUBLIC_URL ?? null))
+    ?.replace(/\/+$/, '') ?? null
+  const checkoutRateLimit = deps.checkoutRateLimit ?? createRateLimiter({ limit: 20, windowMs: 60_000 })
+
   const app = express()
+  // Render terminates TLS one proxy hop in front of the app. Without this,
+  // req.ip is the proxy's address and the checkout rate limit (and the
+  // session ip recorded at sign-in) would treat every customer as one.
+  app.set('trust proxy', 1)
   app.use(express.json())
   app.get('/health', (_req, res) => res.json({ status: 'ok' }))
 
@@ -24,12 +54,14 @@ export function buildApp(): Express {
   // only widens the surface for nothing.
   app.use('/api/v1/catalog', createCors({ origins: allowedStorefrontOrigins, credentials: false }))
   app.use('/api/v1/catalog', catalogRouter)
-  // Deliberately no CORS handler here -- nothing calls this endpoint
-  // cross-origin yet (the storefront has no checkout wired up). When
-  // checkout lands, this needs the same catalog-shaped treatment: a
-  // createCors({ origins: allowedStorefrontOrigins, credentials: false })
-  // mount ahead of it, since orders is public the same way catalog is.
-  app.use('/api/v1/orders', ordersRouter)
+
+  // Storefront checkout (spec §4). Public like catalog: storefront allowlist,
+  // credentials off. POST is rate-limited per IP inside the router so the
+  // endpoint cannot be used to hold stock. The old public POST/GET
+  // /api/v1/orders routes are retired (spec §2): POST reserved stock with no
+  // payment, GET exposed addresses to anyone holding an order id.
+  app.use('/api/v1/checkout', createCors({ origins: allowedStorefrontOrigins, credentials: false }))
+  app.use('/api/v1/checkout', createCheckoutRouter({ payments, shipping, storefrontUrl, rateLimit: checkoutRateLimit }))
 
   // Walmart calls this endpoint directly with no session cookie and no
   // Origin header -- its own x-webhook-secret header (checked inside the

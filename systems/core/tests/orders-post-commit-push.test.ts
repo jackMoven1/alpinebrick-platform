@@ -13,15 +13,11 @@ vi.mock('../src/channels/walmart/inventory.sync.js', async (importOriginal) => {
   return { ...actual, enqueueInventoryPush: vi.fn(actual.enqueueInventoryPush) }
 })
 
-import request from 'supertest'
 import { prisma } from '../src/prisma.js'
 import { resetDb } from './helpers/db.js'
 import { seed } from '../prisma/seed.js'
-import { buildApp } from '../src/app.js'
 import { placeOrder } from '../src/orders/orders.service.js'
 import { enqueueInventoryPush } from '../src/channels/walmart/inventory.sync.js'
-
-const app = buildApp()
 
 describe('post-commit inventory push failure never fails a committed order (B4)', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>
@@ -44,13 +40,5 @@ describe('post-commit inventory push failure never fails a committed order (B4)'
     expect(await prisma.order.count({ where: { id: order.id } })).toBe(1)
     expect(errorSpy).toHaveBeenCalled()
     expect(errorSpy.mock.calls.map((c) => c.map(String).join(' ')).join('\n')).toContain('inventory enqueue down')
-  })
-
-  it('POST /api/v1/orders returns 201, not 500, when the post-commit push enqueue throws', async () => {
-    const v = await prisma.variant.findFirstOrThrow({ where: { sku: 'BBS-STD' } })
-    const res = await request(app).post('/api/v1/orders')
-      .send({ email: 'b@example.com', shipToState: 'MI', lines: [{ variantId: v.id, quantity: 1 }] })
-    expect(res.status).toBe(201)
-    expect(await prisma.order.count()).toBe(1)
   })
 })
