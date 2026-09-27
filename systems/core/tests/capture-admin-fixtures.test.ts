@@ -9,8 +9,10 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildApp } from '../src/app.js'
 import { prisma } from '../src/prisma.js'
-import { resetDb } from './helpers/db.js'
+import { resetDb, ensureSystemActor } from './helpers/db.js'
 import { createSession, SESSION_COOKIE } from '../src/auth/session.service.js'
+import { placeOrder, markOrderPaidTx, PENDING_CHECKOUT_EMAIL } from '../src/orders/orders.service.js'
+import { deferredTaxAdapter } from '../src/ports/tax/deferred.adapter.js'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const OUT = resolve(__dirname, '../../admin-ui/src/data/__fixtures__')
@@ -73,5 +75,25 @@ describe.runIf(run)('capture admin fixtures', () => {
     writeFileSync(badPath, PNG_1X1)
     writtenAssetPaths.push(badPath)
     save('image-rejected', (await send('post', `/images/${bad.imageId}/confirm`, {})).body)
+  })
+
+  it('captures orders and shipping settings', async () => {
+    await ensureSystemActor()
+    const v = await prisma.variant.findFirstOrThrow({ where: { sku: 'ABE-1001' }, include: { product: true } })
+    await prisma.product.update({ where: { id: v.productId }, data: { status: 'published' } })
+    await prisma.inventory.update({ where: { variantId: v.id }, data: { onHand: 10, reserved: 0, walmartAllocation: null } })
+    const placed = await placeOrder({
+      email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId: v.id, quantity: 1 }],
+      marketingOptIn: true, referral: { code: 'club', firstSeenAt: new Date('2026-09-26T12:00:00Z') },
+    }, deferredTaxAdapter)
+    await prisma.$transaction((tx) => markOrderPaidTx(tx, placed.id, 'system', {
+      email: 'buyer@example.com', shipName: 'Ann Buyer', shipLine1: '1 Main St', shipCity: 'Traverse City',
+      shipToState: 'MI', shipPostalCode: '49684', shippingCents: 0, taxCents: 1134, totalCents: 20034,
+      taxJurisdiction: 'stripe_tax', taxRateBps: 600, stripePaymentIntentId: 'pi_test_fixture',
+      paidAt: new Date('2026-09-27T15:00:00Z'), referralUnmatched: true,
+    }))
+    save('order-queue', (await send('get', '/orders?tab=to_ship')).body)
+    save('order-detail', (await send('get', `/orders/${placed.id}`)).body)
+    save('shipping-settings', (await send('get', '/settings/shipping')).body)
   })
 })

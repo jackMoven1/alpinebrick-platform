@@ -188,3 +188,31 @@ WALMART_CLIENT_SECRET=
 WALMART_API_BASE=https://sandbox.walmartapis.com
 WALMART_WEBHOOK_SECRET=
 ```
+
+## Checkout and Stripe
+
+Spec: `docs/superpowers/specs/2026-09-27-revenue-loop-checkout-design.md`.
+
+- `POST /api/v1/checkout` (public, storefront CORS, 20/min per IP) reserves
+  stock via `placeOrder`, opens a Stripe Embedded Checkout session
+  (`ui_mode: 'embedded_page'`), and returns `{ orderId, clientSecret }`.
+- `POST /api/v1/webhooks/stripe` is mounted **before** `express.json` with a
+  raw-body parser; each event is applied once (`stripe_events`), in one
+  transaction with its effects. Handled: `checkout.session.completed`,
+  `checkout.session.expired`, `charge.refunded`, `charge.dispute.created`.
+- The abandoned-checkout sweep runs every 5 minutes **in the web process**
+  (`src/checkout/sweep.ts`), unlike the Walmart scheduler.
+- `stripe` is pinned to **22.6.2** (API `2026-08-26.dahlia`). Upgrading the SDK
+  changes the API version: update `STRIPE_API_VERSION`, the webhook endpoint's
+  version in the Stripe dashboard, and re-verify the field locations noted in
+  `src/payments/stripe-events.ts`.
+
+| Var | Purpose |
+|---|---|
+| `STRIPE_SECRET_KEY` | Secret, pasted by Jack. Test mode (`sk_test_…`) on staging. |
+| `STRIPE_WEBHOOK_SECRET` | Secret (`whsec_…`) of this environment's webhook endpoint. |
+| `STOREFRONT_PUBLIC_URL` | Base of Checkout's `return_url`. |
+
+None set: checkout answers 503 and the sweep does not start. One Stripe key
+set without the other, or both without `STOREFRONT_PUBLIC_URL`: core
+**refuses to start**, naming the missing keys.

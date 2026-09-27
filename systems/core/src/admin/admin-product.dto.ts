@@ -5,6 +5,7 @@ import { storefrontSellable, walmartSellable } from '../inventory/allocation.js'
 export interface AdminVariantDto {
   id: string; sku: string; priceCents: number; currency: string
   attributes: Record<string, string>
+  weightGrams: number | null; lengthMm: number | null; widthMm: number | null; heightMm: number | null
   inventory: { onHand: number; reserved: number; walmartAllocation: number | null; storefrontAvailable: number; walmartAvailable: number }
   locked: { sku: boolean; delete: boolean }
   /** The variant's Walmart listing, if any. The console warns when units are allocated to an unlisted variant. */
@@ -70,6 +71,7 @@ export async function loadAdminProduct(id: string): Promise<AdminProductDto | nu
         id: v.id, sku: v.sku, priceCents: v.priceCents, currency: v.currency,
         attributes: (v.attributes && typeof v.attributes === 'object' && !Array.isArray(v.attributes)
           ? v.attributes : {}) as Record<string, string>,
+        weightGrams: v.weightGrams, lengthMm: v.lengthMm, widthMm: v.widthMm, heightMm: v.heightMm,
         inventory: {
           onHand, reserved, walmartAllocation,
           storefrontAvailable: storefrontSellable(onHand, reserved, walmartAllocation),

@@ -18,7 +18,10 @@ export type ProductData = {
   ageRecommendation?: string | null; dimensions?: string | null
   homePosition?: number | null; collectionPosition?: number | null
 }
-export type VariantData = { sku?: string; priceCents?: number; attributes?: Record<string, string>; onHand?: number }
+export type VariantData = {
+  sku?: string; priceCents?: number; attributes?: Record<string, string>; onHand?: number
+  weightGrams?: number | null; lengthMm?: number | null; widthMm?: number | null; heightMm?: number | null
+}
 export type StockData = {
   onHand?: number; allocationProvided: boolean; walmartAllocation: number | null
   expectedOnHand?: number; note?: string
@@ -136,8 +139,10 @@ export function parseProductInput(body: unknown, mode: 'create' | 'patch'): Prod
   return out as ProductData
 }
 
-const VARIANT_CREATE_KEYS = ['sku', 'priceCents', 'currency', 'attributes', 'onHand']
-const VARIANT_PATCH_KEYS = ['sku', 'priceCents', 'currency', 'attributes']
+/** Optional shipping physicals (spec §3); null clears. Unused until a carrier adapter exists. */
+const PHYSICAL_KEYS = ['weightGrams', 'lengthMm', 'widthMm', 'heightMm'] as const
+const VARIANT_CREATE_KEYS = ['sku', 'priceCents', 'currency', 'attributes', 'onHand', ...PHYSICAL_KEYS]
+const VARIANT_PATCH_KEYS = ['sku', 'priceCents', 'currency', 'attributes', ...PHYSICAL_KEYS]
 
 export function parseVariantInput(body: unknown, mode: 'create' | 'patch', prefix = ''): VariantData {
   const b = asObject(body)
@@ -174,6 +179,14 @@ export function parseVariantInput(body: unknown, mode: 'create' | 'patch', prefi
   if ('onHand' in b && mode === 'create') {
     if (!isInt(b.onHand) || (b.onHand as number) < 0) f[prefix + 'onHand'] = 'a whole number, 0 or more'
     else out.onHand = b.onHand as number
+  }
+
+  for (const k of PHYSICAL_KEYS) {
+    if (!(k in b)) continue
+    const v = b[k]
+    if (v === null) { out[k] = null; continue }
+    if (!isInt(v) || v < 1 || v > 1_000_000) f[prefix + k] = 'a whole number above 0, or empty'
+    else out[k] = v
   }
 
   done(f)
