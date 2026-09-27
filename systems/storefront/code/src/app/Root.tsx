@@ -29,6 +29,10 @@ function Nav() {
   const [cartOpen, setCartOpen] = useState(false)
   const closeCart = useCallback(() => setCartOpen(false), [])
   const navigate = useNavigate()
+  const { key: locationKey } = useLocation()
+
+  // Any navigation -- a link, or browser back/forward -- closes the drawer.
+  useEffect(() => { setCartOpen(false) }, [locationKey])
 
   function handleSearch(e: FormEvent) {
     e.preventDefault()

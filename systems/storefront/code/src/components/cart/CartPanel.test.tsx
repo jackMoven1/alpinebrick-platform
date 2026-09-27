@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, within, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router'
 import { CartProvider, CART_STORAGE_KEY } from '../../lib/cart/CartContext'
@@ -8,7 +8,9 @@ vi.mock('../../lib/api/checkout', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/api/checkout')>()
   return { ...actual, startCheckout: vi.fn(), getCheckoutConfig: vi.fn() }
 })
+vi.mock('../../lib/stripe', () => ({ getStripe: vi.fn(() => Promise.resolve({})) }))
 import { startCheckout, getCheckoutConfig, CheckoutError } from '../../lib/api/checkout'
+import { getStripe } from '../../lib/stripe'
 import CartPanel from './CartPanel'
 
 afterEach(() => vi.clearAllMocks())
@@ -109,5 +111,16 @@ describe('CartPanel', () => {
     renderCart([LINE('v1', 'Dragon Fortress', 100, 1)])
     await userEvent.click(screen.getByRole('button', { name: 'Checkout' }))
     expect(await screen.findByText('Checkout is temporarily unavailable — please try again in a minute.')).toBeInTheDocument()
+  })
+  // A build without VITE_STRIPE_PUBLISHABLE_KEY cannot show the payment
+  // form, so starting a checkout would only reserve stock for nothing.
+  it('does not start checkout when this build cannot load Stripe', async () => {
+    vi.mocked(getStripe).mockReturnValueOnce(null)
+    renderCart([LINE('v1', 'Dragon Fortress', 100, 1)])
+    // Wrapped by hand: settle the config fetch, then click, inside act().
+    await act(async () => {})
+    await act(async () => { await userEvent.click(screen.getByRole('button', { name: 'Checkout' })) })
+    expect(await screen.findByText('Checkout is temporarily unavailable — please try again in a minute.')).toBeInTheDocument()
+    expect(startCheckout).not.toHaveBeenCalled()
   })
 })

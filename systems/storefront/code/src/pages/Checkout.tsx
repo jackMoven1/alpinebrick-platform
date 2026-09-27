@@ -24,7 +24,9 @@ export default function Checkout() {
   const state = (useLocation().state ?? null) as CheckoutState | null
   const clientSecret = state?.clientSecret
   const orderId = state?.orderId
-  const stripe = getStripe()
+  // Once per mount: a failed load resets getStripe's memo, and calling it on
+  // every render would re-attempt the load on each one.
+  const [stripe] = useState(getStripe)
   const [loadFailed, setLoadFailed] = useState(false)
 
   useEffect(() => {

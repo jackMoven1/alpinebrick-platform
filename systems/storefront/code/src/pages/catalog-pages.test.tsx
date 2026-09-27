@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider, MemoryRouter } from 'react-router'
 import type { Product, ProductListPage } from '../lib/api/types'
@@ -272,6 +272,18 @@ describe('ProductDetail', () => {
     renderProduct()
     await userEvent.click(screen.getByRole('button', { name: /add to cart/i }))
     expect(await screen.findByText(/added/i)).toBeInTheDocument()
+  })
+
+  it('refuses a 21st distinct item with a visible message', async () => {
+    const lines = Array.from({ length: 20 }, (_, n) => ({
+      variantId: `other-${n}`, productId: `p${n}`, productSlug: `s${n}`, name: `Set ${n}`, priceCents: 100, imageKey: '', quantity: 1,
+    }))
+    window.localStorage.setItem('ab.cart.v1', JSON.stringify(lines))
+    renderProduct()
+    await act(async () => { await userEvent.click(screen.getByRole('button', { name: /add to cart/i })) })
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your cart can hold up to 20 different items.')
+    expect(screen.queryByText(/added/i)).not.toBeInTheDocument()
+    expect(JSON.parse(window.localStorage.getItem('ab.cart.v1')!)).toHaveLength(20)
   })
 
   it('disables add to cart when the variant is explicitly out of stock', () => {

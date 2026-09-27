@@ -9,6 +9,7 @@ import {
 } from '../../lib/api/checkout'
 import { readReferral, safeLocalStorage } from '../../lib/referral'
 import { getPreviousOrderId, setPreviousOrderId } from '../../lib/checkout/previousOrder'
+import { getStripe } from '../../lib/stripe'
 import { Button } from '../../design-system/primitives'
 
 export const CONTIGUOUS_NOTICE = 'We ship to the contiguous US only.'
@@ -52,9 +53,15 @@ export default function CartPanel({ onNavigate }: { onNavigate?: () => void }) {
 
   async function checkout() {
     if (busy) return
-    setBusy(true)
     setError(null)
     setProblems({})
+    // A build without a publishable key cannot show the payment form, so
+    // starting a checkout would only reserve stock for nothing.
+    if (getStripe() === null) {
+      setError(UNAVAILABLE_MESSAGE)
+      return
+    }
+    setBusy(true)
     try {
       const previousOrderId = getPreviousOrderId()
       const { orderId, clientSecret } = await startCheckout({

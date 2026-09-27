@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, within, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createMemoryRouter, RouterProvider } from 'react-router'
+import { createMemoryRouter, RouterProvider, MemoryRouter, Routes, Route, useNavigate } from 'react-router'
 import Root from './Root'
 
 function renderShell(initialEntries = ['/']) {
@@ -80,5 +80,107 @@ describe('Root shell', () => {
   it('states the LEGO Group non-affiliation', () => {
     renderShell()
     expect(screen.getByText(/not affiliated with the lego group/i)).toBeInTheDocument()
+  })
+})
+
+// ------------------------------------------------------------ cart drawer
+//
+// Declarative MemoryRouter: navigating a createMemoryRouter/RouterProvider in
+// jsdom throws a cross-realm AbortSignal error (see CartPanel.test.tsx).
+
+function GoBack() {
+  const navigate = useNavigate()
+  return <button type="button" onClick={() => navigate(-1)}>Go back</button>
+}
+
+function renderShellDeclarative(initialEntries = ['/']) {
+  return render(
+    <MemoryRouter initialEntries={initialEntries}>
+      <Routes>
+        <Route path="/" element={<Root />}>
+          <Route index element={<h1>Home</h1>} />
+          <Route path="about" element={<><h1>About page</h1><GoBack /></>} />
+        </Route>
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+/**
+ * user-event here does not route through RTL's act() (the pre-existing
+ * warnings noted in src/test/setup.ts), so these tests wrap each interaction
+ * themselves to stay warning-free.
+ */
+const user = {
+  click: (el: Element) => act(async () => { await userEvent.click(el) }),
+  keyboard: (keys: string) => act(async () => { await userEvent.keyboard(keys) }),
+  tab: (opts?: { shift?: boolean }) => act(async () => { await userEvent.tab(opts) }),
+}
+
+const cartButton = () => screen.getByRole('button', { name: /cart, empty/i })
+
+describe('Cart drawer', () => {
+  // The nav's backdrop-filter makes it the containing block for position:fixed
+  // descendants, which squeezed the drawer into the 64px header.
+  it('renders outside the nav, attached to document.body', async () => {
+    renderShellDeclarative()
+    await user.click(cartButton())
+    const dialog = screen.getByRole('dialog', { name: 'Cart' })
+    expect(screen.getByRole('navigation').contains(dialog)).toBe(false)
+    expect(dialog.closest('nav')).toBeNull()
+    expect(document.body.contains(dialog)).toBe(true)
+  })
+
+  it('moves focus to Close on open and restores it to the cart button on close', async () => {
+    renderShellDeclarative()
+    await user.click(cartButton())
+    expect(screen.getByRole('button', { name: 'Close cart' })).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: 'Close cart' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(cartButton()).toHaveFocus()
+  })
+
+  it('closes on Escape and restores focus', async () => {
+    renderShellDeclarative()
+    await user.click(cartButton())
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(cartButton()).toHaveFocus()
+  })
+
+  it('keeps Tab and Shift+Tab inside the drawer', async () => {
+    renderShellDeclarative()
+    await user.click(cartButton())
+    const dialog = screen.getByRole('dialog', { name: 'Cart' })
+    const close = within(dialog).getByRole('button', { name: 'Close cart' })
+    const last = within(dialog).getByRole('link', { name: 'View full cart' })
+    expect(close).toHaveFocus()
+    await user.tab({ shift: true })
+    expect(last).toHaveFocus()
+    await user.tab()
+    expect(close).toHaveFocus()
+    // Walk forward through every stop: focus never leaves the dialog.
+    for (let n = 0; n < 5; n++) {
+      await user.tab()
+      expect(dialog.contains(document.activeElement)).toBe(true)
+    }
+  })
+
+  it('closes when the route changes', async () => {
+    renderShellDeclarative()
+    await user.click(cartButton())
+    // A nav link outside the drawer (the drawer's own links close it anyway).
+    await user.click(within(screen.getByRole('navigation')).getAllByRole('link', { name: 'About' })[0])
+    expect(await screen.findByRole('heading', { name: 'About page' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('closes on browser back', async () => {
+    renderShellDeclarative(['/', '/about'])
+    await user.click(cartButton())
+    expect(screen.getByRole('dialog', { name: 'Cart' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Go back' }))
+    expect(await screen.findByRole('heading', { name: 'Home' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })

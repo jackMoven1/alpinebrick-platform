@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { CartProvider, useCart } from './CartContext'
+import { CartProvider, useCart, MAX_LINES } from './CartContext'
 
 const wrapper = ({ children }: { children: ReactNode }) => <CartProvider>{children}</CartProvider>
 
@@ -101,5 +101,30 @@ describe('cart', () => {
     const clear = result.current.clear
     act(() => result.current.addItem(LINE_A))
     expect(result.current.clear).toBe(clear)
+  })
+  // Core rejects a checkout with more than 20 lines (spec §4); refusing the
+  // 21st distinct variant here keeps a cart from being built that cannot be
+  // bought.
+  it('refuses a 21st distinct line but still tops up an existing one', () => {
+    const { result } = renderHook(() => useCart(), { wrapper })
+    expect(MAX_LINES).toBe(20)
+    let ok = true
+    act(() => {
+      for (let n = 0; n < 20; n++) result.current.addItem({ ...LINE_A, variantId: `v${n}` })
+    })
+    expect(result.current.items).toHaveLength(20)
+    act(() => { ok = result.current.addItem({ ...LINE_A, variantId: 'v20' }) })
+    expect(ok).toBe(false)
+    expect(result.current.items).toHaveLength(20)
+    act(() => { ok = result.current.addItem({ ...LINE_A, variantId: 'v3' }) })
+    expect(ok).toBe(true)
+    expect(result.current.items.find(i => i.variantId === 'v3')?.quantity).toBe(2)
+  })
+
+  it('trims a stored cart to 20 lines', () => {
+    const lines = Array.from({ length: 25 }, (_, n) => ({ ...LINE_A, variantId: `v${n}`, quantity: 1 }))
+    window.localStorage.setItem('ab.cart.v1', JSON.stringify(lines))
+    const { result } = renderHook(() => useCart(), { wrapper })
+    expect(result.current.items).toHaveLength(20)
   })
 })

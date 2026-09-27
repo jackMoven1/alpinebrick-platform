@@ -6,7 +6,7 @@ import { Badge, Button, Eyebrow, Tabs, type Tab } from '../design-system/primiti
 import { deriveBadge } from '../lib/badge'
 import { formatCents, minPriceCents } from '../lib/money'
 import { imageUrl, imageSrcSet, DETAIL_WIDTHS } from '../lib/images'
-import { useCart } from '../lib/cart/CartContext'
+import { useCart, LINE_LIMIT_MESSAGE } from '../lib/cart/CartContext'
 
 interface ProductData {
   product: Product
@@ -54,6 +54,7 @@ export default function ProductDetail() {
   const { addItem } = useCart()
   const [activeImage, setActiveImage] = useState(0)
   const [added, setAdded] = useState(false)
+  const [limitHit, setLimitHit] = useState(false)
 
   const variant = product.variants[0]
   const price = minPriceCents(product)
@@ -67,7 +68,7 @@ export default function ProductDetail() {
 
   function handleAdd() {
     if (!variant) return
-    addItem({
+    const ok = addItem({
       variantId: variant.id,
       productId: product.id,
       productSlug: product.slug,
@@ -75,6 +76,8 @@ export default function ProductDetail() {
       priceCents: variant.priceCents,
       imageKey: product.images[0]?.storageKey ?? '',
     })
+    setLimitHit(!ok)
+    if (!ok) return
     setAdded(true)
     window.setTimeout(() => setAdded(false), 2000)
   }
@@ -201,6 +204,9 @@ export default function ProductDetail() {
               </span>
             )}
           </div>
+          {limitHit && (
+            <p role="alert" className="mt-3 text-sm text-destructive">{LINE_LIMIT_MESSAGE}</p>
+          )}
 
           <div className="mt-12">
             <Tabs tabs={tabs} />
