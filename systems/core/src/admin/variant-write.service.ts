@@ -15,12 +15,17 @@ async function insert(tx: Prisma.TransactionClient, productId: string, v: Varian
   const created = await tx.variant.create({
     data: {
       productId, sku: v.sku!, priceCents: v.priceCents!, attributes: v.attributes ?? {},
+      weightGrams: v.weightGrams ?? null, lengthMm: v.lengthMm ?? null,
+      widthMm: v.widthMm ?? null, heightMm: v.heightMm ?? null,
       inventory: { create: { onHand: v.onHand ?? 0 } },
     },
   })
   await recordAudit({
     actorId, action: 'variant.create', target: `variant:${created.id}`,
-    after: { productId, sku: created.sku, priceCents: created.priceCents, attributes: v.attributes ?? {}, onHand: v.onHand ?? 0 },
+    after: {
+      productId, sku: created.sku, priceCents: created.priceCents, attributes: v.attributes ?? {}, onHand: v.onHand ?? 0,
+      weightGrams: created.weightGrams, lengthMm: created.lengthMm, widthMm: created.widthMm, heightMm: created.heightMm,
+    },
   }, tx)
 }
 

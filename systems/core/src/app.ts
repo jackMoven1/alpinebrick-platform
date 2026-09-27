@@ -3,6 +3,7 @@ import { catalogRouter } from './catalog/catalog.routes.js'
 import { createAssetsRouter } from './assets/assets.routes.js'
 import { createStoragePort } from './ports/storage/index.js'
 import { adminCatalogRouter } from './admin/admin-catalog.routes.js'
+import { createAdminOrdersRouter } from './admin/admin-orders.routes.js'
 import { requireAuth } from './auth/require-auth.js'
 import { requireOrigin, allowedOrigins, allowedStorefrontOrigins } from './auth/require-origin.js'
 import { requireJsonContentType } from './auth/require-json-content-type.js'
@@ -113,6 +114,7 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
   app.use('/api/v1/admin', requireJsonContentType)
   app.use('/api/v1/admin/images', createAssetsRouter(storagePort))
   app.use('/api/v1/admin', adminCatalogRouter)
+  app.use('/api/v1/admin', createAdminOrdersRouter(payments))
 
   // Terminal error-handling middleware -- MUST be mounted last, after every
   // router. It is the backstop for asyncHandler-wrapped routes (and for

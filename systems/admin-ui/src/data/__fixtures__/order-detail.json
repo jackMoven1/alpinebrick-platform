@@ -1,0 +1,65 @@
+{
+  "id": "cmuk32w720016nyavbg2lddzy",
+  "orderNumber": "ABE-013348",
+  "channel": "storefront",
+  "status": "paid",
+  "reviewReason": null,
+  "createdAt": "2026-09-27T17:19:37.599Z",
+  "paidAt": "2026-09-27T15:00:00.000Z",
+  "shippedAt": null,
+  "email": "buyer@example.com",
+  "marketingOptIn": true,
+  "shipTo": {
+    "name": "Ann Buyer",
+    "line1": "1 Main St",
+    "line2": null,
+    "city": "Traverse City",
+    "state": "MI",
+    "postalCode": "49684"
+  },
+  "lines": [
+    {
+      "variantId": "cmuk32w2h0009nyavqkuamamr",
+      "sku": "ABE-1001",
+      "name": "Castle Set — sealed",
+      "quantity": 1,
+      "unitPriceCents": 18900,
+      "lineSubtotalCents": 18900
+    }
+  ],
+  "subtotalCents": 18900,
+  "shippingCents": 0,
+  "taxCents": 1134,
+  "totalCents": 20034,
+  "refundedCents": 0,
+  "taxJurisdiction": "stripe_tax",
+  "taxRateBps": 600,
+  "carrier": null,
+  "trackingNumber": null,
+  "referral": {
+    "code": "club",
+    "partnerName": null,
+    "commissionRateBps": null,
+    "unmatched": true
+  },
+  "stripePaymentUrl": "https://dashboard.stripe.com/test/payments/pi_test_fixture",
+  "audit": [
+    {
+      "action": "order.place",
+      "actorName": "system",
+      "createdAt": "2026-09-27T17:19:37.604Z",
+      "after": {
+        "status": "pending",
+        "totalCents": 18900
+      }
+    },
+    {
+      "action": "order.paid",
+      "actorName": "system",
+      "createdAt": "2026-09-27T17:19:37.614Z",
+      "after": {
+        "status": "paid"
+      }
+    }
+  ]
+}

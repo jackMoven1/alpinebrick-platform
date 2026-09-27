@@ -1,0 +1,18 @@
+{
+  "items": [
+    {
+      "id": "cmuk32w720016nyavbg2lddzy",
+      "orderNumber": "ABE-013348",
+      "createdAt": "2026-09-27T17:19:37.599Z",
+      "email": "buyer@example.com",
+      "itemCount": 1,
+      "totalCents": 20034,
+      "shipToState": "MI",
+      "status": "paid",
+      "reviewReason": null
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "pageSize": 25
+}
