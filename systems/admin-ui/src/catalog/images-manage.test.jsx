@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act } from 'react'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import React, { act } from 'react'
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ToastProvider } from '../ui/toast.jsx'
 import ImagesTab from './tabs/ImagesTab.jsx'
@@ -114,7 +114,7 @@ describe('ImagesTab manage', () => {
     await waitFor(() => expect(left).toBeEnabled())
   })
 
-  it('a double-clicked Save sends one request', async () => {
+  it('two Save clicks in one tick send one request', async () => {
     const d = deferred()
     vi.mocked(api.updateImageAlt).mockReturnValue(d.promise)
     vi.mocked(api.getProduct).mockResolvedValue(withImages)
@@ -122,11 +122,35 @@ describe('ImagesTab manage', () => {
     const c = card('b')
     await userEvent.type(within(c).getByLabelText('Description'), 'Side')
     const save = within(c).getByRole('button', { name: /save/i })
-    await userEvent.dblClick(save)
+    act(() => { fireEvent.click(save); fireEvent.click(save) })
     expect(api.updateImageAlt).toHaveBeenCalledTimes(1)
     expect(save).toBeDisabled()
     expect(within(c).getByLabelText('Description')).toBeDisabled()
     await act(async () => { d.resolve(img('b', 1, 'Side')) })
+  })
+
+  it('two move clicks in one tick send one reorder', async () => {
+    const d = deferred()
+    vi.mocked(api.reorderImages).mockReturnValue(d.promise)
+    vi.mocked(api.getProduct).mockResolvedValue(withImages)
+    renderTab()
+    const left = within(card('b')).getByRole('button', { name: /move left/i })
+    act(() => { fireEvent.click(left); fireEvent.click(left) })
+    expect(api.reorderImages).toHaveBeenCalledTimes(1)
+    await act(async () => { d.resolve({ ok: true }) })
+  })
+
+  it('two Delete clicks in one tick confirm and delete once', async () => {
+    const d = deferred()
+    vi.mocked(api.deleteImage).mockReturnValue(d.promise)
+    vi.mocked(api.getProduct).mockResolvedValue(withImages)
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderTab()
+    const del = within(card('b')).getByRole('button', { name: /delete/i })
+    act(() => { fireEvent.click(del); fireEvent.click(del) })
+    expect(api.deleteImage).toHaveBeenCalledTimes(1)
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    await act(async () => { d.resolve(null) })
   })
 
   it('shows core\'s message on the card that failed', async () => {
@@ -208,5 +232,87 @@ describe('ImagesTab — no updates after unmount', () => {
     unmount()
     await act(async () => { a.resolve(img('b', 1, 'x')); d.resolve(null) })
     expect(onUpdated).not.toHaveBeenCalled()
+  })
+})
+
+describe('ImagesTab manage - fix round 1', () => {
+  it('names every photo control after its photo', () => {
+    renderTab()
+    // a has alt "Front"; b has none, so it is named by its place in the list.
+    expect(screen.getByRole('button', { name: 'Move right: Front' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Move left: Front' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Move left: photo 2' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Move right: photo 2' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Save: Front' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save: photo 2' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete: Front' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete: photo 2' })).toBeInTheDocument()
+    expect(within(card('b')).getByText('Delete')).toBeInTheDocument()
+    expect(within(card('b')).getByText('Save')).toBeInTheDocument()
+  })
+
+  it('ties the empty-description hint to its input', () => {
+    renderTab()
+    expect(within(card('b')).getByLabelText('Description')).toHaveAccessibleDescription(/add a description/i)
+    expect(within(card('a')).getByLabelText('Description')).not.toHaveAccessibleDescription(/add a description/i)
+  })
+
+  it('blocks moves and deletes while an upload refresh is in flight', async () => {
+    const g = deferred()
+    vi.mocked(api.requestImageUpload).mockResolvedValue(token)
+    vi.mocked(api.uploadToStorage).mockResolvedValue()
+    vi.mocked(api.confirmImage).mockResolvedValue(confirmed)
+    vi.mocked(api.getProduct).mockReturnValue(g.promise)
+    renderTab()
+    await userEvent.upload(screen.getByLabelText('Add photos'), [new File([new Uint8Array(10)], 'a.png', { type: 'image/png' })])
+    await waitFor(() => expect(api.getProduct).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('button', { name: 'Move right: Front' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Delete: Front' })).toBeDisabled()
+    await act(async () => { g.resolve(withImages) })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Move right: Front' })).toBeEnabled())
+  })
+
+  it('after a reorder whose refresh fails, moves stay blocked until a card Refresh succeeds', async () => {
+    vi.mocked(api.reorderImages).mockResolvedValue({ ok: true })
+    const fresh = { ...product, images: [img('b', 0), img('a', 1, 'Front')] }
+    const g = deferred()
+    vi.mocked(api.getProduct)
+      .mockRejectedValueOnce(new AdminApiError('network hiccup', 'network_error'))
+      .mockReturnValueOnce(g.promise)
+    const Harness = () => {
+      const [p, setP] = React.useState(withImages)
+      return <ToastProvider><ImagesTab product={p} onUpdated={setP} /></ToastProvider>
+    }
+    render(<Harness />)
+    await userEvent.click(screen.getByRole('button', { name: 'Move left: photo 2' }))
+    expect(await within(card('b')).findByText(/done, but the list couldn.t refresh \(network hiccup\)/i)).toBeInTheDocument()
+    // The grid still shows the old order, so another move could silently undo this one.
+    expect(screen.getByRole('button', { name: 'Move left: photo 2' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Move right: Front' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Delete: Front' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Delete: photo 2' })).toBeDisabled()
+    await userEvent.click(within(card('b')).getByRole('button', { name: 'Refresh: photo 2' }))
+    // Still blocked while that refresh is in flight.
+    expect(screen.getByRole('button', { name: 'Move right: Front' })).toBeDisabled()
+    await act(async () => { g.resolve(fresh) })
+    // b is now first, a second: a's left is enabled again and the error is gone.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Move left: Front' })).toBeEnabled())
+    expect(screen.getByRole('button', { name: 'Move right: photo 1' })).toBeEnabled()
+    expect(screen.queryByText(/done, but the list couldn.t refresh/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /^refresh: /i })).toBeNull()
+  })
+
+  it('a deleted photo left on screen by a failed refresh cannot be deleted again', async () => {
+    vi.mocked(api.deleteImage).mockResolvedValue(null)
+    vi.mocked(api.getProduct).mockRejectedValue(new AdminApiError('network hiccup', 'network_error'))
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderTab()
+    await userEvent.click(screen.getByRole('button', { name: 'Delete: photo 2' }))
+    await within(card('b')).findByText(/done, but the list couldn.t refresh/i)
+    const del = screen.getByRole('button', { name: 'Delete: photo 2' })
+    expect(del).toBeDisabled()
+    await userEvent.click(del)
+    expect(api.deleteImage).toHaveBeenCalledTimes(1)
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
   })
 })

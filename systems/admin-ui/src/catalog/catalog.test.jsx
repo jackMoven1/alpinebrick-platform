@@ -26,7 +26,7 @@ const PRODUCT = {
     inventory: { onHand: 2, reserved: 0, walmartAllocation: null, storefrontAvailable: 2, walmartAvailable: 2 },
     locked: { sku: false, delete: false }, walmartListing: null,
   }],
-  images: [{ storageKey: 'products/prod-001/i1/original.jpg', alt: 'Front', width: 900, height: 720, position: 0 }],
+  images: [{ id: 'i1', storageKey: 'products/prod-001/i1/original.jpg', alt: 'Front', width: 900, height: 720, position: 0 }],
 }
 
 const PRODUCT_2 = { ...PRODUCT, id: 'prod-002', slug: 'second-set', name: 'Second Product', images: [] }

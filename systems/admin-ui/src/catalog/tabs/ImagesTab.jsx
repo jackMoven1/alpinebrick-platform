@@ -45,6 +45,14 @@ import { checkImageFile, ACCEPTED_TYPES } from './imageFiles.js'
  * mutation refreshes through refresh(), so card refreshes share the upload
  * path's latest-response guard.
  *
+ * The grid is only trusted while it matches core. Moves and deletes are
+ * blocked while any refresh is in flight, and after any refresh fails
+ * (listStale) until one succeeds: a move computed from a stale order would
+ * silently undo an earlier one, and a photo already deleted server-side could
+ * be deleted again. A card whose refresh failed offers its own Refresh.
+ * Every control is named after its photo (alt, else "photo N") so a screen
+ * reader does not hear N identical buttons.
+ *
  * The tab is keyed by product id, so switching products unmounts it - but a
  * promise chain it started keeps running. mountedRef stops every async path
  * (upload refresh, reorder, alt, delete) from calling onUpdated or setting
@@ -71,8 +79,6 @@ const visibleImages = (images) => (images || [])
   .slice()
   .sort((a, b) => a.position - b.position)
 
-const imageKey = (img) => img.id ?? img.storageKey
-
 export default function ImagesTab({ product, onUpdated = () => {} }) {
   const images = visibleImages(product.images)
   const [uploads, setUploadsState] = useState([])
@@ -97,6 +103,7 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
   const busyRef = useRef({})
   const [cardErrors, setCardErrors] = useState({})
   const [drafts, setDrafts] = useState({})
+  const [listStale, setListStale] = useState(false)
   const setBusy = useCallback((id, kind) => {
     const next = { ...busyRef.current }
     if (kind) next[id] = kind
@@ -139,11 +146,18 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
       if (seq !== refreshSeqRef.current) return { status: 'stale' } // superseded by a newer refresh; ignore
       onUpdated(fresh)
       setUploads((prev) => prev.filter((u) => !idsAtIssue.includes(u.id)))
+      setListStale(false)
+      setCardErrors((prev) => {
+        const next = {}
+        for (const [id, e] of Object.entries(prev)) if (e && !e.refresh) next[id] = e
+        return next
+      })
       return { status: 'applied' }
     } catch (err) {
       if (!mountedRef.current) return { status: 'unmounted' }
       if (seq !== refreshSeqRef.current) return { status: 'stale' } // stale, ignore
       const message = errorText(err)
+      setListStale(true)
       setUploads((prev) => prev.map((u) => (idsAtIssue.includes(u.id) && u.stage === 'saved' ? { ...u, stage: 'refresh-error', error: message } : u)))
       return { status: 'error', error: message }
     } finally {
@@ -161,13 +175,13 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
       try {
         await mutate()
       } catch (err) {
-        if (mountedRef.current) setCardErrors((prev) => ({ ...prev, [id]: errorText(err) }))
+        if (mountedRef.current) setCardErrors((prev) => ({ ...prev, [id]: { message: errorText(err), refresh: false } }))
         return { ok: false }
       }
       if (!mountedRef.current) return { ok: true, refreshed: 'unmounted' }
       const r = await refresh()
       if (r.status === 'error' && mountedRef.current) {
-        setCardErrors((prev) => ({ ...prev, [id]: `Done, but the list couldn’t refresh (${r.error})` }))
+        setCardErrors((prev) => ({ ...prev, [id]: { message: `Done, but the list couldn’t refresh (${r.error})`, refresh: true } }))
       }
       return { ok: true, refreshed: r.status }
     } finally {
@@ -175,10 +189,14 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
     }
   }, [refresh, setBusy])
 
+  // Moves and deletes act on the order/set shown; only trust it while it
+  // matches core (no refresh in flight, none failed since the last success).
+  const gridLocked = refreshInFlight > 0 || listStale
+
   const move = (index, delta) => {
     const target = index + delta
     if (target < 0 || target >= images.length) return
-    if (Object.keys(busyRef.current).length > 0) return
+    if (Object.keys(busyRef.current).length > 0 || gridLocked) return
     const ids = images.map((img) => img.id)
     ;[ids[index], ids[target]] = [ids[target], ids[index]]
     runCardAction(images[index].id, 'reorder', () => api.reorderImages(product.id, ids))
@@ -200,7 +218,7 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
 
   const remove = (img) => {
     if (busyRef.current[img.id]) return
-    if (Object.values(busyRef.current).includes('reorder')) return
+    if (Object.values(busyRef.current).includes('reorder') || gridLocked) return
     if (!window.confirm(DELETE_PROMPT)) return
     runCardAction(img.id, 'delete', () => api.deleteImage(img.id))
   }
@@ -344,16 +362,18 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         {images.map((img, index) => {
-          const key = imageKey(img)
           const cardBusy = Boolean(busy[img.id])
           const anyBusy = Object.keys(busy).length > 0
           const reorderBusy = Object.values(busy).includes('reorder')
           const savedAlt = img.alt ?? ''
           const draft = drafts[img.id]
           const altChanged = draft !== undefined && draft !== savedAlt
-          const inputId = `image-alt-${key}`
+          const inputId = `image-alt-${img.id}`
+          const hintId = `image-alt-hint-${img.id}`
+          const name = img.alt || `photo ${index + 1}`
+          const cardError = cardErrors[img.id]
           return (
-            <div key={key} data-testid={`image-${key}`} className="rounded-card bg-white p-2 shadow-card">
+            <div key={img.id} data-testid={`image-${img.id}`} className="rounded-card bg-white p-2 shadow-card">
               <div className="relative">
                 <img
                   src={imageUrlFromKey(img.storageKey, 400)}
@@ -370,6 +390,7 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
               <div className="mt-1 flex gap-2">
                 <input
                   id={inputId}
+                  aria-describedby={savedAlt ? undefined : hintId}
                   value={draft ?? savedAlt}
                   disabled={cardBusy}
                   onChange={(e) => {
@@ -380,6 +401,7 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
                 />
                 <button
                   type="button"
+                  aria-label={`Save: ${name}`}
                   disabled={cardBusy || !altChanged}
                   onClick={() => saveAlt(img)}
                   className="rounded-pill bg-ink px-3 py-1 text-xs text-white disabled:opacity-50"
@@ -388,15 +410,30 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
                 </button>
               </div>
               {!savedAlt && (
-                <p className="mt-1 text-xs text-gray-400">Add a description — used by screen readers and search engines.</p>
+                <p id={hintId} className="mt-1 text-xs text-gray-400">Add a description — used by screen readers and search engines.</p>
               )}
-              {cardErrors[img.id] && <p className="mt-1 text-xs text-accent">{cardErrors[img.id]}</p>}
+              {cardError && (
+                <div className="mt-1 flex items-center justify-between gap-2 text-xs">
+                  <span className="text-accent">{cardError.message}</span>
+                  {cardError.refresh && (
+                    <button
+                      type="button"
+                      aria-label={`Refresh: ${name}`}
+                      disabled={refreshInFlight > 0}
+                      onClick={() => refresh()}
+                      className="rounded-pill bg-ink px-3 py-1 text-white disabled:opacity-50"
+                    >
+                      Refresh
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="mt-2 flex items-center justify-between gap-2 text-xs">
                 <div className="flex gap-1">
                   <button
                     type="button"
-                    aria-label="Move left"
-                    disabled={anyBusy || index === 0}
+                    aria-label={`Move left: ${name}`}
+                    disabled={anyBusy || gridLocked || index === 0}
                     onClick={() => move(index, -1)}
                     className="rounded-pill bg-gray-200 px-2 py-1 text-gray-700 disabled:opacity-50"
                   >
@@ -404,8 +441,8 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
                   </button>
                   <button
                     type="button"
-                    aria-label="Move right"
-                    disabled={anyBusy || index === images.length - 1}
+                    aria-label={`Move right: ${name}`}
+                    disabled={anyBusy || gridLocked || index === images.length - 1}
                     onClick={() => move(index, 1)}
                     className="rounded-pill bg-gray-200 px-2 py-1 text-gray-700 disabled:opacity-50"
                   >
@@ -414,7 +451,8 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
                 </div>
                 <button
                   type="button"
-                  disabled={cardBusy || reorderBusy}
+                  aria-label={`Delete: ${name}`}
+                  disabled={cardBusy || reorderBusy || gridLocked}
                   onClick={() => remove(img)}
                   className="rounded-pill bg-gray-200 px-3 py-1 text-accent disabled:opacity-50"
                 >

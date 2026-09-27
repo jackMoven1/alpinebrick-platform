@@ -21,7 +21,7 @@ const product = {
     inventory: { onHand: 1, reserved: 0, walmartAllocation: null, storefrontAvailable: 1, walmartAvailable: 1 },
     locked: { sku: false, delete: false }, walmartListing: null,
   }],
-  images: [{ storageKey: 'products/p1/i1/original.jpg', alt: 'Front', width: 900, height: 720, position: 0 }],
+  images: [{ id: 'i1', storageKey: 'products/p1/i1/original.jpg', alt: 'Front', width: 900, height: 720, position: 0 }],
 }
 
 afterEach(() => vi.clearAllMocks())
