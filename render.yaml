@@ -65,6 +65,11 @@ services:
       # The imgix domain, baked in at build time.
       - key: VITE_ASSET_BASE_URL
         sync: false
+      # Stripe publishable key (pk_test_... on staging, pk_live_... on
+      # production). Publishable keys are designed to be public, but they are
+      # still per environment, so sync: false -- never hardcode one here.
+      - key: VITE_STRIPE_PUBLISHABLE_KEY
+        sync: false
 
   # ---------------------------------------------------------------- admin-ui
   # Internal catalog console. Separate static site from the storefront so the
@@ -206,6 +211,13 @@ envVarGroups:
       - key: ASSET_S3_BUCKET
         sync: false
       - key: ASSET_S3_REGION
+        sync: false
+      # The storefront's public origin for this environment (e.g.
+      # https://staging.alpinebrickexchange.com). The base of Stripe
+      # Checkout's return_url. Core refuses to start when STRIPE_SECRET_KEY and
+      # STRIPE_WEBHOOK_SECRET are set without it -- and when only one of
+      # those two is set. See docs/status/2026-09-27-stripe-test-mode-runbook.md
+      - key: STOREFRONT_PUBLIC_URL
         sync: false
       # Secrets are NEVER declared here. Set these in the Render dashboard,
       # per environment, entered by Jack:
