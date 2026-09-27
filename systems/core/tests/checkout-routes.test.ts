@@ -144,6 +144,25 @@ describe('POST /api/v1/checkout', () => {
     expect((await postCheckout(app, { lines: [] })).status).toBe(429)
   })
 
+  // Ruling F-R4: body-parser's SyntaxError used to fall through to the
+  // generic 500 INTERNAL_ERROR. It is the client's fault, so it is a 400 in
+  // the public envelope -- readable cross-origin, and nothing reserved.
+  it('400s malformed JSON as invalid_request, with CORS headers, and reserves nothing', async () => {
+    const { app } = makeApp()
+    const res = await request(app).post('/api/v1/checkout')
+      .set('Origin', ORIGIN).set('Content-Type', 'application/json').send('{"lines": [')
+    expect(res.status).toBe(400)
+    expect(res.body).toEqual({ code: 'invalid_request', message: expect.any(String) })
+    expect(res.headers['access-control-allow-origin']).toBe(ORIGIN)
+    expect(await prisma.order.count()).toBe(0)
+  })
+
+  it('leaves the admin error shape for malformed JSON unchanged', async () => {
+    const { app } = makeApp()
+    const res = await request(app).post('/api/v1/admin/orders/x/cancel').set('Content-Type', 'application/json').send('{')
+    expect(res.body.code).not.toBe('invalid_request')
+  })
+
   it('answers the storefront preflight without credentials', async () => {
     const { app } = makeApp()
     const res = await request(app).options('/api/v1/checkout')

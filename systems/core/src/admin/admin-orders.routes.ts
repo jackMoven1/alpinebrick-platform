@@ -36,7 +36,7 @@ export function createAdminOrdersRouter(payments: PaymentsPort): Router {
   })
 
   router.post('/orders/:id/cancel', async (req, res) => {
-    try { res.json(await cancelPendingOrder(req.params.id, req.actor!.id, payments)) } catch (err) { fail(res, err) }
+    try { res.json(await cancelPendingOrder(req.params.id, req.body, req.actor!.id, payments)) } catch (err) { fail(res, err) }
   })
 
   router.get('/settings/shipping', async (_req, res) => {

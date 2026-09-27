@@ -2,7 +2,9 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '../prisma.js'
 import { recordAudit } from '../audit.js'
 import { AdminError } from './admin-errors.js'
-import { fulfillOrder, cancelOrder, orderNumber, OrderError, PENDING_CHECKOUT_EMAIL } from '../orders/orders.service.js'
+import {
+  fulfillOrder, cancelOrder, cancelOrderTx, lockOrderRow, enqueueInventoryPushesAfterCommit, orderNumber, OrderError, PENDING_CHECKOUT_EMAIL,
+} from '../orders/orders.service.js'
 import { lineName } from '../checkout/checkout.service.js'
 import type { PaymentsPort } from '../ports/payments/payments.port.js'
 import { scrubError } from '../auth/scrub.js'
@@ -135,20 +137,32 @@ function parseShipInput(body: unknown): { carrier: (typeof CARRIERS)[number]; tr
   return { carrier: carrier as (typeof CARRIERS)[number], trackingNumber: tracking || null, acknowledgeReview: b.acknowledgeReview === true }
 }
 
-/** Mark shipped (spec §7): `paid` only -> fulfillOrder, with carrier details in the same transaction. */
+function reviewRequired(reviewReason: string, verb: string) {
+  return new AdminError('REVIEW_REQUIRED', `This order is flagged (${reviewReason}). Confirm you have reviewed it before ${verb}.`, undefined, { reviewReason })
+}
+
+/**
+ * Mark shipped (spec §7): `paid` only -> fulfillOrder, with carrier details in the same transaction.
+ *
+ * The unlocked pre-read gives a fast refusal, but it is only advisory: a
+ * dispute webhook can flag the order between it and fulfillOrder's row lock.
+ * The authoritative check re-reads reviewReason inside fulfillOrder's
+ * transaction, under that lock (ruling F-R3), and the audit records the
+ * locked value -- a throw there rolls the whole ship back.
+ */
 export async function shipOrder(id: string, body: unknown, actorId: string, payments: Pick<PaymentsPort, 'livemode'>): Promise<AdminOrderDetail> {
   const input = parseShipInput(body)
   const order = await requireStorefrontOrder(id)
-  if (order.reviewReason && !input.acknowledgeReview) {
-    throw new AdminError('REVIEW_REQUIRED', `This order is flagged (${order.reviewReason}). Confirm you have reviewed it before shipping.`, undefined, { reviewReason: order.reviewReason })
-  }
+  if (order.reviewReason && !input.acknowledgeReview) throw reviewRequired(order.reviewReason, 'shipping')
   try {
     await fulfillOrder(id, actorId, {
       inTransaction: async (tx) => {
+        const locked = await tx.order.findUniqueOrThrow({ where: { id }, select: { reviewReason: true } })
+        if (locked.reviewReason && !input.acknowledgeReview) throw reviewRequired(locked.reviewReason, 'shipping')
         await tx.order.update({ where: { id }, data: { shippedAt: new Date(), carrier: input.carrier, trackingNumber: input.trackingNumber } })
         await recordAudit({
           actorId, action: 'order.ship', target: `order:${id}`,
-          after: { carrier: input.carrier, trackingNumber: input.trackingNumber, ...(order.reviewReason ? { acknowledgedReview: order.reviewReason } : {}) },
+          after: { carrier: input.carrier, trackingNumber: input.trackingNumber, ...(locked.reviewReason ? { acknowledgedReview: locked.reviewReason } : {}) },
         }, tx)
       },
     })
@@ -161,20 +175,40 @@ function orderPaidError() {
   return new AdminError('ORDER_PAID', 'The customer has just paid for this order. Refresh the page; refund it in Stripe if it should not ship.')
 }
 
+function parseCancelInput(body: unknown): { acknowledgeReview: boolean } {
+  if (body === undefined || body === null) return { acknowledgeReview: false }
+  if (typeof body !== 'object' || Array.isArray(body)) throw new AdminError('VALIDATION_ERROR', 'body must be a JSON object')
+  const b = body as Record<string, unknown>
+  const fields: Record<string, string> = {}
+  for (const k of Object.keys(b)) if (k !== 'acknowledgeReview') fields[k] = 'unknown field'
+  if ('acknowledgeReview' in b && typeof b.acknowledgeReview !== 'boolean') fields.acknowledgeReview = 'true or false'
+  if (Object.keys(fields).length > 0) throw new AdminError('VALIDATION_ERROR', 'invalid input', fields)
+  return { acknowledgeReview: b.acknowledgeReview === true }
+}
+
 /**
- * Cancel (spec §7): `pending` only. Expire the Stripe session FIRST, so the
- * customer cannot pay for stock this is about to release. Paid orders are
- * refunded in Stripe, never cancelled here.
+ * Cancel (spec §7): `pending` orders, plus -- ruling F-R1 -- a `paid` order
+ * under dispute, whose stock would otherwise stay reserved forever (a lost
+ * dispute never sends charge.refunded). Every other paid order is refunded
+ * in Stripe, never cancelled here.
  *
- * `cancelOrder` is called with `{ onlyIfPending: true }` (ruling T8-R1): even
- * after the checks above, a webhook can still mark the order paid in the tiny
- * window between the Stripe expire call and cancelOrder's own row lock. A
- * `null` result means that race happened -- the order was no longer pending
- * by the time the lock was taken -- and is reported the same way as the
- * synchronous "customer paid in the meantime" case above.
+ * Pending: expire the Stripe session FIRST, so the customer cannot pay for
+ * stock this is about to release. `cancelOrder` is called with
+ * `{ onlyIfPending: true }` (ruling T8-R1): even after the checks above, a
+ * webhook can still mark the order paid in the tiny window between the
+ * Stripe expire call and cancelOrder's own row lock. A `null` result means
+ * that race happened -- the order was no longer pending by the time the lock
+ * was taken -- and is reported the same way as the synchronous "customer
+ * paid in the meantime" case.
  */
-export async function cancelPendingOrder(id: string, actorId: string, payments: PaymentsPort): Promise<AdminOrderDetail> {
+export async function cancelPendingOrder(id: string, body: unknown, actorId: string, payments: PaymentsPort): Promise<AdminOrderDetail> {
+  const input = parseCancelInput(body)
   const order = await requireStorefrontOrder(id)
+  if (order.status === 'paid' && order.reviewReason === 'disputed') {
+    if (!input.acknowledgeReview) throw reviewRequired(order.reviewReason, 'cancelling')
+    await cancelDisputedOrder(id, actorId)
+    return (await getAdminOrder(id, payments))!
+  }
   if (order.status !== 'pending') {
     throw new AdminError('INVALID_TRANSITION', `cannot cancel a ${order.status} order here; refund paid orders in the Stripe dashboard`)
   }
@@ -194,4 +228,26 @@ export async function cancelPendingOrder(id: string, actorId: string, payments: 
   } catch (err) { throw mapOrderError(err) }
   if (!cancelled) throw orderPaidError()
   return (await getAdminOrder(id, payments))!
+}
+
+/**
+ * paid + disputed -> cancelled, releasing the reservation (ruling F-R1). The
+ * normal cancel path, deliberately WITHOUT onlyIfPending -- the order is
+ * paid. The unlocked pre-read is re-checked under the row lock: if a refund
+ * or a ship landed in between, the order is no longer a disputed paid order
+ * and this refuses instead of releasing stock twice or cancelling a shipment.
+ */
+async function cancelDisputedOrder(id: string, actorId: string): Promise<void> {
+  let cancelled
+  try {
+    cancelled = await prisma.$transaction(async (tx) => {
+      const locked = await lockOrderRow(tx, id)
+      if (!locked) throw new OrderError('order_not_found', `no order ${id}`)
+      if (locked.status !== 'paid' || locked.reviewReason !== 'disputed') {
+        throw new OrderError('invalid_transition', `this order is now ${locked.status}${locked.reviewReason ? ` (${locked.reviewReason})` : ''}; refresh the page`)
+      }
+      return cancelOrderTx(tx, id, actorId, { auditAfter: { acknowledgedReview: locked.reviewReason } })
+    })
+  } catch (err) { throw mapOrderError(err) }
+  if (cancelled) await enqueueInventoryPushesAfterCommit(cancelled.lines.map((l) => l.variantId), `order.cancelled (disputed) order:${id}`)
 }

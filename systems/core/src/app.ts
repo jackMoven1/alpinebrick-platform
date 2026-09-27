@@ -1,4 +1,4 @@
-import express, { type Express, type RequestHandler } from 'express'
+import express, { type ErrorRequestHandler, type Express, type RequestHandler } from 'express'
 import { catalogRouter } from './catalog/catalog.routes.js'
 import { createAssetsRouter } from './assets/assets.routes.js'
 import { createStoragePort } from './ports/storage/index.js'
@@ -31,6 +31,15 @@ export interface AppDeps {
   checkoutRateLimit: RequestHandler
 }
 
+/** body-parser marks a JSON parse failure with type 'entity.parse.failed' (a SyntaxError). */
+const checkoutJsonErrorHandler: ErrorRequestHandler = (err, _req, res, next) => {
+  if (err instanceof SyntaxError && (err as { type?: string }).type === 'entity.parse.failed') {
+    res.status(400).json({ code: 'invalid_request', message: 'request body is not valid JSON' })
+    return
+  }
+  next(err)
+}
+
 export function buildApp(deps: Partial<AppDeps> = {}): Express {
   // createPaymentsPort throws on half-configured Stripe -- the process refuses
   // to start rather than take money it can never mark paid (spec §8).
@@ -55,7 +64,15 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
     express.raw({ type: 'application/json', limit: '1mb' }),
     createStripeWebhookHandler({ payments, email }),
   )
+  // Checkout CORS mounts BEFORE the JSON parser so a malformed-body 400
+  // (below) still carries the storefront's Access-Control-Allow-Origin and
+  // the browser can read it. createCors never touches the body.
+  app.use('/api/v1/checkout', createCors({ origins: allowedStorefrontOrigins, credentials: false }))
   app.use(express.json())
+  // Ruling F-R4: body-parser's SyntaxError is the client's fault. On the
+  // public checkout route it becomes 400 in the public envelope instead of
+  // falling through to the generic 500. Other prefixes keep their shapes.
+  app.use('/api/v1/checkout', checkoutJsonErrorHandler)
   app.get('/health', (_req, res) => res.json({ status: 'ok' }))
 
   // Catalog is public (no cookies involved) but still cross-origin from the
@@ -66,11 +83,11 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
   app.use('/api/v1/catalog', catalogRouter)
 
   // Storefront checkout (spec §4). Public like catalog: storefront allowlist,
-  // credentials off. POST is rate-limited per IP inside the router so the
-  // endpoint cannot be used to hold stock. The old public POST/GET
+  // credentials off (its CORS is mounted above, ahead of express.json). POST
+  // is rate-limited per IP inside the router so the endpoint cannot be used
+  // to hold stock. The old public POST/GET
   // /api/v1/orders routes are retired (spec §2): POST reserved stock with no
   // payment, GET exposed addresses to anyone holding an order id.
-  app.use('/api/v1/checkout', createCors({ origins: allowedStorefrontOrigins, credentials: false }))
   app.use('/api/v1/checkout', createCheckoutRouter({ payments, shipping, storefrontUrl, rateLimit: checkoutRateLimit }))
 
   // Walmart calls this endpoint directly with no session cookie and no

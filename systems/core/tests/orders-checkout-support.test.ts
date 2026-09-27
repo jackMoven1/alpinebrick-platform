@@ -277,3 +277,78 @@ describe('transitions lock the order row', () => {
     expect((await inv(v)).reserved).toBe(0)
   })
 })
+
+/**
+ * Ruling F-R4: every multi-row stock write locks inventory rows in ascending
+ * variantId order, whatever the cart/line order, so a reserve and a release
+ * over the same variants cannot deadlock. Deterministic: a blocker holds the
+ * LOWER variant's row; the operation (given lines high-then-low) must block on
+ * that row BEFORE touching the higher one, so the higher row is still free
+ * (NOWAIT succeeds). In line order it would lock the higher row first and
+ * NOWAIT would fail with 55P03.
+ */
+describe('stock writes lock inventory rows in variantId order', () => {
+  async function pair() {
+    const [a, b] = [await vid('BBS-STD'), await vid('ABE-1001')]
+    return a < b ? { low: a, high: b } : { low: b, high: a }
+  }
+
+  async function assertLowLockedFirst(low: string, high: string, op: () => Promise<unknown>) {
+    let open!: () => void
+    const gate = new Promise<void>((r) => { open = r })
+    let signal!: () => void
+    const held = new Promise<void>((r) => { signal = r })
+    const blocker = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT variant_id FROM inventory WHERE variant_id = ${low} FOR UPDATE`
+      signal()
+      await gate
+    }, { timeout: 15_000 })
+    await held
+    const running = op()
+    try {
+      // Wait until the operation is actually blocked on a row lock.
+      for (let i = 0; ; i++) {
+        const [{ n }] = await prisma.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM pg_locks WHERE NOT granted`
+        if (n > 0n) break
+        if (i > 100) throw new Error('operation never blocked on the lower variant row')
+        await new Promise((r) => setTimeout(r, 25))
+      }
+      await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT variant_id FROM inventory WHERE variant_id = ${high} FOR UPDATE NOWAIT`
+      })
+    } finally {
+      open()
+      await blocker
+      await running
+    }
+  }
+
+  it('placeOrder reserves in variantId order, not cart order', async () => {
+    const { low, high } = await pair()
+    await assertLowLockedFirst(low, high, () => placeOrder({
+      email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId: high, quantity: 1 }, { variantId: low, quantity: 1 }],
+    }, deferredTaxAdapter))
+    expect((await inv(low)).reserved).toBe(1)
+    expect((await inv(high)).reserved).toBe(1)
+  })
+
+  it('cancel releases in variantId order', async () => {
+    const { low, high } = await pair()
+    const o = await placeOrder({
+      email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId: high, quantity: 1 }, { variantId: low, quantity: 1 }],
+    }, deferredTaxAdapter)
+    await assertLowLockedFirst(low, high, () => cancelOrder(o.id))
+    expect((await inv(low)).reserved).toBe(0)
+    expect((await inv(high)).reserved).toBe(0)
+  })
+
+  it('fulfillOrder decrements in variantId order', async () => {
+    const { low, high } = await pair()
+    const o = await placeOrder({
+      email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId: high, quantity: 1 }, { variantId: low, quantity: 1 }],
+    }, deferredTaxAdapter)
+    await markOrderPaid(o.id)
+    await assertLowLockedFirst(low, high, () => fulfillOrder(o.id))
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ status: 'fulfilled' })
+  })
+})

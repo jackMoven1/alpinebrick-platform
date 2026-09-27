@@ -83,6 +83,22 @@ export interface TransitionOptions {
    * cancels a `paid` order, so it leaves this unset.
    */
   onlyIfPending?: boolean
+  /**
+   * Extra fields merged into the transition's audit `after` (cancel only).
+   * Admin Cancel of a disputed paid order records `acknowledgedReview` here
+   * (ruling F-R1), in the same row as the status change.
+   */
+  auditAfter?: Record<string, unknown>
+}
+
+/**
+ * Every multi-row stock write takes its inventory row locks in ascending
+ * variantId order (ruling F-R4). Two transactions touching the same variants
+ * in opposite orders -- a checkout reserving [A, B] while a cancel releases
+ * [B, A] -- would otherwise deadlock, and Postgres kills one of them.
+ */
+export function byVariantId<T extends { variantId: string }>(lines: readonly T[]): T[] {
+  return [...lines].sort((a, b) => (a.variantId < b.variantId ? -1 : a.variantId > b.variantId ? 1 : 0))
 }
 
 /**
@@ -154,7 +170,8 @@ export async function placeOrder(input: PlaceOrderInput, taxPort: TaxPort = defa
     // 2. Reserve each line atomically: only reserve if enough is available RIGHT
     //    NOW. Units allocated to Walmart are not the storefront's to sell
     //    (spec §5.1 rule 1).
-    for (const line of resolved) {
+    //    Locked in variantId order, not cart order (see byVariantId).
+    for (const line of byVariantId(resolved)) {
       const affected = await tx.$executeRaw`
         UPDATE inventory SET reserved = reserved + ${line.quantity}
         WHERE variant_id = ${line.variantId}
@@ -270,7 +287,7 @@ export async function fulfillOrder(orderId: string, actorId = 'system', opts: Tr
     if (order.status !== 'paid') {
       throw new OrderError('invalid_transition', `cannot fulfill a ${order.status} order`)
     }
-    for (const line of order.lines) {
+    for (const line of byVariantId(order.lines)) {
       const affected = await tx.$executeRaw`
         UPDATE inventory SET on_hand = on_hand - ${line.quantity}, reserved = reserved - ${line.quantity}
         WHERE variant_id = ${line.variantId} AND reserved >= ${line.quantity} AND on_hand >= ${line.quantity}`
@@ -288,11 +305,12 @@ export async function fulfillOrder(orderId: string, actorId = 'system', opts: Tr
 /**
  * Releases the still-held reservation for every line of `order`, inside the
  * caller's transaction. Shared by cancel and full refund so the release SQL
- * exists once. Returns the released variant ids, in line order.
+ * exists once. Returns the released variant ids, in variantId order (the
+ * lock order -- see byVariantId).
  */
 async function releaseReservation(tx: Prisma.TransactionClient, order: OrderWithLines): Promise<string[]> {
   const released: string[] = []
-  for (const line of order.lines) {
+  for (const line of byVariantId(order.lines)) {
     // Guarded exactly as fulfillOrder is. Without the affected-row check the
     // UPDATE silently matches nothing when reserved has drifted below the line
     // quantity, the order still becomes cancelled, and the remaining hold is
@@ -336,7 +354,7 @@ export async function cancelOrderTx(
   }
   await releaseReservation(tx, order)
   const next = await tx.order.update({ where: { id: orderId }, data: { status: 'cancelled' }, include: { lines: true } })
-  await recordAudit({ actorId, action: 'order.cancelled', target: `order:${orderId}`, after: { status: 'cancelled' } }, tx)
+  await recordAudit({ actorId, action: 'order.cancelled', target: `order:${orderId}`, after: { status: 'cancelled', ...opts.auditAfter } }, tx)
   if (opts.inTransaction) await opts.inTransaction(tx)
   return next
 }

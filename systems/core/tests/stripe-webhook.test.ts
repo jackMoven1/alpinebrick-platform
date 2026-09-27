@@ -139,6 +139,30 @@ describe('POST /api/v1/webhooks/stripe', () => {
     expect(await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ status: 'paid', reviewReason: 'outside_shipping_area', shipToState: state })
   })
 
+  // Ruling F-R4a: a paid session with no shipping address (e.g. an endpoint
+  // pinned to an older API version renders it elsewhere) cannot be shipped.
+  it('flags a paid session with no shipping address as outside_shipping_area and logs the order', async () => {
+    const { app, payments } = setup()
+    const order = await pendingOrder(app)
+    const session = completedSession({ orderId: order.id, sessionId: order.stripeCheckoutSessionId!, subtotal: 9998 }) as Record<string, unknown>
+    delete session.collected_information
+    await deliver(app, payments, stripeEvent('checkout.session.completed', session))
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ status: 'paid', reviewReason: 'outside_shipping_area', shipLine1: null })
+    const logged = errorSpy.mock.calls.map((c) => String(c[0]))
+    expect(logged.some((m) => m.includes(order.id) && m.includes('no shipping address'))).toBe(true)
+  })
+
+  it('a missing shipping address still yields to amount_mismatch (P17)', async () => {
+    const { app, payments } = setup()
+    const order = await pendingOrder(app)
+    const session = completedSession({ orderId: order.id, sessionId: order.stripeCheckoutSessionId!, subtotal: 9998, total: 1 }) as Record<string, unknown>
+    session.collected_information = { shipping_details: null }
+    await deliver(app, payments, stripeEvent('checkout.session.completed', session))
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ status: 'paid', reviewReason: 'amount_mismatch' })
+    const logged = errorSpy.mock.calls.map((c) => String(c[0]))
+    expect(logged.some((m) => m.includes(order.id) && m.includes('no shipping address'))).toBe(true)
+  })
+
   it('resolves a seeded referral and flags an unknown one', async () => {
     const { app, payments } = setup()
     const partner = await prisma.affiliatePartner.create({ data: { name: 'Brick Club' } })
@@ -294,6 +318,17 @@ describe('POST /api/v1/webhooks/stripe', () => {
     await deliver(app, payments, stripeEvent('charge.dispute.created', { id: 'dp_1', object: 'dispute', charge: 'ch_1', payment_intent: o.stripePaymentIntentId }))
     expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).reviewReason).toBe('disputed')
     expect(errorSpy).toHaveBeenCalled()
+  })
+
+  it('charge.dispute.created keeps the prior reviewReason in the audit before', async () => {
+    const { app, payments } = setup()
+    const o = await paidOrder(app, payments, 1)
+    await prisma.order.update({ where: { id: o.id }, data: { reviewReason: 'outside_shipping_area' } })
+    await deliver(app, payments, stripeEvent('charge.dispute.created', { id: 'dp_2', object: 'dispute', charge: 'ch_1', payment_intent: o.stripePaymentIntentId }))
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).reviewReason).toBe('disputed')
+    const audit = await prisma.auditLog.findFirstOrThrow({ where: { action: 'order.disputed', target: `order:${o.id}` } })
+    expect(audit.before).toEqual({ reviewReason: 'outside_shipping_area' })
+    expect(audit.after).toEqual({ dispute: 'dp_2', reviewReason: 'disputed' })
   })
 
   it('acknowledges event types it does not handle without recording them', async () => {

@@ -154,6 +154,87 @@ describe('admin orders', () => {
     expect(res.body.code).toBe('INVALID_TRANSITION')
   })
 
+  // Ruling F-R1: a lost dispute never sends charge.refunded, so a disputed,
+  // unshipped order would hold its stock forever without this path.
+  async function disputed(qty = 1) {
+    const q = await paid('MI', qty)
+    await deliver(ctx.app, ctx.payments, stripeEvent('charge.dispute.created', {
+      id: `dp_${q.id}`, object: 'dispute', charge: 'ch_1', payment_intent: q.stripePaymentIntentId,
+    }))
+    return prisma.order.findUniqueOrThrow({ where: { id: q.id } })
+  }
+
+  it('cancels a disputed paid order with acknowledgement, releasing its stock (F-R1)', async () => {
+    const d = await disputed(2)
+    expect(d).toMatchObject({ status: 'paid', reviewReason: 'disputed' })
+    expect((await inventoryOf('BBS-STD')).reserved).toBe(2)
+    const res = await write('post', `/orders/${d.id}/cancel`, { acknowledgeReview: true })
+    expect(res.status).toBe(200)
+    expect(res.body.status).toBe('cancelled')
+    expect(await inventoryOf('BBS-STD')).toMatchObject({ onHand: 25, reserved: 0 })
+    // The session is already complete: nothing to expire.
+    expect(ctx.payments.expired).toEqual([])
+    const audit = await prisma.auditLog.findFirstOrThrow({ where: { action: 'order.cancelled', target: `order:${d.id}` } })
+    expect(audit.actorId).toBe(actorId)
+    expect(audit.after).toMatchObject({ status: 'cancelled', acknowledgedReview: 'disputed' })
+  })
+
+  it('refuses to cancel a disputed paid order without acknowledgement (F-R1)', async () => {
+    const d = await disputed()
+    const res = await write('post', `/orders/${d.id}/cancel`)
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('REVIEW_REQUIRED')
+    expect(res.body.details).toEqual({ reviewReason: 'disputed' })
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: d.id } })).toMatchObject({ status: 'paid' })
+    expect((await inventoryOf('BBS-STD')).reserved).toBe(1)
+  })
+
+  it('still refuses to cancel a non-disputed paid order, acknowledged or flagged (F-R1)', async () => {
+    const q = await paid()
+    const acked = await write('post', `/orders/${q.id}/cancel`, { acknowledgeReview: true })
+    expect(acked.status).toBe(409)
+    expect(acked.body.code).toBe('INVALID_TRANSITION')
+    const r = await paid('AK')
+    const flagged = await write('post', `/orders/${r.id}/cancel`, { acknowledgeReview: true })
+    expect(flagged.status).toBe(409)
+    expect(flagged.body.code).toBe('INVALID_TRANSITION')
+    expect((await inventoryOf('BBS-STD')).reserved).toBe(2)
+  })
+
+  it('validates the cancel body', async () => {
+    const d = await disputed()
+    const res = await write('post', `/orders/${d.id}/cancel`, { acknowledgeReview: 'yes' })
+    expect(res.status).toBe(400)
+    expect(res.body.fields.acknowledgeReview).toBeDefined()
+  })
+
+  // Ruling F-R3: the review gate is re-checked under the row lock. The
+  // unlocked pre-read is made stale by stubbing it: the order is flagged in
+  // the DB, but the first read says it is not.
+  it('refuses to ship when the order was flagged after the unlocked read (F-R3)', async () => {
+    const q = await paid()
+    await prisma.order.update({ where: { id: q.id }, data: { reviewReason: 'disputed' } })
+    const stale = { channel: 'storefront', status: 'paid', reviewReason: null, stripeCheckoutSessionId: q.stripeCheckoutSessionId }
+    vi.spyOn(prisma.order, 'findUnique').mockResolvedValueOnce(stale as any)
+    const res = await write('post', `/orders/${q.id}/ship`, { carrier: 'UPS', trackingNumber: '1Z999' })
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('REVIEW_REQUIRED')
+    expect(res.body.details).toEqual({ reviewReason: 'disputed' })
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: q.id } })).toMatchObject({ status: 'paid', shippedAt: null })
+    expect((await inventoryOf('BBS-STD')).reserved).toBe(1)
+  })
+
+  it('audits the locked reviewReason when an acknowledged ship races a flag (F-R3)', async () => {
+    const q = await paid()
+    await prisma.order.update({ where: { id: q.id }, data: { reviewReason: 'disputed' } })
+    const stale = { channel: 'storefront', status: 'paid', reviewReason: null, stripeCheckoutSessionId: q.stripeCheckoutSessionId }
+    vi.spyOn(prisma.order, 'findUnique').mockResolvedValueOnce(stale as any)
+    const res = await write('post', `/orders/${q.id}/ship`, { carrier: 'UPS', trackingNumber: '1Z999', acknowledgeReview: true })
+    expect(res.status).toBe(200)
+    const audit = await prisma.auditLog.findFirstOrThrow({ where: { action: 'order.ship', target: `order:${q.id}` } })
+    expect(audit.after).toMatchObject({ acknowledgedReview: 'disputed' })
+  })
+
   it('reads and updates shipping settings', async () => {
     expect((await get('/settings/shipping')).body).toEqual({ flatRateCents: 995, freeThresholdCents: 15000, sessionMinutes: 30 })
     const ok = await write('put', '/settings/shipping', { flatRateCents: 1295, freeThresholdCents: 20000 })

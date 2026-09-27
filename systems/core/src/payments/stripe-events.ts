@@ -106,13 +106,19 @@ async function onCompleted(tx: Tx, session: Stripe.Checkout.Session, deps: { ema
   const outside = OUTSIDE_SHIPPING_AREA.has(state) || (addr?.country != null && addr.country !== 'US')
   if (mismatch) console.error(`[stripe] order ${order.id} amount mismatch: Stripe ${totalCents}, expected ${expected}`)
   if (outside) console.error(`[stripe] order ${order.id} ships outside the contiguous US (${state || addr?.country}) -- refund in Stripe`)
+  // Ruling F-R4a: no address at all (e.g. the webhook endpoint is pinned to an
+  // older API version, which renders shipping_details elsewhere). It cannot be
+  // shipped, so it is flagged with the existing 'outside_shipping_area' value
+  // -- no new enum value -- and this log line says which it really is.
+  const noAddress = !addr
+  if (noAddress) console.error(`[stripe] order ${order.id} was paid with no shipping address (session ${session.id}) -- check the webhook endpoint's API version; get the address from Stripe or refund`)
 
   const paid = await markOrderPaidTx(tx, order.id, 'system', {
     ...details,
     ...money,
-    // One column, two conditions: the money problem wins (ruling P17); both
-    // were logged above, and the address stays on the order.
-    reviewReason: mismatch ? 'amount_mismatch' : outside ? 'outside_shipping_area' : null,
+    // One column, several conditions: the money problem wins (ruling P17);
+    // all were logged above, and the address (if any) stays on the order.
+    reviewReason: mismatch ? 'amount_mismatch' : outside || noAddress ? 'outside_shipping_area' : null,
   })
 
   const customer = await upsertCustomerFromCheckout({ email: details.email, name: details.shipName, consent: order.marketingOptIn }, tx)
@@ -171,8 +177,15 @@ async function onRefunded(tx: Tx, charge: Stripe.Charge): Promise<FollowUp | nul
 
 async function onDispute(tx: Tx, dispute: Stripe.Dispute): Promise<FollowUp | null> {
   const orderId = await orderIdByPaymentIntent(tx, idOf(dispute.payment_intent as string | { id: string } | null))
+  // Locked, so the reviewReason read here is the one being overwritten. The
+  // dispute replaces it (one column); the prior value survives in `before`.
+  const order = await lockOrderRow(tx, orderId)
+  const prior = order?.reviewReason ?? null
   await tx.order.update({ where: { id: orderId }, data: { reviewReason: 'disputed' } })
-  await recordAudit({ actorId: 'system', action: 'order.disputed', target: `order:${orderId}`, after: { dispute: dispute.id } }, tx)
+  await recordAudit({
+    actorId: 'system', action: 'order.disputed', target: `order:${orderId}`,
+    before: { reviewReason: prior }, after: { dispute: dispute.id, reviewReason: 'disputed' },
+  }, tx)
   console.error(`[stripe] order ${orderId} has a DISPUTE (${dispute.id}) -- respond in the Stripe dashboard`)
   return null
 }
