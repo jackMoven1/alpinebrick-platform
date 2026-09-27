@@ -55,7 +55,9 @@ async function releasePreviousOrder(orderId: string, payments: PaymentsPort): Pr
     // Expire FIRST: cancelling while the session is still open would release
     // stock the customer can then pay for in the other tab.
     if ((await payments.expireCheckoutSession(prev.stripeCheckoutSessionId)) === 'complete') return
-    await cancelOrder(orderId, 'system')
+    // onlyIfPending (fix round 1, ruling T8-R1): a webhook may mark this
+    // order paid between the expire call above and the lock being taken.
+    await cancelOrder(orderId, 'system', { onlyIfPending: true })
   } catch (err) {
     if (err instanceof OrderError && err.code === 'invalid_transition') return
     console.error('[checkout] could not release previous order', orderId, scrubError(err))
@@ -126,7 +128,10 @@ export async function startCheckout(req: CheckoutRequest, deps: CheckoutDeps): P
   } catch (err) {
     console.error('[checkout] Stripe session creation failed', order.id, scrubError(err))
     try {
-      await cancelOrder(order.id, 'system')
+      // onlyIfPending (fix round 1, ruling T8-R1): defence against a webhook
+      // marking this order paid concurrently with the Stripe session-create
+      // failure being handled here.
+      await cancelOrder(order.id, 'system', { onlyIfPending: true })
     } catch (releaseErr) {
       console.error('[checkout] releasing after the Stripe failure also failed; the sweep will retry', order.id, scrubError(releaseErr))
     }

@@ -142,7 +142,12 @@ async function onExpired(tx: Tx, session: Stripe.Checkout.Session): Promise<Foll
   const orderId = session.metadata?.orderId ?? session.client_reference_id
   const order = orderId ? await lockOrderRow(tx, orderId) : null
   if (!order || order.status !== 'pending') return null
-  const cancelled = await cancelOrderTx(tx, order.id, 'system')
+  // onlyIfPending (fix round 1, ruling T8-R1): already re-checked above under
+  // the same lock, but passed here too for defence in depth -- this is one
+  // of every storefront-initiated cancel path that must never undo a paid
+  // order.
+  const cancelled = await cancelOrderTx(tx, order.id, 'system', { onlyIfPending: true })
+  if (!cancelled) return null
   return () => enqueueInventoryPushesAfterCommit(cancelled.lines.map((l) => l.variantId), `checkout.expired order:${order.id}`)
 }
 

@@ -162,6 +162,40 @@ describe('refundOrderTx is monotonic and validated', () => {
   })
 })
 
+// Fix round 1 (Ruling T8-R1): cancelOrderTx({ onlyIfPending: true }) must be
+// a pure no-op against a paid order -- no update, no stock release, no audit
+// row -- so a storefront-initiated cancel that loses a race against the
+// paid webhook can never undo it.
+describe('cancelOrderTx with onlyIfPending', () => {
+  const orderRow = (id: string) => prisma.order.findUniqueOrThrow({ where: { id } })
+  const audits = (id: string, action: string) => prisma.auditLog.count({ where: { action, target: `order:${id}` } })
+
+  it('is a no-op against a paid order: no status change, no release, no audit row', async () => {
+    const v = await vid('BBS-STD')
+    const o = await pending(v, 2)
+    await markOrderPaid(o.id)
+    const before = await audits(o.id, 'order.cancelled')
+
+    const result = await prisma.$transaction((tx) => cancelOrderTx(tx, o.id, 'system', { onlyIfPending: true }))
+
+    expect(result).toBeNull()
+    expect(await orderRow(o.id)).toMatchObject({ status: 'paid' })
+    expect((await inv(v)).reserved).toBe(2)
+    expect(await audits(o.id, 'order.cancelled')).toBe(before)
+  })
+
+  it('still cancels a pending order normally', async () => {
+    const v = await vid('BBS-STD')
+    const o = await pending(v, 2)
+
+    const result = await prisma.$transaction((tx) => cancelOrderTx(tx, o.id, 'system', { onlyIfPending: true }))
+
+    expect(result).not.toBeNull()
+    expect(await orderRow(o.id)).toMatchObject({ status: 'cancelled' })
+    expect((await inv(v)).reserved).toBe(0)
+  })
+})
+
 /**
  * Deterministic lock tests (controller Ruling P3). Transaction A takes the
  * order row lock and holds it on a gate; a second transition is started

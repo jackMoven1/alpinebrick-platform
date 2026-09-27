@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import { prisma } from '../src/prisma.js'
 import { resetDb } from './helpers/db.js'
 import { seed } from '../prisma/seed.js'
-import { placeOrder, PENDING_CHECKOUT_EMAIL } from '../src/orders/orders.service.js'
+import { placeOrder, markOrderPaid, PENDING_CHECKOUT_EMAIL } from '../src/orders/orders.service.js'
 import { deferredTaxAdapter } from '../src/ports/tax/deferred.adapter.js'
 import { unconfiguredPaymentsPort } from '../src/ports/payments/index.js'
 import { sweepAbandonedCheckouts, startCheckoutSweep } from '../src/checkout/sweep.js'
@@ -67,6 +67,28 @@ describe('sweepAbandonedCheckouts', () => {
     await age(orphan.id, 41)
     expect((await sweepAbandonedCheckouts(payments)).cancelled).toEqual([orphan.id])
     expect((await inventoryOf('BBS-STD')).reserved).toBe(0)
+  })
+
+  // Fix round 1 (Ruling T8-R1): the sweep's initial SELECT picks up the order
+  // while it is still `pending`, then Stripe reports the session expired --
+  // but the webhook commits pending->paid in the gap between that Stripe
+  // read and the sweep's cancel taking the row lock. The lock forces the
+  // cancel to re-read the committed status: with `onlyIfPending`, it must
+  // skip rather than release stock Stripe was just paid for.
+  it('never cancels an order the webhook marks paid between the Stripe read and the cancel', async () => {
+    const { app, payments } = makeApp()
+    const o = await agedCheckout(app, 41)
+    payments.setSession(o.stripeCheckoutSessionId!, 'expired')
+    const originalRetrieve = payments.retrieveCheckoutSession.bind(payments)
+    payments.retrieveCheckoutSession = async (id: string) => {
+      await markOrderPaid(o.id)
+      return originalRetrieve(id)
+    }
+
+    expect(await sweepAbandonedCheckouts(payments)).toEqual({ cancelled: [], skipped: [o.id] })
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('paid')
+    expect((await inventoryOf('BBS-STD')).reserved).toBe(1)
+    expect(await prisma.auditLog.count({ where: { action: 'order.cancelled', target: `order:${o.id}` } })).toBe(0)
   })
 
   it('never touches Walmart orders', async () => {

@@ -26,7 +26,8 @@ describe('order transitions', () => {
   it('cancelling a pending order releases the reservation without touching on_hand', async () => {
     const order = await place('BBS-STD', 4)
     const cancelled = await cancelOrder(order.id)
-    expect(cancelled.status).toBe('cancelled')
+    // opts.onlyIfPending is unset here, so this never skips (fix round 1, T8-R1).
+    expect(cancelled?.status).toBe('cancelled')
     const inv = await prisma.inventory.findFirstOrThrow({ where: { variant: { sku: 'BBS-STD' } } })
     expect(inv.onHand).toBe(25)
     expect(inv.reserved).toBe(0)

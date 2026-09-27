@@ -71,6 +71,18 @@ const defaultTaxPort = createFlatRateTaxPort()
  */
 export interface TransitionOptions {
   inTransaction?: (tx: Prisma.TransactionClient) => Promise<void>
+  /**
+   * Cancel only if the locked order is still `pending` (fix round 1, ruling
+   * T8-R1). Every storefront-initiated cancel races a possible
+   * pending->paid webhook write: without this, cancelOrderTx's guard (which
+   * also accepts `paid`) would happily cancel an order Stripe just took
+   * money for. When set and the order is not `pending`, the transition is a
+   * pure no-op -- no update, no stock release, no audit row -- and the Tx
+   * variant returns `null` so the caller can tell a real cancel from a
+   * skip. Walmart's cancel (channels/walmart/shipping.ts) legitimately
+   * cancels a `paid` order, so it leaves this unset.
+   */
+  onlyIfPending?: boolean
 }
 
 /**
@@ -306,14 +318,19 @@ async function releaseReservation(tx: Prisma.TransactionClient, order: OrderWith
   return released
 }
 
-/** pending|paid -> cancelled inside the caller's transaction; releases the reservation. */
+/**
+ * pending|paid -> cancelled inside the caller's transaction; releases the
+ * reservation. `opts.onlyIfPending` skips the transition entirely (returns
+ * `null`) when the locked order is not `pending` -- see TransitionOptions.
+ */
 export async function cancelOrderTx(
   tx: Prisma.TransactionClient,
   orderId: string,
   actorId = 'system',
   opts: TransitionOptions = {},
-): Promise<OrderWithLines> {
+): Promise<OrderWithLines | null> {
   const order = await loadOrderForUpdate(tx, orderId)
+  if (opts.onlyIfPending && order.status !== 'pending') return null
   if (order.status !== 'pending' && order.status !== 'paid') {
     throw new OrderError('invalid_transition', `cannot cancel a ${order.status} order`)
   }
@@ -324,8 +341,10 @@ export async function cancelOrderTx(
   return next
 }
 
-export async function cancelOrder(orderId: string, actorId = 'system', opts: TransitionOptions = {}): Promise<OrderDto> {
+/** `null` means `opts.onlyIfPending` skipped it (order was no longer pending) -- no pushes to enqueue. */
+export async function cancelOrder(orderId: string, actorId = 'system', opts: TransitionOptions = {}): Promise<OrderDto | null> {
   const updated = await prisma.$transaction((tx) => cancelOrderTx(tx, orderId, actorId, opts))
+  if (!updated) return null
   await enqueueInventoryPushesAfterCommit(updated.lines.map((l) => l.variantId), `order.cancelled order:${orderId}`)
   return toDto(updated)
 }

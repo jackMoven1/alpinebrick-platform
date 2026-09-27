@@ -43,8 +43,13 @@ export async function sweepAbandonedCheckouts(
           continue
         }
       }
-      await cancelOrder(order.id, 'system')
-      cancelled.push(order.id)
+      // onlyIfPending (fix round 1, ruling T8-R1): the webhook may have
+      // marked this order paid between the Stripe read above and this call
+      // taking the row lock; a skip there must not release stock Stripe was
+      // just paid for, and must not count as cancelled.
+      const result = await cancelOrder(order.id, 'system', { onlyIfPending: true })
+      if (result) cancelled.push(order.id)
+      else skipped.push(order.id)
     } catch (err) {
       if (!(err instanceof OrderError && err.code === 'invalid_transition')) {
         console.error('[checkout-sweep] failed for order', order.id, scrubError(err))
