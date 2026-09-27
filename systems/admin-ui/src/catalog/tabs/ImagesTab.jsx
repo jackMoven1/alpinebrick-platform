@@ -3,7 +3,7 @@ import { imageUrlFromKey } from '../../lib/imageUrl.js'
 import { errorText } from '../../lib/errorText.js'
 import api from '../../data/api.js'
 import ProgressBar from '../../ui/ProgressBar.jsx'
-import { checkImageFile } from './imageFiles.js'
+import { checkImageFile, ACCEPTED_TYPES } from './imageFiles.js'
 
 /**
  * Images arrive from core as immutable storage KEYS, never URLs.
@@ -12,10 +12,30 @@ import { checkImageFile } from './imageFiles.js'
  * mirroring core's image.service.ts), then per file: request an upload
  * token, PUT straight to storage with progress, then confirm. One file
  * failing shows core's message and a Retry without stopping the others.
+ *
+ * The upload (token → PUT → confirm) and the product refresh are separate
+ * steps on purpose. Once confirm succeeds the photo is saved server-side —
+ * a later refresh failure must never be treated the same as an upload
+ * failure, because Retry would re-run requestImageUpload and create a
+ * duplicate photo. So a row that finishes confirm goes to 'saved'; refresh
+ * is requested once per batch (and once per individual Retry) and, on
+ * success, clears every 'saved'/'refresh-error' row at once — never per
+ * file — so two uploads confirming out of order can't leave the grid
+ * missing a photo from a stale intermediate refresh.
+ *
  * Task 8 adds the per-photo controls (reorder, alt save, delete) on the
  * read-only grid below.
  */
 let nextUploadId = 0
+
+const STAGE_LABELS = {
+  waiting: 'Waiting',
+  uploading: 'Uploading…',
+  confirming: 'Checking…',
+  saved: 'Saved',
+  'refresh-error': 'Saved',
+  error: 'Failed',
+}
 
 export default function ImagesTab({ product, onUpdated = () => {} }) {
   const images = product.images || []
@@ -25,19 +45,42 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
     setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)))
   }, [])
 
-  const runUpload = useCallback(async (u) => {
+  // Re-fetches the product once and applies it. On success, every row that
+  // was waiting on this refresh (saved, or previously stuck on a failed
+  // refresh) is dropped — the grid below now shows it. On failure, saved
+  // rows switch to 'refresh-error' with a Refresh action, never Retry.
+  const refresh = useCallback(async () => {
+    try {
+      const fresh = await api.getProduct(product.id)
+      onUpdated(fresh)
+      setUploads((prev) => prev.filter((u) => u.stage !== 'saved' && u.stage !== 'refresh-error'))
+    } catch (err) {
+      const message = errorText(err)
+      setUploads((prev) => prev.map((u) => (u.stage === 'saved' ? { ...u, stage: 'refresh-error', error: message } : u)))
+    }
+  }, [product.id, onUpdated])
+
+  const uploadOne = useCallback(async (u) => {
     update(u.id, { stage: 'uploading', progress: 0, error: null })
     try {
       const t = await api.requestImageUpload(product.id, u.file)
-      await api.uploadToStorage(t.uploadUrl, u.file, (p) => update(u.id, { progress: p }))
-      update(u.id, { stage: 'confirming' })
+      await api.uploadToStorage(t.uploadUrl, u.file, (p) => update(u.id, { progress: Math.round(p * 100) }))
+      update(u.id, { stage: 'confirming', progress: 100 })
       await api.confirmImage(t.imageId)
-      update(u.id, { stage: 'done' })
-      onUpdated(await api.getProduct(product.id))
+      update(u.id, { stage: 'saved', error: null })
+      return { ok: true }
     } catch (err) {
       update(u.id, { stage: 'error', error: errorText(err) })
+      return { ok: false }
     }
-  }, [product.id, onUpdated, update])
+  }, [product.id, update])
+
+  // A single Retry only re-runs the upload for that row, then refreshes once
+  // for it — it never touches rows that are mid-flight elsewhere.
+  const retry = useCallback(async (u) => {
+    const res = await uploadOne(u)
+    if (res.ok) await refresh()
+  }, [uploadOne, refresh])
 
   const addFiles = useCallback((fileList) => {
     const files = Array.from(fileList || [])
@@ -54,8 +97,13 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
       }
     })
     setUploads((prev) => [...prev, ...entries])
-    Promise.allSettled(entries.filter((e) => !e.precheck).map(runUpload))
-  }, [runUpload])
+    const valid = entries.filter((e) => !e.precheck)
+    if (valid.length === 0) return
+    Promise.allSettled(valid.map(uploadOne)).then((results) => {
+      const anySaved = results.some((r) => r.status === 'fulfilled' && r.value?.ok)
+      if (anySaved) return refresh()
+    })
+  }, [uploadOne, refresh])
 
   const onInputChange = (e) => {
     addFiles(e.target.files)
@@ -68,7 +116,7 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
   const onDragOver = (e) => e.preventDefault()
   const dismiss = (id) => setUploads((prev) => prev.filter((u) => u.id !== id))
 
-  const visibleUploads = uploads.filter((u) => u.stage !== 'done')
+  const visibleUploads = uploads
 
   return (
     <div className="space-y-4">
@@ -86,7 +134,7 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
             id="images-add"
             type="file"
             multiple
-            accept="image/jpeg,image/png,image/webp"
+            accept={ACCEPTED_TYPES.join(',')}
             onChange={onInputChange}
             className="mt-2"
           />
@@ -113,7 +161,7 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
                 <>
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate">{u.file.name}</span>
-                    <span className="text-xs text-gray-400">{u.stage}</span>
+                    <span className="text-xs text-gray-400">{STAGE_LABELS[u.stage] ?? u.stage}</span>
                   </div>
                   {(u.stage === 'uploading' || u.stage === 'confirming') && <ProgressBar value={u.progress} />}
                   {u.stage === 'error' && (
@@ -122,11 +170,22 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
                       <button
                         type="button"
                         aria-label={`Retry ${u.file.name}`}
-                        disabled={u.stage === 'uploading' || u.stage === 'confirming'}
-                        onClick={() => runUpload(u)}
-                        className="rounded-pill bg-ink px-3 py-1 text-xs text-white disabled:opacity-50"
+                        onClick={() => retry(u)}
+                        className="rounded-pill bg-ink px-3 py-1 text-xs text-white"
                       >
                         Retry
+                      </button>
+                    </div>
+                  )}
+                  {u.stage === 'refresh-error' && (
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <span className="text-accent">Photo saved, but the list couldn&rsquo;t refresh ({u.error})</span>
+                      <button
+                        type="button"
+                        onClick={() => refresh()}
+                        className="rounded-pill bg-ink px-3 py-1 text-xs text-white"
+                      >
+                        Refresh
                       </button>
                     </div>
                   )}
