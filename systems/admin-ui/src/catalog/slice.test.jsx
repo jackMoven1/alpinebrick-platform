@@ -21,7 +21,7 @@ const product = {
     inventory: { onHand: 1, reserved: 0, walmartAllocation: null, storefrontAvailable: 1, walmartAvailable: 1 },
     locked: { sku: false, delete: false }, walmartListing: null,
   }],
-  images: [{ storageKey: 'products/p1/i1/original.jpg', alt: 'Front', width: 900, height: 720, position: 0 }],
+  images: [{ id: 'i1', storageKey: 'products/p1/i1/original.jpg', alt: 'Front', width: 900, height: 720, position: 0 }],
 }
 
 afterEach(() => vi.clearAllMocks())
@@ -49,15 +49,20 @@ describe('VariantsTab — live since task 13', () => {
   })
 })
 
+// Images used to sit in the "unbacked" block below. Task 7 backed its
+// upload path with core's token/PUT/confirm endpoints, so it now asserts the
+// live control instead of the retired "not in this phase" banner.
+describe('ImagesTab — live since task 7', () => {
+  it('offers an enabled upload control and no read-only notice', () => {
+    wrap(<ImagesTab product={product} onUpdated={() => {}} />)
+    expect(screen.queryByText(/not in this phase/i)).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Add photos')).toBeEnabled()
+  })
+})
+
 // Unbacked features must be visibly unavailable BEFORE effort is invested,
 // not throw after a form is filled in.
 describe('unbacked tabs are disabled', () => {
-
-  it('ImagesTab explains it is unavailable and offers no enabled control', () => {
-    wrap(<ImagesTab product={product} />)
-    expect(screen.getByText(/not in this phase/i)).toBeInTheDocument()
-    for (const b of screen.queryAllByRole('button')) expect(b).toBeDisabled()
-  })
 
   it('InfoTab requires an explicit edit before Save changes is enabled', () => {
     wrap(<InfoTab product={product} onUpdated={() => {}} />)

@@ -1,15 +1,20 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Routes, Route } from 'react-router-dom'
+import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import { ToastProvider } from '../ui/toast.jsx'
 import ProductDetail from './ProductDetail.jsx'
+import token from '../data/__fixtures__/image-upload-token.json'
 
 // ProductDetail now calls core rather than the mock, so the API is stubbed
 // here. The product shape is core's DTO: priceCents (not a float `price`),
 // and images as storage keys.
 vi.mock('../data/api.js', () => ({
-  default: { getProduct: vi.fn(), setProductStatus: vi.fn() },
+  default: {
+    getProduct: vi.fn(), setProductStatus: vi.fn(),
+    requestImageUpload: vi.fn(), uploadToStorage: vi.fn(), confirmImage: vi.fn(),
+    reorderImages: vi.fn(), updateImageAlt: vi.fn(), deleteImage: vi.fn(),
+  },
 }))
 import api from '../data/api.js'
 
@@ -21,8 +26,10 @@ const PRODUCT = {
     inventory: { onHand: 2, reserved: 0, walmartAllocation: null, storefrontAvailable: 2, walmartAvailable: 2 },
     locked: { sku: false, delete: false }, walmartListing: null,
   }],
-  images: [{ storageKey: 'products/prod-001/i1/original.jpg', alt: 'Front', width: 900, height: 720, position: 0 }],
+  images: [{ id: 'i1', storageKey: 'products/prod-001/i1/original.jpg', alt: 'Front', width: 900, height: 720, position: 0 }],
 }
+
+const PRODUCT_2 = { ...PRODUCT, id: 'prod-002', slug: 'second-set', name: 'Second Product', images: [] }
 
 function renderDetail() {
   return render(
@@ -30,6 +37,27 @@ function renderDetail() {
       <MemoryRouter initialEntries={['/products/prod-001']}>
         <Routes><Route path="/products/:id" element={<ProductDetail />} /></Routes>
       </MemoryRouter>
+    </ToastProvider>,
+  )
+}
+
+// Same route element (:id changes, ProductDetail itself doesn't remount), so
+// this exercises the real navigation path a click on "← Products" then
+// another product would take.
+function Harness() {
+  const navigate = useNavigate()
+  return (
+    <>
+      <button onClick={() => navigate('/products/prod-002')}>go to prod-002</button>
+      <Routes><Route path="/products/:id" element={<ProductDetail />} /></Routes>
+    </>
+  )
+}
+
+function renderWithNav() {
+  return render(
+    <ToastProvider>
+      <MemoryRouter initialEntries={['/products/prod-001']}><Harness /></MemoryRouter>
     </ToastProvider>,
   )
 }
@@ -110,5 +138,29 @@ describe('ProductDetail', () => {
       expect(screen.getByRole('button', { name: 'Add variant' })).toBeInTheDocument()
       confirmSpy.mockRestore()
     })
+  })
+
+  // Fix round 3, finding 3: ImagesTab tracks its own in-flight uploads. The
+  // tab selection survives navigating to a different product (ProductDetail
+  // itself isn't remounted, only its :id param changes), so without a key
+  // keyed to the product id, a leftover upload row from the previous
+  // product would still be showing once the new product's data loads.
+  it('resets the Images tab (keyed by product id) when navigating to a different product', async () => {
+    const png = (name) => new File([new Uint8Array(10)], name, { type: 'image/png' })
+    vi.mocked(api.getProduct).mockImplementation((id) => Promise.resolve(id === 'prod-002' ? PRODUCT_2 : PRODUCT))
+    vi.mocked(api.requestImageUpload).mockResolvedValue(token)
+    vi.mocked(api.uploadToStorage).mockImplementation(() => new Promise(() => {})) // never resolves — stays "Uploading…"
+    const user = userEvent.setup()
+    renderWithNav()
+    await screen.findByText('Classic Brick Set')
+    await user.click(screen.getByRole('button', { name: 'Images' }))
+    await user.upload(screen.getByLabelText('Add photos'), [png('stale.png')])
+    expect(await screen.findByText('stale.png')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'go to prod-002' }))
+    await screen.findByText('Second Product')
+    // Tab selection persists across the navigation (still on Images); the
+    // previous product's in-flight upload row must not still be showing.
+    expect(screen.queryByText('stale.png')).not.toBeInTheDocument()
   })
 })

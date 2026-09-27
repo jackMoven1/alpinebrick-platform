@@ -72,23 +72,15 @@ describe('error handling', () => {
   })
 })
 
-describe('unimplemented methods', () => {
-  it('exposes every method mockApi does', () => {
+describe('method surface', () => {
+  it('exposes every product/variant method plus the image methods', () => {
     const expected = [
       'getOverviewStats', 'listProducts', 'getProduct', 'createProduct', 'updateProduct',
       'archiveProduct', 'setProductStatus', 'bulkSetStatus', 'createVariant', 'updateVariant',
-      'deleteVariant', 'bulkCreateVariants', 'addImage', 'reorderImages', 'updateImageAlt', 'deleteImage',
+      'deleteVariant', 'bulkCreateVariants',
+      'requestImageUpload', 'uploadToStorage', 'confirmImage', 'reorderImages', 'updateImageAlt', 'deleteImage',
     ]
     for (const m of expected) expect(typeof api[m]).toBe('function')
-  })
-
-  // Falling back to the mock would show edits succeeding and losing them on
-  // reload. Throwing is the safe failure.
-  it('throws rather than silently succeeding', async () => {
-    await expect(api.addImage('p1', {})).rejects.toThrow(/not implemented/i)
-    await expect(api.reorderImages('p1', [])).rejects.toThrow(/not implemented/i)
-    await expect(api.updateImageAlt('p1', 'img1', 'x')).rejects.toThrow(/not implemented/i)
-    await expect(api.deleteImage('p1', 'img1')).rejects.toThrow(/not implemented/i)
   })
 })
 
