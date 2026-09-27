@@ -18,12 +18,14 @@ import {
 } from './helpers/checkout.js'
 
 let errorSpy: ReturnType<typeof vi.spyOn>
+let warnSpy: ReturnType<typeof vi.spyOn>
 beforeEach(async () => {
   await resetDb(); await seed()
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
   vi.mocked(enqueueInventoryPush).mockClear()
 })
-afterAll(async () => { errorSpy.mockRestore(); await prisma.$disconnect() })
+afterAll(async () => { errorSpy.mockRestore(); warnSpy.mockRestore(); await prisma.$disconnect() })
 
 /** A pending checkout for `qty` x BBS-STD ($49.99), through the real endpoint. */
 async function pendingOrder(app: any, qty = 2, extra: Record<string, unknown> = {}) {
@@ -250,6 +252,40 @@ describe('POST /api/v1/webhooks/stripe', () => {
     expect(errorSpy).toHaveBeenCalled()
     expect(String(errorSpy.mock.calls[0][0])).toContain(old.id)
     expect(await prisma.stripeEvent.count()).toBe(0)
+  })
+
+  it('a paid-after-cancel order carries Stripe’s figures, so refunding Stripe’s total applies', async () => {
+    const { app, payments } = setup()
+    const order = await pendingOrder(app)
+    await deliver(app, payments, stripeEvent('checkout.session.expired', { id: order.stripeCheckoutSessionId, object: 'checkout.session', metadata: { orderId: order.id } }))
+    await deliver(app, payments, stripeEvent('checkout.session.completed', completedSession({
+      orderId: order.id, sessionId: order.stripeCheckoutSessionId!, subtotal: 9998, shipping: 995, tax: 660,
+    })))
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({
+      status: 'cancelled', reviewReason: 'paid_after_cancel',
+      taxCents: 660, shippingCents: 995, totalCents: 11653, taxJurisdiction: 'stripe_tax', taxRateBps: 600,
+    })
+    const res = await deliver(app, payments, stripeEvent('charge.refunded', charge(`pi_test_${order.id}`, 11653, 11653)))
+    expect(res.status).toBe(200)
+    expect(res.body.outcome).toBe('processed')
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ status: 'refunded', refundedCents: 11653 })
+    expect((await inventoryOf('BBS-STD')).reserved).toBe(0)
+  })
+
+  it('a refund the order rules refuse (amount over the total) is acknowledged, logged and not recorded', async () => {
+    const { app, payments } = setup()
+    const o = await paidOrder(app, payments, 1)
+    errorSpy.mockClear()
+    const evt = stripeEvent('charge.refunded', charge(o.stripePaymentIntentId!, o.totalCents + 100, o.totalCents + 100))
+    const res = await deliver(app, payments, evt)
+    expect(res.status).toBe(200)
+    expect(res.body.outcome).toBe('ignored')
+    expect(errorSpy).toHaveBeenCalled()
+    const msg = String(errorSpy.mock.calls[0][0])
+    expect(msg).toContain(evt.id)
+    expect(msg).toContain('invalid_refund')
+    expect(await prisma.stripeEvent.count({ where: { id: evt.id } })).toBe(0)
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ status: 'paid', refundedCents: 0 })
   })
 
   it('charge.dispute.created flags the order for review', async () => {

@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '../prisma.js'
 import { recordAudit } from '../audit.js'
 import {
-  lockOrderRow, markOrderPaidTx, cancelOrderTx, refundOrderTx, enqueueInventoryPushesAfterCommit, orderNumber,
+  lockOrderRow, markOrderPaidTx, cancelOrderTx, refundOrderTx, enqueueInventoryPushesAfterCommit, orderNumber, OrderError,
 } from '../orders/orders.service.js'
 import { upsertCustomerFromCheckout, normalizeEmail } from '../customers/customers.service.js'
 import { resolveReferral } from '../referrals/referrals.service.js'
@@ -21,6 +21,13 @@ const HANDLED = new Set(['checkout.session.completed', 'checkout.session.expired
 const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000
 
 class DuplicateEvent extends Error {}
+/**
+ * A refund/dispute the order rules refuse (OrderError). Deterministic: a retry
+ * gets the same answer, so the route acknowledges it (ruling T7-R1).
+ */
+class RefusedEvent extends Error {
+  constructor(readonly orderError: OrderError) { super(orderError.message) }
+}
 /** Thrown when the event cannot be applied YET; the route answers 503 and Stripe redelivers. */
 class RetryLater extends Error {}
 
@@ -59,13 +66,31 @@ async function onCompleted(tx: Tx, session: Stripe.Checkout.Session, deps: { ema
     paidAt: new Date(),
   }
 
+  // total_details.amount_tax is ALL tax, including tax on shipping, and
+  // amount_shipping is pre-tax -- so the identity is subtotal + shipping + tax
+  // (- discount). shipping_cost.amount_total already includes shipping tax and
+  // would double-count it (plan header).
+  const taxCents = session.total_details?.amount_tax ?? 0
+  const shippingCents = session.total_details?.amount_shipping ?? 0
+  const discountCents = session.total_details?.amount_discount ?? 0
+  const totalCents = session.amount_total ?? 0
+  const base = order.subtotalCents + shippingCents
+  // Stripe's figures, written on EVERY paid path -- including paid-after-cancel,
+  // whose later refund (for Stripe's full total) must fit under totalCents.
+  const money = {
+    taxCents, shippingCents, totalCents,
+    taxJurisdiction: 'stripe_tax',
+    // Effective rate over the taxable base Stripe saw (goods + shipping).
+    taxRateBps: base > 0 ? Math.round((taxCents * 10000) / base) : 0,
+  }
+
   if (order.status === 'cancelled') {
     // The sweep or an admin beat the webhook. Money was taken: record who
     // paid so a human can refund in Stripe (spec §5). Every paid order gets a
     // Customer (D3, ruling P16), this one included.
     const customer = await upsertCustomerFromCheckout({ email: details.email, name: details.shipName, consent: order.marketingOptIn }, tx)
     await tx.order.update({
-      where: { id: order.id }, data: { ...details, customerId: customer.id, reviewReason: 'paid_after_cancel' },
+      where: { id: order.id }, data: { ...details, ...money, customerId: customer.id, reviewReason: 'paid_after_cancel' },
     })
     await recordAudit({ actorId: 'system', action: 'order.paid_after_cancel', target: `order:${order.id}`, after: { stripePaymentIntentId: details.stripePaymentIntentId } }, tx)
     console.error(`[stripe] order ${order.id} was PAID AFTER IT WAS CANCELLED -- refund it in Stripe`)
@@ -76,27 +101,15 @@ async function onCompleted(tx: Tx, session: Stripe.Checkout.Session, deps: { ema
     return null
   }
 
-  // total_details.amount_tax is ALL tax, including tax on shipping, and
-  // amount_shipping is pre-tax -- so the identity is subtotal + shipping + tax
-  // (- discount). shipping_cost.amount_total already includes shipping tax and
-  // would double-count it (plan header).
-  const taxCents = session.total_details?.amount_tax ?? 0
-  const shippingCents = session.total_details?.amount_shipping ?? 0
-  const discountCents = session.total_details?.amount_discount ?? 0
-  const totalCents = session.amount_total ?? 0
   const expected = order.subtotalCents + shippingCents + taxCents - discountCents
   const mismatch = totalCents !== expected
   const outside = OUTSIDE_SHIPPING_AREA.has(state) || (addr?.country != null && addr.country !== 'US')
   if (mismatch) console.error(`[stripe] order ${order.id} amount mismatch: Stripe ${totalCents}, expected ${expected}`)
   if (outside) console.error(`[stripe] order ${order.id} ships outside the contiguous US (${state || addr?.country}) -- refund in Stripe`)
-  const base = order.subtotalCents + shippingCents
 
   const paid = await markOrderPaidTx(tx, order.id, 'system', {
     ...details,
-    taxCents, shippingCents, totalCents,
-    taxJurisdiction: 'stripe_tax',
-    // Effective rate over the taxable base Stripe saw (goods + shipping).
-    taxRateBps: base > 0 ? Math.round((taxCents * 10000) / base) : 0,
+    ...money,
     // One column, two conditions: the money problem wins (ruling P17); both
     // were logged above, and the address stays on the order.
     reviewReason: mismatch ? 'amount_mismatch' : outside ? 'outside_shipping_area' : null,
@@ -159,6 +172,16 @@ async function onDispute(tx: Tx, dispute: Stripe.Dispute): Promise<FollowUp | nu
   return null
 }
 
+/** Refund/dispute paths only: an OrderError becomes a RefusedEvent (ruling T7-R1). */
+async function refusable(p: Promise<FollowUp | null>): Promise<FollowUp | null> {
+  try {
+    return await p
+  } catch (err) {
+    if (err instanceof OrderError) throw new RefusedEvent(err)
+    throw err
+  }
+}
+
 /**
  * Applies one verified event. The StripeEvent insert and the event's effects
  * share one transaction (spec §5): a crash commits neither, and a concurrent
@@ -180,13 +203,19 @@ export async function handleStripeEvent(event: Stripe.Event, deps: { email: Emai
       switch (event.type) {
         case 'checkout.session.completed': return onCompleted(tx, object as Stripe.Checkout.Session, deps)
         case 'checkout.session.expired': return onExpired(tx, object as Stripe.Checkout.Session)
-        case 'charge.refunded': return onRefunded(tx, object as Stripe.Charge)
-        case 'charge.dispute.created': return onDispute(tx, object as Stripe.Dispute)
+        case 'charge.refunded': return refusable(onRefunded(tx, object as Stripe.Charge))
+        case 'charge.dispute.created': return refusable(onDispute(tx, object as Stripe.Dispute))
         default: return null
       }
     })
   } catch (err) {
     if (err instanceof DuplicateEvent) return 'duplicate'
+    if (err instanceof RefusedEvent) {
+      // Ruling T7-R1: nothing recorded (the throw rolled the insert back), and
+      // a 200 so Stripe stops retrying something that can never apply.
+      console.error(`[stripe] ${event.id} (${event.type}) refused: ${err.orderError.code} -- ${err.message}; acknowledging without applying, check it in Stripe`)
+      return 'ignored'
+    }
     if (err instanceof RetryLater) {
       // Ruling P15: an out-of-order refund/dispute lands within minutes of its
       // checkout. One still unmatched after a day is almost certainly a charge
