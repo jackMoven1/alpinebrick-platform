@@ -1,9 +1,10 @@
-import { useState, useEffect, type FormEvent } from 'react'
+import { useState, useEffect, useCallback, type FormEvent } from 'react'
 import { Link, Outlet, useNavigate, useLocation } from 'react-router'
 import { ShoppingCart, Menu, X, Search } from 'lucide-react'
 import { CartProvider, useCart } from '../lib/cart/CartContext'
 import { useReferralCapture } from '../lib/referral'
 import { AlpineBrickLogo } from './Logo'
+import CartDrawer from '../components/cart/CartDrawer'
 
 function ScrollToTop() {
   const { pathname } = useLocation()
@@ -25,6 +26,8 @@ function Nav() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [cartOpen, setCartOpen] = useState(false)
+  const closeCart = useCallback(() => setCartOpen(false), [])
   const navigate = useNavigate()
 
   function handleSearch(e: FormEvent) {
@@ -70,8 +73,9 @@ function Nav() {
           >
             <Search size={18} aria-hidden />
           </button>
-          <Link
-            to="/checkout"
+          <button
+            type="button"
+            onClick={() => setCartOpen(true)}
             className="relative p-2.5 text-muted-foreground hover:text-foreground transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={count > 0 ? `Cart, ${count} item${count === 1 ? '' : 's'}` : 'Cart, empty'}
           >
@@ -84,7 +88,7 @@ function Nav() {
                 {count}
               </span>
             )}
-          </Link>
+          </button>
           <button
             type="button"
             onClick={() => setMobileOpen(s => !s)}
@@ -132,6 +136,7 @@ function Nav() {
           ))}
         </div>
       )}
+      <CartDrawer open={cartOpen} onClose={closeCart} />
     </nav>
   )
 }
@@ -228,6 +233,10 @@ function Footer() {
             >
               Contact
             </Link>
+            <Link to="/legal/terms" className="text-muted-foreground text-xs hover:text-foreground transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring">Terms</Link>
+            <Link to="/legal/privacy" className="text-muted-foreground text-xs hover:text-foreground transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring">Privacy</Link>
+            <Link to="/support/returns" className="text-muted-foreground text-xs hover:text-foreground transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring">Refunds</Link>
+            <Link to="/support/shipping" className="text-muted-foreground text-xs hover:text-foreground transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring">Shipping</Link>
           </div>
         </div>
       </div>

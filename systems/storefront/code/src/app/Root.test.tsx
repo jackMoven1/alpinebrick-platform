@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import Root from './Root'
 
@@ -37,9 +38,20 @@ describe('Root shell', () => {
     expect(screen.getByRole('main')).toHaveAttribute('id', 'main')
   })
 
-  it('labels the cart control for screen readers and reports it empty', () => {
+  it('labels the cart button for screen readers and opens the cart drawer', async () => {
     renderShell()
-    expect(screen.getByRole('link', { name: /cart, empty/i })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /cart, empty/i }))
+    expect(screen.getByRole('dialog', { name: 'Cart' })).toBeInTheDocument()
+    expect(screen.getByText(/Your cart is empty/)).toBeInTheDocument()
+  })
+
+  it('links the legal and policy pages from the footer', () => {
+    renderShell()
+    const footer = screen.getByRole('contentinfo')
+    expect(within(footer).getByRole('link', { name: 'Terms' })).toHaveAttribute('href', '/legal/terms')
+    expect(within(footer).getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '/legal/privacy')
+    expect(within(footer).getByRole('link', { name: 'Refunds' })).toHaveAttribute('href', '/support/returns')
+    expect(within(footer).getByRole('link', { name: 'Shipping' })).toHaveAttribute('href', '/support/shipping')
   })
 
   it('links the brand mark home and the primary nav to real routes', () => {

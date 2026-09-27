@@ -8,6 +8,9 @@ import Home, { homeLoader } from './pages/Home'
 import Collections from './pages/Collections'
 import CollectionDetail, { collectionLoader } from './pages/CollectionDetail'
 import ProductDetail, { productLoader } from './pages/ProductDetail'
+import Cart from './pages/Cart'
+import Terms from './pages/legal/Terms'
+import Privacy from './pages/legal/Privacy'
 
 import Support from './pages/support/Support'
 import FAQ from './pages/support/FAQ'
@@ -41,6 +44,9 @@ export const router = createBrowserRouter([
         // 404 page rather than an empty grid claiming the collection exists.
         errorElement: <NotFound />,
       },
+      { path: 'cart', Component: Cart },
+      { path: 'legal/terms', Component: Terms },
+      { path: 'legal/privacy', Component: Privacy },
 
       // Checkout is a later sub-project: no payment provider, no shipping
       // rates, no promo engine. Deliberately not stubbed.
