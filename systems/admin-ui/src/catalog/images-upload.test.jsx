@@ -219,3 +219,73 @@ describe('ImagesTab upload — fix round 2 (refresh race)', () => {
     await waitFor(() => expect(refreshBtn).not.toBeInTheDocument())
   })
 })
+
+describe('ImagesTab upload — fix round 3 (snapshot isolation)', () => {
+  // Round 2's "row saved while an earlier refresh is in flight" test also
+  // passes with only the seq guard and no id snapshot, because that refresh
+  // ends up stale by the time it resolves (a newer one was issued first).
+  // This test keeps a single refresh in flight — never superseded, so the
+  // seq guard alone would let it through — and checks that its own success
+  // handler still only clears the ids it snapshotted, not a row that saved
+  // afterward. Only the idsAtIssue filter protects this case.
+  it('a row that saves after the only in-flight refresh was issued is not cleared by that refresh succeeding', async () => {
+    vi.mocked(api.requestImageUpload).mockResolvedValue(token)
+    vi.mocked(api.uploadToStorage).mockImplementation((url, file) => (
+      file.name === 'b.png' ? new Promise(() => {}) : Promise.resolve()
+    ))
+    vi.mocked(api.confirmImage).mockResolvedValue(confirmed)
+    let resolveRefresh
+    vi.mocked(api.getProduct).mockImplementationOnce(
+      () => new Promise((resolve) => { resolveRefresh = () => resolve({ ...product, images: [confirmed] }) }),
+    )
+    renderTab()
+
+    // x.png uploads alone; its batch issues the only refresh, held pending.
+    await userEvent.upload(screen.getByLabelText('Add photos'), [png('x.png')])
+    await waitFor(() => expect(api.getProduct).toHaveBeenCalledTimes(1))
+
+    // a.png + b.png upload together; a.png saves, b.png's PUT never resolves,
+    // so this batch's own Promise.allSettled never settles and it never
+    // issues a second refresh — the refresh above stays the only one.
+    await userEvent.upload(screen.getByLabelText('Add photos'), [png('a.png'), png('b.png')])
+    await waitFor(() => expect(screen.getAllByText('Saved').length).toBe(2)) // x.png + a.png
+
+    // The only refresh in flight succeeds. It is not stale (nothing newer
+    // was ever issued) — without the snapshot filter this would clear every
+    // 'saved' row, including a.png, which saved after this refresh was issued.
+    await act(async () => { resolveRefresh() })
+    await waitFor(() => expect(screen.queryByText('x.png')).not.toBeInTheDocument())
+    expect(screen.getByText('a.png')).toBeInTheDocument()
+    expect(screen.getAllByText('Saved').length).toBe(1)
+  })
+
+  it('an older refresh failing after a newer one already succeeded does not flip any row to refresh-error', async () => {
+    vi.mocked(api.requestImageUpload).mockResolvedValue(token)
+    vi.mocked(api.uploadToStorage).mockResolvedValue()
+    vi.mocked(api.confirmImage).mockResolvedValue(confirmed)
+    const secondImage = { ...confirmed, id: 'img2' }
+    let rejectFirstRefresh, resolveSecondRefresh
+    vi.mocked(api.getProduct)
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirstRefresh = () => reject(new AdminApiError('network hiccup', 'network_error')) }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecondRefresh = () => resolve({ ...product, images: [confirmed, secondImage] }) }))
+    renderTab()
+
+    await userEvent.upload(screen.getByLabelText('Add photos'), [png('one.png')])
+    await waitFor(() => expect(api.getProduct).toHaveBeenCalledTimes(1)) // refresh #1 issued, pending, will fail
+
+    await userEvent.upload(screen.getByLabelText('Add photos'), [png('two.png')])
+    await waitFor(() => expect(api.getProduct).toHaveBeenCalledTimes(2)) // refresh #2 issued, pending, will succeed
+
+    // Newer refresh (#2) succeeds first.
+    await act(async () => { resolveSecondRefresh() })
+    await waitFor(() => expect(screen.queryByText('one.png')).not.toBeInTheDocument())
+    expect(screen.queryByText('two.png')).not.toBeInTheDocument()
+
+    // Older refresh (#1) fails afterward — it's stale, so it must not
+    // resurrect a refresh-error row or a Refresh button for anything.
+    await act(async () => { rejectFirstRefresh() })
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(screen.queryByRole('button', { name: /^refresh$/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/photo saved, but the list couldn.t refresh/i)).not.toBeInTheDocument()
+  })
+})

@@ -52,7 +52,11 @@ export default function ProductDetail() {
       <Card className="mt-4">
         {tab === 'Info' && <InfoTab product={product} onUpdated={setProduct} onDirtyChange={setInfoDirty} />}
         {tab === 'Variants' && <VariantsTab product={product} onUpdated={setProduct} />}
-        {tab === 'Images' && <ImagesTab product={product} onUpdated={setProduct} />}
+        {/* Keyed by product id: ImagesTab tracks its own in-flight uploads/refreshes
+            (see its file header) and must fully remount — not just re-render with a
+            new `product` prop — when the operator navigates to a different product,
+            so no stale upload row from the previous product lingers on screen. */}
+        {tab === 'Images' && <ImagesTab key={product.id} product={product} onUpdated={setProduct} />}
         {tab === 'Publish' && <PublishTab product={product} onUpdated={setProduct} />}
       </Card>
     </div>
