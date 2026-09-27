@@ -80,6 +80,10 @@ describe('ImagesTab upload — fix round 1', () => {
     act(() => captured(0.5))
     const bar = document.querySelector('.bg-brand')
     expect(bar).toHaveStyle({ width: '50%' })
+    const pb = screen.getByRole('progressbar')
+    expect(pb).toHaveAttribute('aria-valuenow', '50')
+    expect(pb).toHaveAttribute('aria-valuemin', '0')
+    expect(pb).toHaveAttribute('aria-valuemax', '100')
   })
 
   it('a refresh failure after a successful confirm offers Refresh, not Retry, and never re-uploads', async () => {
@@ -93,7 +97,7 @@ describe('ImagesTab upload — fix round 1', () => {
     await userEvent.upload(screen.getByLabelText('Add photos'), [png('a.png')])
     expect(await screen.findByText(/photo saved, but the list couldn.t refresh/i)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /retry a\.png/i })).not.toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: /^refresh$/i }))
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh: a.png' }))
     await waitFor(() => expect(api.getProduct).toHaveBeenCalledTimes(2))
     expect(api.requestImageUpload).toHaveBeenCalledTimes(1)
   })
@@ -212,7 +216,7 @@ describe('ImagesTab upload — fix round 2 (refresh race)', () => {
       .mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = () => resolve({ ...product, images: [confirmed] }) }))
     renderTab()
     await userEvent.upload(screen.getByLabelText('Add photos'), [png('a.png')])
-    const refreshBtn = await screen.findByRole('button', { name: /^refresh$/i })
+    const refreshBtn = await screen.findByRole('button', { name: 'Refresh: a.png' })
     await userEvent.click(refreshBtn)
     expect(refreshBtn).toBeDisabled()
     await act(async () => { resolveRefresh() })
@@ -285,7 +289,7 @@ describe('ImagesTab upload — fix round 3 (snapshot isolation)', () => {
     // resurrect a refresh-error row or a Refresh button for anything.
     await act(async () => { rejectFirstRefresh() })
     await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
-    expect(screen.queryByRole('button', { name: /^refresh$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^refresh/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/photo saved, but the list couldn.t refresh/i)).not.toBeInTheDocument()
   })
 })

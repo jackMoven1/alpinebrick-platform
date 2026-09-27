@@ -316,3 +316,78 @@ describe('ImagesTab manage - fix round 1', () => {
     expect(confirmSpy).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('ImagesTab manage - final review', () => {
+  it('locks moves and deletes while an upload is uploading, confirming or saved but not yet in the grid', async () => {
+    const put = deferred()
+    const conf = deferred()
+    const g = deferred()
+    vi.mocked(api.requestImageUpload).mockResolvedValue(token)
+    vi.mocked(api.uploadToStorage).mockReturnValue(put.promise)
+    vi.mocked(api.confirmImage).mockReturnValue(conf.promise)
+    vi.mocked(api.getProduct).mockReturnValue(g.promise)
+    renderTab()
+    const right = () => screen.getByRole('button', { name: 'Move right: Front' })
+    const del = () => screen.getByRole('button', { name: 'Delete: Front' })
+    expect(right()).toBeEnabled()
+    await userEvent.upload(screen.getByLabelText('Add photos'), [new File([new Uint8Array(10)], 'a.png', { type: 'image/png' })])
+    await waitFor(() => expect(api.uploadToStorage).toHaveBeenCalled())
+    expect(right()).toBeDisabled() // uploading
+    expect(del()).toBeDisabled()
+    await act(async () => { put.resolve() })
+    await waitFor(() => expect(api.confirmImage).toHaveBeenCalled())
+    expect(right()).toBeDisabled() // confirming
+    await act(async () => { conf.resolve(confirmed) })
+    await waitFor(() => expect(api.getProduct).toHaveBeenCalled())
+    expect(right()).toBeDisabled() // saved, refresh pending
+    await act(async () => { g.resolve({ ...withImages, images: [...withImages.images, { ...confirmed, position: 2 }] }) })
+    await waitFor(() => expect(right()).toBeEnabled())
+  })
+
+  it('stays locked while a saved upload is not yet in the grid, even with no refresh in flight', async () => {
+    // One file saves; its sibling's PUT never finishes, so the batch never
+    // refreshes. The saved photo is on core but not in the grid.
+    const stuck = deferred()
+    vi.mocked(api.requestImageUpload).mockResolvedValue(token)
+    vi.mocked(api.uploadToStorage).mockResolvedValueOnce().mockReturnValueOnce(stuck.promise)
+    vi.mocked(api.confirmImage).mockResolvedValue(confirmed)
+    renderTab()
+    await userEvent.upload(screen.getByLabelText('Add photos'), [
+      new File([new Uint8Array(10)], 'a.png', { type: 'image/png' }),
+      new File([new Uint8Array(10)], 'b.png', { type: 'image/png' }),
+    ])
+    await waitFor(() => expect(api.confirmImage).toHaveBeenCalledTimes(1))
+    await within(screen.getByText('a.png').parentElement).findByText('Saved')
+    expect(api.getProduct).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Move right: Front' })).toBeDisabled()
+  })
+
+  it.each([
+    ['invalid_order', 'ordering must list every image of the product exactly once', 'reorder'],
+    ['image_not_found', 'image not found', 'delete'],
+  ])('a %s failure refreshes the grid so it heals', async (code, message, action) => {
+    const err = new AdminApiError(message, code)
+    vi.mocked(api.reorderImages).mockRejectedValue(err)
+    vi.mocked(api.deleteImage).mockRejectedValue(err)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const fresh = { ...product, images: [img('a', 0, 'Front')] }
+    vi.mocked(api.getProduct).mockResolvedValue(fresh)
+    const onUpdated = vi.fn()
+    renderTab(withImages, onUpdated)
+    const name = action === 'reorder' ? 'Move left: photo 2' : 'Delete: photo 2'
+    await userEvent.click(screen.getByRole('button', { name }))
+    await waitFor(() => expect(onUpdated).toHaveBeenCalledWith(fresh))
+    expect(api.getProduct).toHaveBeenCalledTimes(1)
+    expect(within(card('b')).getByText(message)).toBeInTheDocument()
+  })
+
+  it('an alt save failing with image_not_found also refreshes', async () => {
+    vi.mocked(api.updateImageAlt).mockRejectedValue(new AdminApiError('image not found', 'image_not_found'))
+    vi.mocked(api.getProduct).mockResolvedValue(withImages)
+    const onUpdated = vi.fn()
+    renderTab(withImages, onUpdated)
+    await userEvent.type(within(card('b')).getByLabelText('Description'), 'x')
+    await userEvent.click(screen.getByRole('button', { name: 'Save: photo 2' }))
+    await waitFor(() => expect(onUpdated).toHaveBeenCalledWith(withImages))
+  })
+})

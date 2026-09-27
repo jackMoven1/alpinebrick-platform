@@ -134,7 +134,13 @@ export const api = {
       xhr.withCredentials = false
       xhr.setRequestHeader('Content-Type', file.type)
       xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total) }
-      const failed = () => reject(new AdminApiError('The upload to storage failed. Please try again.', 'UPLOAD_FAILED'))
+      // Name the storage status so a staging problem (403 CORS/signature,
+      // 0 network) is diagnosable from the message the operator sees.
+      const failed = () => {
+        const status = xhr.status || 0
+        const why = status ? `HTTP ${status}` : 'network error'
+        reject(new AdminApiError(`The upload to storage failed (${why}). Please try again.`, 'UPLOAD_FAILED', undefined, { status }))
+      }
       xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : failed())
       xhr.onerror = failed
       xhr.send(file)

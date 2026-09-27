@@ -60,9 +60,15 @@ describe('uploadToStorage', () => {
     expect(x.withCredentials).toBe(false)
     expect(progress).toHaveBeenCalledWith(0.5)
   })
-  it('rejects on a non-2xx from storage', async () => {
+  it('rejects on a non-2xx from storage, naming the HTTP status', async () => {
     fakeXhr(403)
     await expect(api.uploadToStorage('u', new File(['x'], 'a.jpg', { type: 'image/jpeg' })))
-      .rejects.toMatchObject({ code: 'UPLOAD_FAILED' })
+      .rejects.toMatchObject({ code: 'UPLOAD_FAILED', message: expect.stringContaining('(HTTP 403)') })
+  })
+  it('says "network error" when the PUT never got a response', async () => {
+    const x = fakeXhr(0)
+    x.send = vi.fn(() => { x.status = 0; x.onerror() })
+    await expect(api.uploadToStorage('u', new File(['x'], 'a.jpg', { type: 'image/jpeg' })))
+      .rejects.toMatchObject({ code: 'UPLOAD_FAILED', message: expect.stringContaining('(network error)') })
   })
 })

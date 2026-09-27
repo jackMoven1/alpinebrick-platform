@@ -71,6 +71,10 @@ const STAGE_LABELS = {
 }
 
 const DELETE_PROMPT = 'Delete this photo? This cannot be undone.'
+const SERVER_STATE_ERRORS = new Set(['image_not_found', 'invalid_order'])
+// An upload in these stages is (or is about to be) a ready photo on core
+// that the grid does not show yet; a reorder would omit it (invalid_order).
+const UNSETTLED_UPLOAD_STAGES = new Set(['uploading', 'confirming', 'saved', 'refresh-error'])
 
 // Core's admin DTO already returns only ready photos; this is belt and braces
 // so a pending row can never be shown or sent in a reorder.
@@ -176,6 +180,10 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
         await mutate()
       } catch (err) {
         if (mountedRef.current) setCardErrors((prev) => ({ ...prev, [id]: { message: errorText(err), refresh: false } }))
+        // Core says the grid no longer matches it (photo gone, or the order
+        // omits/adds a photo): refetch so the grid heals instead of repeating
+        // the same failing request.
+        if (SERVER_STATE_ERRORS.has(err?.code) && mountedRef.current) await refresh()
         return { ok: false }
       }
       if (!mountedRef.current) return { ok: true, refreshed: 'unmounted' }
@@ -190,8 +198,10 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
   }, [refresh, setBusy])
 
   // Moves and deletes act on the order/set shown; only trust it while it
-  // matches core (no refresh in flight, none failed since the last success).
-  const gridLocked = refreshInFlight > 0 || listStale
+  // matches core: no refresh in flight, none failed since the last success,
+  // and no upload that is on (or about to be on) core but not in the grid.
+  const uploadUnsettled = uploads.some((u) => UNSETTLED_UPLOAD_STAGES.has(u.stage))
+  const gridLocked = refreshInFlight > 0 || listStale || uploadUnsettled
 
   const move = (index, delta) => {
     const target = index + delta
@@ -279,7 +289,6 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
   const onDragOver = (e) => e.preventDefault()
   const dismiss = (id) => setUploads((prev) => prev.filter((u) => u.id !== id))
 
-  const visibleUploads = uploads
 
   return (
     <div className="space-y-4">
@@ -305,9 +314,9 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
         </div>
       </div>
 
-      {visibleUploads.length > 0 && (
+      {uploads.length > 0 && (
         <div className="space-y-2">
-          {visibleUploads.map((u) => (
+          {uploads.map((u) => (
             <div key={u.id} className="rounded-card bg-white p-3 text-sm shadow-card">
               {u.precheck ? (
                 <div className="flex items-center justify-between gap-2">
@@ -326,7 +335,7 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
                     <span className="truncate">{u.file.name}</span>
                     <span className="text-xs text-gray-400">{STAGE_LABELS[u.stage] ?? u.stage}</span>
                   </div>
-                  {(u.stage === 'uploading' || u.stage === 'confirming') && <ProgressBar value={u.progress} />}
+                  {(u.stage === 'uploading' || u.stage === 'confirming') && <ProgressBar value={u.progress} label={`Uploading ${u.file.name}`} />}
                   {u.stage === 'error' && (
                     <div className="mt-2 flex items-center justify-between gap-2">
                       <span className="text-accent">{u.error}</span>
@@ -345,6 +354,7 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
                       <span className="text-accent">Photo saved, but the list couldn&rsquo;t refresh ({u.error})</span>
                       <button
                         type="button"
+                        aria-label={`Refresh: ${u.file.name}`}
                         disabled={refreshInFlight > 0}
                         onClick={() => refresh()}
                         className="rounded-pill bg-ink px-3 py-1 text-xs text-white disabled:opacity-50"
