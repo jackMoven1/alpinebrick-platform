@@ -57,23 +57,6 @@ async function call(path, options = {}) {
   try { return await res.json() } catch { throw new AdminApiError(GENERIC, 'INTERNAL') }
 }
 
-/**
- * Only the four image methods remain unbacked (ADR-0002).
- *
- * These MUST throw rather than fall back to the mock. A mock fallback would
- * show an edit succeeding and lose it on reload — data loss disguised as
- * success. The UI also disables the affected controls, so this throw is a
- * developer-facing backstop, not the user-facing message.
- */
-function notImplemented(name) {
-  return async () => {
-    throw new AdminApiError(
-      `${name} is not implemented in the Phase B slice`,
-      'NOT_IMPLEMENTED',
-    )
-  }
-}
-
 export const api = {
   async getOverviewStats() {
     return call('/overview')
@@ -133,10 +116,43 @@ export const api = {
     return call(`/variants/${encodeURIComponent(variantId)}/stock-history?limit=${limit}`)
   },
 
-  addImage: notImplemented('addImage'),
-  reorderImages: notImplemented('reorderImages'),
-  updateImageAlt: notImplemented('updateImageAlt'),
-  deleteImage: notImplemented('deleteImage'),
+  async requestImageUpload(productId, file) {
+    return call('/images/upload-token', {
+      method: 'POST',
+      body: JSON.stringify({ productId, contentType: file.type, byteSize: file.size }),
+    })
+  },
+
+  /**
+   * Direct PUT to the presigned S3 URL. XHR rather than fetch, for upload
+   * progress. No cookies: this goes to S3, not core.
+   */
+  uploadToStorage(uploadUrl, file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('PUT', uploadUrl)
+      xhr.withCredentials = false
+      xhr.setRequestHeader('Content-Type', file.type)
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total) }
+      const failed = () => reject(new AdminApiError('The upload to storage failed. Please try again.', 'UPLOAD_FAILED'))
+      xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : failed())
+      xhr.onerror = failed
+      xhr.send(file)
+    })
+  },
+
+  async confirmImage(imageId) {
+    return call(`/images/${encodeURIComponent(imageId)}/confirm`, { method: 'POST', body: '{}' })
+  },
+  async reorderImages(productId, orderedIds) {
+    return call('/images/reorder', { method: 'PUT', body: JSON.stringify({ productId, orderedIds }) })
+  },
+  async updateImageAlt(imageId, alt) {
+    return call(`/images/${encodeURIComponent(imageId)}`, { method: 'PATCH', body: JSON.stringify({ alt }) })
+  },
+  async deleteImage(imageId) {
+    return call(`/images/${encodeURIComponent(imageId)}`, { method: 'DELETE', body: '{}' })
+  },
 }
 
 export default api
