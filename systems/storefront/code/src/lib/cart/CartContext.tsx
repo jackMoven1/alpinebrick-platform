@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 export interface CartLine {
   variantId: string
@@ -18,57 +18,86 @@ interface CartValue {
   addItem: (line: Omit<CartLine, 'quantity'>, qty?: number) => void
   setQuantity: (variantId: string, qty: number) => void
   removeItem: (variantId: string) => void
+  clear: () => void
 }
 
+/** Spec §4: core accepts 1–10 per line. */
+export const MAX_QUANTITY = 10
+export const CART_STORAGE_KEY = 'ab.cart.v1'
+
 const CartContext = createContext<CartValue | null>(null)
+
+const cap = (q: number) => Math.min(MAX_QUANTITY, q)
+
+function isCartLine(x: unknown): x is CartLine {
+  const l = x as Record<string, unknown>
+  return typeof l === 'object' && l !== null
+    && typeof l.variantId === 'string' && typeof l.productId === 'string' && typeof l.productSlug === 'string'
+    && typeof l.name === 'string' && typeof l.imageKey === 'string'
+    && Number.isInteger(l.priceCents) && Number.isInteger(l.quantity) && (l.quantity as number) > 0
+}
+
+function loadCart(): CartLine[] {
+  try {
+    const raw = window.localStorage.getItem(CART_STORAGE_KEY)
+    const parsed: unknown = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed.filter(isCartLine).map((l) => ({ ...l, quantity: cap(l.quantity) })) : []
+  } catch {
+    return []
+  }
+}
 
 /**
  * Line identity is the VARIANT, not the product.
  *
  * The design handoff's reference implementation keyed on product id, which
  * would collapse two variants of one product into a single line at whichever
- * price was added first — and core's order API takes variantId, so such a line
+ * price was added first — and core's checkout takes variantId, so such a line
  * could not be ordered at all.
  *
- * In-memory only: this is lost on reload. Persistence is a later sub-project.
+ * Persisted to localStorage: Stripe's return_url is a full page load, so an
+ * in-memory cart would already be gone when the confirmation page clears it.
+ * Prices here are display-only; core snapshots live prices at checkout.
  */
 export function CartProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<CartLine[]>([])
+  const [items, setItems] = useState<CartLine[]>(loadCart)
 
-  function addItem(line: Omit<CartLine, 'quantity'>, qty = 1) {
-    setItems(prev => {
-      const found = prev.find(i => i.variantId === line.variantId)
+  useEffect(() => {
+    try { window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(items)) } catch { /* blocked or full */ }
+  }, [items])
+
+  const addItem = useCallback((line: Omit<CartLine, 'quantity'>, qty = 1) => {
+    setItems((prev) => {
+      const found = prev.find((i) => i.variantId === line.variantId)
       if (found) {
-        return prev.map(i =>
-          i.variantId === line.variantId ? { ...i, quantity: i.quantity + qty } : i,
-        )
+        return prev.map((i) => (i.variantId === line.variantId ? { ...i, quantity: cap(i.quantity + qty) } : i))
       }
-      return [...prev, { ...line, quantity: qty }]
+      return [...prev, { ...line, quantity: cap(qty) }]
     })
-  }
+  }, [])
 
-  function setQuantity(variantId: string, qty: number) {
-    setItems(prev =>
+  const setQuantity = useCallback((variantId: string, qty: number) => {
+    setItems((prev) =>
       qty <= 0
-        ? prev.filter(i => i.variantId !== variantId)
-        : prev.map(i => (i.variantId === variantId ? { ...i, quantity: qty } : i)),
+        ? prev.filter((i) => i.variantId !== variantId)
+        : prev.map((i) => (i.variantId === variantId ? { ...i, quantity: cap(qty) } : i)),
     )
-  }
+  }, [])
 
-  function removeItem(variantId: string) {
-    setItems(prev => prev.filter(i => i.variantId !== variantId))
-  }
+  const removeItem = useCallback((variantId: string) => {
+    setItems((prev) => prev.filter((i) => i.variantId !== variantId))
+  }, [])
+
+  const clear = useCallback(() => setItems([]), [])
 
   const value = useMemo<CartValue>(
     () => ({
       items,
       count: items.reduce((n, i) => n + i.quantity, 0),
       subtotalCents: items.reduce((n, i) => n + i.priceCents * i.quantity, 0),
-      addItem,
-      setQuantity,
-      removeItem,
+      addItem, setQuantity, removeItem, clear,
     }),
-    [items],
+    [items, addItem, setQuantity, removeItem, clear],
   )
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>

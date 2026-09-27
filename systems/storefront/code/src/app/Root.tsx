@@ -2,6 +2,7 @@ import { useState, useEffect, type FormEvent } from 'react'
 import { Link, Outlet, useNavigate, useLocation } from 'react-router'
 import { ShoppingCart, Menu, X, Search } from 'lucide-react'
 import { CartProvider, useCart } from '../lib/cart/CartContext'
+import { useReferralCapture } from '../lib/referral'
 import { AlpineBrickLogo } from './Logo'
 
 function ScrollToTop() {
@@ -235,6 +236,7 @@ function Footer() {
 }
 
 export default function Root() {
+  useReferralCapture()
   return (
     <CartProvider>
       <ScrollToTop />

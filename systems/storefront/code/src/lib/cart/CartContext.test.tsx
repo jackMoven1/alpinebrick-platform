@@ -69,4 +69,37 @@ describe('cart', () => {
     expect(result.current.subtotalCents).toBe(5997)
     expect(Number.isInteger(result.current.subtotalCents)).toBe(true)
   })
+
+  it('caps a line at 10', () => {
+    const { result } = renderHook(() => useCart(), { wrapper })
+    act(() => result.current.addItem(LINE_A, 8))
+    act(() => result.current.addItem(LINE_A, 5))
+    expect(result.current.items[0].quantity).toBe(10)
+    act(() => result.current.setQuantity('v1', 25))
+    expect(result.current.items[0].quantity).toBe(10)
+  })
+
+  it('persists across a reload and clears', () => {
+    const first = renderHook(() => useCart(), { wrapper })
+    act(() => first.result.current.addItem(LINE_A, 2))
+    first.unmount()
+    const second = renderHook(() => useCart(), { wrapper })
+    expect(second.result.current.items).toEqual([{ ...LINE_A, quantity: 2 }])
+    act(() => second.result.current.clear())
+    expect(second.result.current.count).toBe(0)
+    expect(JSON.parse(window.localStorage.getItem('ab.cart.v1')!)).toEqual([])
+  })
+
+  it('ignores a corrupt stored cart', () => {
+    window.localStorage.setItem('ab.cart.v1', '{"nope":1}')
+    const { result } = renderHook(() => useCart(), { wrapper })
+    expect(result.current.items).toEqual([])
+  })
+
+  it('keeps its actions stable across renders', () => {
+    const { result } = renderHook(() => useCart(), { wrapper })
+    const clear = result.current.clear
+    act(() => result.current.addItem(LINE_A))
+    expect(result.current.clear).toBe(clear)
+  })
 })
