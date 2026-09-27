@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { imageUrlFromKey } from '../../lib/imageUrl.js'
 import { errorText } from '../../lib/errorText.js'
 import api from '../../data/api.js'
@@ -18,10 +18,20 @@ import { checkImageFile, ACCEPTED_TYPES } from './imageFiles.js'
  * a later refresh failure must never be treated the same as an upload
  * failure, because Retry would re-run requestImageUpload and create a
  * duplicate photo. So a row that finishes confirm goes to 'saved'; refresh
- * is requested once per batch (and once per individual Retry) and, on
- * success, clears every 'saved'/'refresh-error' row at once — never per
- * file — so two uploads confirming out of order can't leave the grid
- * missing a photo from a stale intermediate refresh.
+ * is requested once per batch (and once per individual Retry).
+ *
+ * Refreshes can overlap — a batch refresh, a Retry's refresh and a manual
+ * Refresh click can all be in flight together, and their getProduct
+ * responses can land in any order. Two guards keep that safe:
+ *   - a monotonic request sequence number: a response is only applied
+ *     (onUpdated + row changes) if no newer refresh has been issued since
+ *     it went out, so an older, slower response can never clobber fresher
+ *     data with stale data;
+ *   - a per-request snapshot of which row ids were 'saved'/'refresh-error'
+ *     at the moment THAT request was issued: on success it clears only
+ *     those ids, never rows that reached 'saved' afterward. A row saved
+ *     while a refresh is already in flight stays visibly "Saved" until a
+ *     refresh issued after it saved actually clears it.
  *
  * Task 8 adds the per-photo controls (reorder, alt save, delete) on the
  * read-only grid below.
@@ -39,26 +49,48 @@ const STAGE_LABELS = {
 
 export default function ImagesTab({ product, onUpdated = () => {} }) {
   const images = product.images || []
-  const [uploads, setUploads] = useState([])
+  const [uploads, setUploadsState] = useState([])
+  const uploadsRef = useRef([])
+  const refreshSeqRef = useRef(0)
+  const [refreshInFlight, setRefreshInFlight] = useState(0)
+
+  // uploadsRef is kept in sync synchronously (plain JS, not via React's
+  // deferred state updates) so a refresh's id snapshot always reflects the
+  // truth at the exact moment it's taken, not a stale render.
+  const setUploads = useCallback((updater) => {
+    const next = typeof updater === 'function' ? updater(uploadsRef.current) : updater
+    uploadsRef.current = next
+    setUploadsState(next)
+  }, [])
 
   const update = useCallback((id, patch) => {
     setUploads((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)))
-  }, [])
+  }, [setUploads])
 
-  // Re-fetches the product once and applies it. On success, every row that
-  // was waiting on this refresh (saved, or previously stuck on a failed
-  // refresh) is dropped — the grid below now shows it. On failure, saved
-  // rows switch to 'refresh-error' with a Refresh action, never Retry.
+  // Re-fetches the product once and applies it. Only the most-recently
+  // issued refresh's response is ever applied; an older one that resolves
+  // late is dropped entirely (finding 1). On success it clears exactly the
+  // rows that were 'saved'/'refresh-error' when THIS refresh was issued —
+  // never rows that saved afterward (finding 2).
   const refresh = useCallback(async () => {
+    const seq = ++refreshSeqRef.current
+    const idsAtIssue = uploadsRef.current
+      .filter((u) => u.stage === 'saved' || u.stage === 'refresh-error')
+      .map((u) => u.id)
+    setRefreshInFlight((n) => n + 1)
     try {
       const fresh = await api.getProduct(product.id)
+      if (seq !== refreshSeqRef.current) return // superseded by a newer refresh; stale, ignore
       onUpdated(fresh)
-      setUploads((prev) => prev.filter((u) => u.stage !== 'saved' && u.stage !== 'refresh-error'))
+      setUploads((prev) => prev.filter((u) => !idsAtIssue.includes(u.id)))
     } catch (err) {
+      if (seq !== refreshSeqRef.current) return // stale, ignore
       const message = errorText(err)
-      setUploads((prev) => prev.map((u) => (u.stage === 'saved' ? { ...u, stage: 'refresh-error', error: message } : u)))
+      setUploads((prev) => prev.map((u) => (idsAtIssue.includes(u.id) && u.stage === 'saved' ? { ...u, stage: 'refresh-error', error: message } : u)))
+    } finally {
+      setRefreshInFlight((n) => n - 1)
     }
-  }, [product.id, onUpdated])
+  }, [product.id, onUpdated, setUploads])
 
   const uploadOne = useCallback(async (u) => {
     update(u.id, { stage: 'uploading', progress: 0, error: null })
@@ -182,8 +214,9 @@ export default function ImagesTab({ product, onUpdated = () => {} }) {
                       <span className="text-accent">Photo saved, but the list couldn&rsquo;t refresh ({u.error})</span>
                       <button
                         type="button"
+                        disabled={refreshInFlight > 0}
                         onClick={() => refresh()}
-                        className="rounded-pill bg-ink px-3 py-1 text-xs text-white"
+                        className="rounded-pill bg-ink px-3 py-1 text-xs text-white disabled:opacity-50"
                       >
                         Refresh
                       </button>

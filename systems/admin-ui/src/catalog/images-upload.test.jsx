@@ -121,11 +121,101 @@ describe('ImagesTab upload — fix round 1', () => {
 
   it('shows plain-English stage labels and a comma-joined accept list', async () => {
     vi.mocked(api.requestImageUpload).mockResolvedValue(token)
-    vi.mocked(api.uploadToStorage).mockImplementation(() => new Promise(() => {}))
+    let releaseUpload, rejectConfirm
+    vi.mocked(api.uploadToStorage).mockImplementation(() => new Promise((resolve) => { releaseUpload = resolve }))
+    vi.mocked(api.confirmImage).mockImplementationOnce(
+      () => new Promise((_resolve, reject) => { rejectConfirm = () => reject(new AdminApiError('nope', 'bad')) }),
+    )
     renderTab()
     const input = screen.getByLabelText('Add photos')
     expect(input).toHaveAttribute('accept', ACCEPTED_TYPES.join(','))
     await userEvent.upload(input, [png('a.png')])
     expect(await screen.findByText('Uploading…')).toBeInTheDocument()
+    await act(async () => { releaseUpload() })
+    expect(await screen.findByText('Checking…')).toBeInTheDocument()
+    await act(async () => { rejectConfirm() })
+    expect(await screen.findByText('Failed')).toBeInTheDocument()
+  })
+
+  it('shows "Saved" once confirm succeeds', async () => {
+    vi.mocked(api.requestImageUpload).mockResolvedValue(token)
+    vi.mocked(api.uploadToStorage).mockResolvedValue()
+    vi.mocked(api.confirmImage).mockResolvedValue(confirmed)
+    vi.mocked(api.getProduct).mockImplementation(() => new Promise(() => {})) // keep the row visible as 'saved'
+    renderTab()
+    await userEvent.upload(screen.getByLabelText('Add photos'), [png('a.png')])
+    expect(await screen.findByText('Saved')).toBeInTheDocument()
+  })
+})
+
+describe('ImagesTab upload — fix round 2 (refresh race)', () => {
+  it('ignores a stale getProduct response when a later-issued refresh already resolved', async () => {
+    vi.mocked(api.requestImageUpload).mockResolvedValue(token)
+    vi.mocked(api.uploadToStorage).mockResolvedValue()
+    vi.mocked(api.confirmImage).mockResolvedValue(confirmed)
+    const secondImage = { ...confirmed, id: 'img2' }
+    let resolveFirstRefresh, resolveSecondRefresh
+    vi.mocked(api.getProduct)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirstRefresh = () => resolve({ ...product, images: [confirmed] }) }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecondRefresh = () => resolve({ ...product, images: [confirmed, secondImage] }) }))
+    const onUpdated = vi.fn()
+    renderTab(onUpdated)
+
+    // First upload's batch issues refresh #1, held pending.
+    await userEvent.upload(screen.getByLabelText('Add photos'), [png('one.png')])
+    await waitFor(() => expect(api.getProduct).toHaveBeenCalledTimes(1))
+
+    // Second upload's batch issues refresh #2 while #1 is still in flight.
+    await userEvent.upload(screen.getByLabelText('Add photos'), [png('two.png')])
+    await waitFor(() => expect(api.getProduct).toHaveBeenCalledTimes(2))
+
+    // The later-issued refresh (#2) resolves first, with both photos.
+    await act(async () => { resolveSecondRefresh() })
+    await waitFor(() => expect(onUpdated).toHaveBeenCalledWith(expect.objectContaining({ images: [confirmed, secondImage] })))
+
+    // The stale, earlier-issued refresh (#1) resolves last — it must be ignored.
+    await act(async () => { resolveFirstRefresh() })
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(onUpdated).toHaveBeenLastCalledWith(expect.objectContaining({ images: [confirmed, secondImage] }))
+  })
+
+  it('a row saved while an earlier refresh is in flight stays "Saved" once that refresh resolves', async () => {
+    vi.mocked(api.requestImageUpload).mockResolvedValue(token)
+    vi.mocked(api.uploadToStorage).mockResolvedValue()
+    vi.mocked(api.confirmImage).mockResolvedValue(confirmed)
+    let resolveFirstRefresh
+    vi.mocked(api.getProduct)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirstRefresh = () => resolve({ ...product, images: [confirmed] }) }))
+      .mockImplementationOnce(() => new Promise(() => {})) // refresh #2 stays pending for this test
+
+    renderTab()
+    await userEvent.upload(screen.getByLabelText('Add photos'), [png('one.png')])
+    await waitFor(() => expect(api.getProduct).toHaveBeenCalledTimes(1)) // refresh #1 issued, pending
+
+    await userEvent.upload(screen.getByLabelText('Add photos'), [png('two.png')])
+    await waitFor(() => expect(screen.getAllByText('Saved').length).toBe(2)) // both rows saved
+    await waitFor(() => expect(api.getProduct).toHaveBeenCalledTimes(2)) // refresh #2 issued (snapshot includes both)
+
+    // Refresh #1 (issued before two.png was saved) resolves now — it's stale, so nothing is cleared.
+    await act(async () => { resolveFirstRefresh() })
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(screen.getAllByText('Saved').length).toBe(2)
+  })
+
+  it('disables Refresh while a refresh is in flight', async () => {
+    vi.mocked(api.requestImageUpload).mockResolvedValue(token)
+    vi.mocked(api.uploadToStorage).mockResolvedValue()
+    vi.mocked(api.confirmImage).mockResolvedValue(confirmed)
+    let resolveRefresh
+    vi.mocked(api.getProduct)
+      .mockRejectedValueOnce(new AdminApiError('network hiccup', 'network_error'))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = () => resolve({ ...product, images: [confirmed] }) }))
+    renderTab()
+    await userEvent.upload(screen.getByLabelText('Add photos'), [png('a.png')])
+    const refreshBtn = await screen.findByRole('button', { name: /^refresh$/i })
+    await userEvent.click(refreshBtn)
+    expect(refreshBtn).toBeDisabled()
+    await act(async () => { resolveRefresh() })
+    await waitFor(() => expect(refreshBtn).not.toBeInTheDocument())
   })
 })
