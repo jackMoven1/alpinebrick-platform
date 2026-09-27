@@ -11,6 +11,8 @@ import ProductDetail, { productLoader } from './pages/ProductDetail'
 import Cart from './pages/Cart'
 import Terms from './pages/legal/Terms'
 import Privacy from './pages/legal/Privacy'
+import Checkout from './pages/Checkout'
+import OrderComplete from './pages/OrderComplete'
 
 import Support from './pages/support/Support'
 import FAQ from './pages/support/FAQ'
@@ -48,9 +50,10 @@ export const router = createBrowserRouter([
       { path: 'legal/terms', Component: Terms },
       { path: 'legal/privacy', Component: Privacy },
 
-      // Checkout is a later sub-project: no payment provider, no shipping
-      // rates, no promo engine. Deliberately not stubbed.
-      { path: 'checkout', Component: NotFound },
+      // Stripe Embedded Checkout (spec 2026-09-27 §6). Stripe's return_url
+      // lands on /order/complete?session_id=...
+      { path: 'checkout', Component: Checkout },
+      { path: 'order/complete', Component: OrderComplete },
 
       { path: 'support', Component: Support },
       { path: 'support/faq', Component: FAQ },
