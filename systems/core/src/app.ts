@@ -16,19 +16,23 @@ import { createPaymentsPort } from './ports/payments/index.js'
 import type { PaymentsPort } from './ports/payments/payments.port.js'
 import { createFlatRateShippingPort } from './ports/shipping/flat-rate.adapter.js'
 import type { ShippingPort } from './ports/shipping/shipping.port.js'
+import { createFlatRateTaxPort } from './ports/tax/flat-rate.adapter.js'
+import type { TaxPort } from './ports/tax/tax.port.js'
 import { noopEmailAdapter } from './ports/email/noop.adapter.js'
 import type { EmailPort } from './ports/email/email.port.js'
 import { createCheckoutRouter } from './checkout/checkout.routes.js'
-import { createStripeWebhookHandler } from './payments/stripe-webhook.routes.js'
+import { createSquareWebhookHandler } from './payments/square-webhook.routes.js'
 import { createRateLimiter } from './lib/rate-limit.js'
 
 export interface AppDeps {
   payments: PaymentsPort
   shipping: ShippingPort
+  /** Checkout tax: Michigan 6% on goods, $0 elsewhere (spec Q3, Q8). */
+  tax: TaxPort
   email: EmailPort
-  /** Base for Stripe's return_url; env STOREFRONT_PUBLIC_URL by default. */
-  storefrontUrl: string | null
   checkoutRateLimit: RequestHandler
+  /** GET /checkout/status only: the confirmation page polls it, so it gets its own, larger budget. */
+  statusRateLimit: RequestHandler
 }
 
 /** body-parser marks a JSON parse failure with type 'entity.parse.failed' (a SyntaxError). */
@@ -41,28 +45,29 @@ const checkoutJsonErrorHandler: ErrorRequestHandler = (err, _req, res, next) => 
 }
 
 export function buildApp(deps: Partial<AppDeps> = {}): Express {
-  // createPaymentsPort throws on half-configured Stripe -- the process refuses
-  // to start rather than take money it can never mark paid (spec §8).
+  // createPaymentsPort throws on partial Square config -- the process refuses
+  // to start rather than take money it can never mark paid (spec 2026-09-28 §4).
   const payments = deps.payments ?? createPaymentsPort()
   const shipping = deps.shipping ?? createFlatRateShippingPort()
+  const tax = deps.tax ?? createFlatRateTaxPort()
   const email = deps.email ?? noopEmailAdapter
-  const storefrontUrl = (deps.storefrontUrl !== undefined ? deps.storefrontUrl : (process.env.STOREFRONT_PUBLIC_URL ?? null))
-    ?.replace(/\/+$/, '') ?? null
   const checkoutRateLimit = deps.checkoutRateLimit ?? createRateLimiter({ limit: 20, windowMs: 60_000 })
+  // Final review minor 2: status is a read by order id, polled by /order/complete.
+  const statusRateLimit = deps.statusRateLimit ?? createRateLimiter({ limit: 120, windowMs: 60_000 })
 
   const app = express()
   // Render terminates TLS one proxy hop in front of the app. Without this,
   // req.ip is the proxy's address and the checkout rate limit (and the
   // session ip recorded at sign-in) would treat every customer as one.
   app.set('trust proxy', 1)
-  // Stripe webhook: raw body, registered BEFORE express.json. body-parser
-  // skips a request whose body was already read (req._body), so the JSON
-  // parser below never touches these bytes. Nothing else is mounted on this
-  // path -- see stripe-webhook.routes.ts.
+  // Square webhook: raw body, registered BEFORE express.json. body-parser
+  // skips a request whose body was already read, so the JSON parser below
+  // never touches these bytes. Any content type is accepted: the HMAC over
+  // the configured notification URL + body is the only auth (spec §3).
   app.post(
-    '/api/v1/webhooks/stripe',
-    express.raw({ type: 'application/json', limit: '1mb' }),
-    createStripeWebhookHandler({ payments, email }),
+    '/api/v1/webhooks/square',
+    express.raw({ type: () => true, limit: '1mb' }),
+    createSquareWebhookHandler({ payments, email }),
   )
   // Checkout CORS mounts BEFORE the JSON parser so a malformed-body 400
   // (below) still carries the storefront's Access-Control-Allow-Origin and
@@ -83,12 +88,12 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
   app.use('/api/v1/catalog', catalogRouter)
 
   // Storefront checkout (spec §4). Public like catalog: storefront allowlist,
-  // credentials off (its CORS is mounted above, ahead of express.json). POST
-  // is rate-limited per IP inside the router so the endpoint cannot be used
-  // to hold stock. The old public POST/GET
+  // credentials off (its CORS is mounted above, ahead of express.json). start,
+  // quote and pay are rate-limited per IP inside the router so the endpoint
+  // cannot be used to hold stock. The old public POST/GET
   // /api/v1/orders routes are retired (spec §2): POST reserved stock with no
   // payment, GET exposed addresses to anyone holding an order id.
-  app.use('/api/v1/checkout', createCheckoutRouter({ payments, shipping, storefrontUrl, rateLimit: checkoutRateLimit }))
+  app.use('/api/v1/checkout', createCheckoutRouter({ payments, shipping, tax, email, rateLimit: checkoutRateLimit, statusRateLimit }))
 
   // Walmart calls this endpoint directly with no session cookie and no
   // Origin header -- its own x-webhook-secret header (checked inside the
@@ -131,7 +136,7 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
   app.use('/api/v1/admin', requireJsonContentType)
   app.use('/api/v1/admin/images', createAssetsRouter(storagePort))
   app.use('/api/v1/admin', adminCatalogRouter)
-  app.use('/api/v1/admin', createAdminOrdersRouter(payments))
+  app.use('/api/v1/admin', createAdminOrdersRouter())
 
   // Terminal error-handling middleware -- MUST be mounted last, after every
   // router. It is the backstop for asyncHandler-wrapped routes (and for

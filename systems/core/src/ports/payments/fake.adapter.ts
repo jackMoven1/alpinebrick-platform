@@ -1,69 +1,132 @@
-import Stripe from 'stripe'
 import {
-  type CreateCheckoutSessionInput, type PaymentsPort, type SessionPaymentStatus, type SessionStatus,
+  DECLINE_MESSAGE, declineMessage, PaymentAttemptConflictError, PaymentOutcomeUnknownError,
+  type ChargeInput, type ChargeResult, type PaymentSummary, type PaymentsPort, type RefundSummary,
 } from './payments.port.js'
-import { verifyWebhookSignature } from './webhook-signature.js'
+import { squareSignature, verifySquareSignature } from './webhook-signature.js'
 
-export const FAKE_WEBHOOK_SECRET = 'whsec_fake_for_tests'
+export const FAKE_SIGNATURE_KEY = 'fake-square-signature-key'
+export const FAKE_NOTIFICATION_URL = 'https://api-staging.alpinebrickexchange.com/api/v1/webhooks/square'
+export const FAKE_LOCATION_ID = 'LFAKEONLINE'
 
-export interface FakeSession { input: CreateCheckoutSessionInput; status: SessionStatus; paymentStatus: SessionPaymentStatus }
+/**
+ * - completed / declined / processing: Square's three payment answers.
+ * - failed: Square answered a non-decline 4xx; no payment (ruling Q-P10).
+ * - lost: Square charged, then the response never arrived (the charge is
+ *   recorded under the key, and charge() throws PaymentOutcomeUnknownError).
+ * - unavailable: the request never reached Square (nothing recorded; throws
+ *   PaymentOutcomeUnknownError -- core cannot tell this from lost).
+ */
+export type FakeOutcome = 'completed' | 'declined' | 'processing' | 'failed' | 'lost' | 'unavailable'
 
 export interface FakePaymentsPort extends PaymentsPort {
-  sessions: Map<string, FakeSession>
-  /** Next createCheckoutSession rejects (then resets). */
-  failNextCreate: boolean
-  /** Session ids passed to expireCheckoutSession, in order. */
-  expired: string[]
-  setSession(id: string, status: SessionStatus, paymentStatus?: SessionPaymentStatus): void
-  /** A valid Stripe-Signature header for `payload` under this fake's secret. */
-  sign(payload: string): string
+  charges: ChargeInput[]
+  /** Outcomes for the next charges that reach "Square"; empty means completed. */
+  nextOutcomes: FakeOutcome[]
+  payments: Map<string, PaymentSummary>
+  refunds: Map<string, RefundSummary[]>
+  /** Runs once, inside the next charge, before it answers: races the sweep or an admin against a charge. */
+  duringCharge: (() => Promise<void>) | null
+  addRefund(paymentId: string, refund: RefundSummary): void
+  /**
+   * A non-final payment settles. Like Square, a later charge under the same
+   * key and token then replays the payment's current state.
+   */
+  resolvePayment(paymentId: string, status: 'COMPLETED' | 'FAILED' | 'CANCELED'): void
+  /** The Square payment taken for `orderId` (by reference id). Throws if none. */
+  paymentFor(orderId: string): PaymentSummary
+  /** A valid x-square-hmacsha256-signature for `payload` (over `notificationUrl`). */
+  sign(payload: string, notificationUrl?: string): string
 }
 
 /**
- * In-memory PaymentsPort for tests. Signature checks use the real stripe-node
- * implementation (an offline client) via the shared verifyWebhookSignature
- * helper (ruling P6), so webhook tests exercise genuine verification with
- * payloads signed by generateTestHeaderString.
+ * In-memory Square with Square's idempotency semantics: the same key and the
+ * same token replay the first result; the same key with a different token is
+ * refused. Signatures use the real HMAC helper, so webhook tests exercise
+ * genuine verification.
  */
-export function createFakePaymentsPort(webhookSecret = FAKE_WEBHOOK_SECRET): FakePaymentsPort {
-  const offline = new Stripe('sk_test_unused_placeholder')
-  const sessions = new Map<string, FakeSession>()
+export function createFakePaymentsPort(): FakePaymentsPort {
+  const byKey = new Map<string, { token: string; result: ChargeResult }>()
   let n = 0
   const fake: FakePaymentsPort = {
     configured: true,
-    livemode: false,
-    sessions,
-    failNextCreate: false,
-    expired: [],
-    async createCheckoutSession(input) {
-      if (fake.failNextCreate) { fake.failNextCreate = false; throw new Error('stripe is down (fake)') }
-      const id = `cs_test_fake_${++n}_${Date.now()}`
-      sessions.set(id, { input, status: 'open', paymentStatus: 'unpaid' })
-      return { sessionId: id, clientSecret: `${id}_secret_fake` }
+    locationId: FAKE_LOCATION_ID,
+    charges: [],
+    nextOutcomes: [],
+    payments: new Map(),
+    refunds: new Map(),
+    duringCharge: null,
+
+    async charge(input) {
+      fake.charges.push(input)
+      const prior = byKey.get(input.idempotencyKey)
+      if (prior) {
+        if (prior.token !== input.sourceToken) throw new PaymentAttemptConflictError()
+        return prior.result
+      }
+      if (fake.duringCharge) {
+        const hook = fake.duringCharge
+        fake.duringCharge = null
+        await hook()
+      }
+      const next = fake.nextOutcomes.shift() ?? 'completed'
+      if (next === 'unavailable') throw new PaymentOutcomeUnknownError('square is down (fake)')
+      let result: ChargeResult
+      if (next === 'declined') {
+        result = { outcome: 'declined', code: 'GENERIC_DECLINE', message: DECLINE_MESSAGE }
+      } else if (next === 'failed') {
+        result = { outcome: 'failed', statusCode: 400, code: 'INVALID_VALUE', reason: 'Square request failed (400): INVALID_VALUE' }
+      } else {
+        const id = `sqpay_fake_${++n}`
+        const status = next === 'processing' ? 'PENDING' : 'COMPLETED'
+        fake.payments.set(id, { id, status, amountCents: input.amountCents, currency: 'USD', referenceId: input.referenceId, locationId: FAKE_LOCATION_ID })
+        result = status === 'COMPLETED'
+          ? { outcome: 'completed', paymentId: id, amountCents: input.amountCents }
+          : { outcome: 'processing', paymentId: id, status }
+      }
+      byKey.set(input.idempotencyKey, { token: input.sourceToken, result })
+      if (next === 'lost') throw new PaymentOutcomeUnknownError('response lost after Square charged (fake)')
+      return result
     },
-    async expireCheckoutSession(id) {
-      fake.expired.push(id)
-      const s = sessions.get(id)
-      if (s?.status === 'complete') return 'complete'
-      if (s) s.status = 'expired'
-      return 'expired'
+
+    async getPayment(paymentId) {
+      const p = fake.payments.get(paymentId)
+      if (!p) throw new Error(`no such payment ${paymentId} (fake)`)
+      return p
     },
-    async retrieveCheckoutSession(id) {
-      const s = sessions.get(id)
-      if (!s) throw new Error(`no such session ${id} (fake)`)
-      return { id, status: s.status, paymentStatus: s.paymentStatus }
+
+    async listPaymentRefunds(paymentId) {
+      return fake.refunds.get(paymentId) ?? []
     },
-    constructWebhookEvent(rawBody, signature) {
-      return verifyWebhookSignature(offline.webhooks, rawBody, signature, webhookSecret)
+
+    verifyWebhook(rawBody, signature) {
+      verifySquareSignature(rawBody, signature, FAKE_SIGNATURE_KEY, FAKE_NOTIFICATION_URL)
     },
-    setSession(id, status, paymentStatus = status === 'complete' ? 'paid' : 'unpaid') {
-      const s = sessions.get(id)
-      if (!s) throw new Error(`no such session ${id} (fake)`)
-      s.status = status
-      s.paymentStatus = paymentStatus
+
+    resolvePayment(paymentId, status) {
+      const p = fake.payments.get(paymentId)
+      if (!p) throw new Error(`no such payment ${paymentId} (fake)`)
+      fake.payments.set(paymentId, { ...p, status })
+      for (const entry of byKey.values()) {
+        if (!('paymentId' in entry.result) || entry.result.paymentId !== paymentId) continue
+        entry.result = status === 'COMPLETED'
+          ? { outcome: 'completed', paymentId, amountCents: p.amountCents }
+          : { outcome: 'declined', code: status, message: declineMessage(status), paymentId }
+      }
     },
-    sign(payload) {
-      return offline.webhooks.generateTestHeaderString({ payload, secret: webhookSecret })
+
+    addRefund(paymentId, refund) {
+      const list = (fake.refunds.get(paymentId) ?? []).filter((r) => r.id !== refund.id)
+      fake.refunds.set(paymentId, [...list, refund])
+    },
+
+    paymentFor(orderId) {
+      const p = [...fake.payments.values()].find((x) => x.referenceId === orderId)
+      if (!p) throw new Error(`no payment for order ${orderId} (fake)`)
+      return p
+    },
+
+    sign(payload, notificationUrl = FAKE_NOTIFICATION_URL) {
+      return squareSignature(notificationUrl, Buffer.from(payload, 'utf8'), FAKE_SIGNATURE_KEY)
     },
   }
   return fake

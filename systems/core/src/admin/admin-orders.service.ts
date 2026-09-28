@@ -3,17 +3,16 @@ import { prisma } from '../prisma.js'
 import { recordAudit } from '../audit.js'
 import { AdminError } from './admin-errors.js'
 import {
-  fulfillOrder, cancelOrder, cancelOrderTx, lockOrderRow, enqueueInventoryPushesAfterCommit, orderNumber, OrderError, PENDING_CHECKOUT_EMAIL,
+  fulfillOrder, cancelOrderTx, lockOrderRow, enqueueInventoryPushesAfterCommit, orderNumber, OrderError, PENDING_CHECKOUT_EMAIL,
 } from '../orders/orders.service.js'
 import { lineName } from '../checkout/checkout.service.js'
-import type { PaymentsPort } from '../ports/payments/payments.port.js'
-import { scrubError } from '../auth/scrub.js'
+import { paymentBlocksRelease } from '../checkout/payment-attempt.js'
 
 export const ORDER_TABS = ['to_ship', 'shipped', 'pending', 'closed', 'review'] as const
 export type OrderTab = (typeof ORDER_TABS)[number]
 export const CARRIERS = ['USPS', 'UPS', 'FedEx', 'Other'] as const
 
-/** Storefront only: Walmart orders ship through the Walmart flow (plan decision 3). */
+/** Storefront only: Walmart orders ship through the Walmart flow. */
 function tabWhere(tab: OrderTab): Prisma.OrderWhereInput {
   const storefront = { channel: 'storefront' as const }
   switch (tab) {
@@ -54,6 +53,13 @@ export async function listAdminOrders(q: { tab?: unknown; page?: number; pageSiz
   return { items, total, page, pageSize }
 }
 
+/**
+ * The payment behind a paid order. `url` stays null until the Square
+ * Dashboard deep-link format is confirmed in the sandbox (spec §9.3); `id`
+ * lets the operator search for it meanwhile (plan decision 10).
+ */
+export interface AdminOrderPayment { provider: 'square'; id: string; url: string | null }
+
 export interface AdminOrderDetail {
   id: string; orderNumber: string; channel: string; status: string; reviewReason: string | null
   createdAt: Date; paidAt: Date | null; shippedAt: Date | null
@@ -64,11 +70,11 @@ export interface AdminOrderDetail {
   taxJurisdiction: string; taxRateBps: number
   carrier: string | null; trackingNumber: string | null
   referral: { code: string; partnerName: string | null; commissionRateBps: number | null; unmatched: boolean } | null
-  stripePaymentUrl: string | null
+  payment: AdminOrderPayment | null
   audit: { action: string; actorName: string; createdAt: Date; after: unknown }[]
 }
 
-export async function getAdminOrder(id: string, payments: Pick<PaymentsPort, 'livemode'>): Promise<AdminOrderDetail | null> {
+export async function getAdminOrder(id: string): Promise<AdminOrderDetail | null> {
   const o = await prisma.order.findUnique({
     where: { id },
     include: {
@@ -80,7 +86,6 @@ export async function getAdminOrder(id: string, payments: Pick<PaymentsPort, 'li
   const audit = await prisma.auditLog.findMany({
     where: { target: `order:${id}` }, orderBy: { createdAt: 'asc' }, include: { actor: { select: { name: true } } },
   })
-  const pi = o.stripePaymentIntentId
   return {
     id: o.id, orderNumber: orderNumber(o.number), channel: o.channel, status: o.status, reviewReason: o.reviewReason,
     createdAt: o.createdAt, paidAt: o.paidAt, shippedAt: o.shippedAt,
@@ -98,7 +103,7 @@ export async function getAdminOrder(id: string, payments: Pick<PaymentsPort, 'li
     referral: o.referralCode
       ? { code: o.referralCode, partnerName: o.affiliatePartner?.name ?? null, commissionRateBps: o.commissionRateBps, unmatched: o.referralUnmatched }
       : null,
-    stripePaymentUrl: pi ? `https://dashboard.stripe.com/${payments.livemode ? '' : 'test/'}payments/${pi}` : null,
+    payment: o.squarePaymentId ? { provider: 'square', id: o.squarePaymentId, url: null } : null,
     audit: audit.map((a) => ({ action: a.action, actorName: a.actor.name, createdAt: a.createdAt, after: a.after })),
   }
 }
@@ -112,7 +117,7 @@ function mapOrderError(err: unknown): unknown {
 
 async function requireStorefrontOrder(id: string) {
   const order = await prisma.order.findUnique({
-    where: { id }, select: { channel: true, status: true, reviewReason: true, stripeCheckoutSessionId: true },
+    where: { id }, select: { channel: true, status: true, reviewReason: true, paymentAttemptAt: true },
   })
   if (!order) throw new AdminError('NOT_FOUND', 'order not found')
   if (order.channel !== 'storefront') throw new AdminError('WRONG_CHANNEL', 'Walmart orders are handled through the Walmart flow')
@@ -142,15 +147,11 @@ function reviewRequired(reviewReason: string, verb: string) {
 }
 
 /**
- * Mark shipped (spec §7): `paid` only -> fulfillOrder, with carrier details in the same transaction.
- *
- * The unlocked pre-read gives a fast refusal, but it is only advisory: a
- * dispute webhook can flag the order between it and fulfillOrder's row lock.
- * The authoritative check re-reads reviewReason inside fulfillOrder's
- * transaction, under that lock (ruling F-R3), and the audit records the
- * locked value -- a throw there rolls the whole ship back.
+ * Mark shipped: `paid` only -> fulfillOrder, with carrier details in the same transaction.
+ * The unlocked pre-read gives a fast refusal; the authoritative review check
+ * re-reads under fulfillOrder's row lock (ruling F-R3).
  */
-export async function shipOrder(id: string, body: unknown, actorId: string, payments: Pick<PaymentsPort, 'livemode'>): Promise<AdminOrderDetail> {
+export async function shipOrder(id: string, body: unknown, actorId: string): Promise<AdminOrderDetail> {
   const input = parseShipInput(body)
   const order = await requireStorefrontOrder(id)
   if (order.reviewReason && !input.acknowledgeReview) throw reviewRequired(order.reviewReason, 'shipping')
@@ -167,12 +168,17 @@ export async function shipOrder(id: string, body: unknown, actorId: string, paym
       },
     })
   } catch (err) { throw mapOrderError(err) }
-  return (await getAdminOrder(id, payments))!
+  return (await getAdminOrder(id))!
 }
 
-/** Shared "the order is no longer pending" refusal for cancel (spec: refund paid orders in Stripe instead). */
+/** The order is no longer pending by the time the lock was taken: it was paid. */
 function orderPaidError() {
-  return new AdminError('ORDER_PAID', 'The customer has just paid for this order. Refresh the page; refund it in Stripe if it should not ship.')
+  return new AdminError('ORDER_PAID', 'The customer has just paid for this order. Refresh the page; refund it in the payment dashboard if it should not ship.')
+}
+
+/** Plan decision 7: a charge may be landing; the sweep releases the order later if not. */
+function paymentInProgressError() {
+  return new AdminError('PAYMENT_IN_PROGRESS', 'The customer is paying for this order right now. Wait ten minutes, then refresh.')
 }
 
 function parseCancelInput(body: unknown): { acknowledgeReview: boolean } {
@@ -187,55 +193,45 @@ function parseCancelInput(body: unknown): { acknowledgeReview: boolean } {
 }
 
 /**
- * Cancel (spec §7): `pending` orders, plus -- ruling F-R1 -- a `paid` order
- * under dispute, whose stock would otherwise stay reserved forever (a lost
- * dispute never sends charge.refunded). Every other paid order is refunded
- * in Stripe, never cancelled here.
- *
- * Pending: expire the Stripe session FIRST, so the customer cannot pay for
- * stock this is about to release. `cancelOrder` is called with
- * `{ onlyIfPending: true }` (ruling T8-R1): even after the checks above, a
- * webhook can still mark the order paid in the tiny window between the
- * Stripe expire call and cancelOrder's own row lock. A `null` result means
- * that race happened -- the order was no longer pending by the time the lock
- * was taken -- and is reported the same way as the synchronous "customer
- * paid in the meantime" case.
+ * Cancel: `pending` orders, plus (ruling F-R1) a `paid` order under dispute.
+ * Every other paid order is refunded in the payment dashboard, never
+ * cancelled here. There is no provider session to close any more (spec
+ * 2026-09-28 §2): the pending cancel is ours alone, under the row lock,
+ * refused while a payment attempt is in flight or a Square payment id is
+ * already recorded (ruling Q-P6, extended to squarePaymentId the same way
+ * the sweep is -- Q-P7), and onlyIfPending so a payment that landed first is
+ * reported rather than undone.
  */
-export async function cancelPendingOrder(id: string, body: unknown, actorId: string, payments: PaymentsPort): Promise<AdminOrderDetail> {
+export async function cancelPendingOrder(id: string, body: unknown, actorId: string): Promise<AdminOrderDetail> {
   const input = parseCancelInput(body)
   const order = await requireStorefrontOrder(id)
   if (order.status === 'paid' && order.reviewReason === 'disputed') {
     if (!input.acknowledgeReview) throw reviewRequired(order.reviewReason, 'cancelling')
     await cancelDisputedOrder(id, actorId)
-    return (await getAdminOrder(id, payments))!
+    return (await getAdminOrder(id))!
   }
   if (order.status !== 'pending') {
-    throw new AdminError('INVALID_TRANSITION', `cannot cancel a ${order.status} order here; refund paid orders in the Stripe dashboard`)
+    throw new AdminError('INVALID_TRANSITION', `cannot cancel a ${order.status} order here; refund paid orders in the payment dashboard`)
   }
-  if (order.stripeCheckoutSessionId) {
-    let outcome: 'expired' | 'complete'
-    try {
-      outcome = await payments.expireCheckoutSession(order.stripeCheckoutSessionId)
-    } catch (err) {
-      console.error('[admin-orders] could not expire session', id, scrubError(err))
-      throw new AdminError('STRIPE_UNAVAILABLE', 'Could not reach Stripe to close this checkout. Try again in a minute.')
-    }
-    if (outcome === 'complete') throw orderPaidError()
-  }
+  const now = new Date()
   let cancelled
   try {
-    cancelled = await cancelOrder(id, actorId, { onlyIfPending: true })
+    cancelled = await prisma.$transaction(async (tx) => {
+      const locked = await lockOrderRow(tx, id)
+      if (!locked) throw new OrderError('order_not_found', `no order ${id}`)
+      if (locked.status === 'pending' && paymentBlocksRelease(locked, now)) throw paymentInProgressError()
+      return cancelOrderTx(tx, id, actorId, { onlyIfPending: true })
+    })
   } catch (err) { throw mapOrderError(err) }
   if (!cancelled) throw orderPaidError()
-  return (await getAdminOrder(id, payments))!
+  await enqueueInventoryPushesAfterCommit(cancelled.lines.map((l) => l.variantId), `order.cancelled order:${id}`)
+  return (await getAdminOrder(id))!
 }
 
 /**
- * paid + disputed -> cancelled, releasing the reservation (ruling F-R1). The
- * normal cancel path, deliberately WITHOUT onlyIfPending -- the order is
- * paid. The unlocked pre-read is re-checked under the row lock: if a refund
- * or a ship landed in between, the order is no longer a disputed paid order
- * and this refuses instead of releasing stock twice or cancelling a shipment.
+ * paid + disputed -> cancelled, releasing the reservation (ruling F-R1).
+ * Deliberately WITHOUT onlyIfPending -- the order is paid. The unlocked
+ * pre-read is re-checked under the row lock.
  */
 async function cancelDisputedOrder(id: string, actorId: string): Promise<void> {
   let cancelled

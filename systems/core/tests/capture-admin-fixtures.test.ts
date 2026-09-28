@@ -12,7 +12,7 @@ import { prisma } from '../src/prisma.js'
 import { resetDb, ensureSystemActor } from './helpers/db.js'
 import { createSession, SESSION_COOKIE } from '../src/auth/session.service.js'
 import { placeOrder, markOrderPaidTx, PENDING_CHECKOUT_EMAIL } from '../src/orders/orders.service.js'
-import { deferredTaxAdapter } from '../src/ports/tax/deferred.adapter.js'
+import { BEFORE_QUOTE_TAX } from '../src/checkout/checkout.service.js'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const OUT = resolve(__dirname, '../../admin-ui/src/data/__fixtures__')
@@ -85,11 +85,11 @@ describe.runIf(run)('capture admin fixtures', () => {
     const placed = await placeOrder({
       email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId: v.id, quantity: 1 }],
       marketingOptIn: true, referral: { code: 'club', firstSeenAt: new Date('2026-09-26T12:00:00Z') },
-    }, deferredTaxAdapter)
+    }, BEFORE_QUOTE_TAX)
     await prisma.$transaction((tx) => markOrderPaidTx(tx, placed.id, 'system', {
       email: 'buyer@example.com', shipName: 'Ann Buyer', shipLine1: '1 Main St', shipCity: 'Traverse City',
       shipToState: 'MI', shipPostalCode: '49684', shippingCents: 0, taxCents: 1134, totalCents: 20034,
-      taxJurisdiction: 'stripe_tax', taxRateBps: 600, stripePaymentIntentId: 'pi_test_fixture',
+      taxJurisdiction: 'MI', taxRateBps: 600, squarePaymentId: 'sqpay_fixture', quoteVersion: 1,
       paidAt: new Date('2026-09-27T15:00:00Z'), referralUnmatched: true,
     }))
     save('order-queue', (await send('get', '/orders?tab=to_ship')).body)

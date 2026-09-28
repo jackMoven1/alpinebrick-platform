@@ -5,9 +5,9 @@ This is the Claude Code workspace for AlpineBrick' platform build. It's the engi
 ## What's being built here
 Four systems plus the cross-cutting concerns that tie them together:
 
-1. **Retail website / storefront** — catalog, cart, checkout (Stripe), accounts.
+1. **Retail website / storefront** — catalog, cart, checkout (Square), accounts.
 2. **Order management system (OMS) / inventory control** — order processing, fulfillment, inventory.
-3. **Affiliate marketing app** — partner accounts, referral codes, **flat-%** commission engine, payouts (Stripe Connect).
+3. **Affiliate marketing app** — partner accounts, referral codes, **flat-%** commission engine, payouts (paid directly by the business; the platform accrues commission, payout is manual).
 4. **Sales processing** — the checkout + payment flow + post-purchase handling that spans storefront and OMS.
 
 Cross-cutting:
@@ -15,11 +15,15 @@ Cross-cutting:
 - **AlpineBrick MCP connector** — exposes orders/inventory/customers/affiliates/referrals as MCP tools so the back-office agents in the parent folder can read this platform's data.
 
 ## Locked decisions to respect
-- Custom web app (not Shopify). **Stripe** for payments. **Stripe Connect** is the likely mechanism for affiliate payouts.
+- Custom web app (not Shopify). **Square** for all payments, online (Web Payments SDK + Payments API) and in person at events (decided 2026-09-28; replaces Stripe).
+- **Affiliates and designers are paid directly** by the business. No Stripe Connect and no marketplace payouts in the platform. Commission and royalty *accrual* stays in scope; *payout* is manual.
 - **Flat-%** affiliate commission model.
 - **Affiliate attribution captured at the order level from day one.**
 - Design schemas/APIs to be exposable later via the MCP bridge.
 - Approvals: branch + review for code; **Jack approves** architecture, stack, infra, deploys, external spend, and connecting live services.
+
+Current state, not locked: sales tax is Michigan only (6% on goods, not
+shipping), **pending partner sign-off** on anything else.
 
 ## How this workspace is organized (initial)
 - `.claude/agents/` — engineer subagents. **Engineering Lead** is hired and ready (`engineering-lead.md`). Other roles are planned and will be hired here as work demands.

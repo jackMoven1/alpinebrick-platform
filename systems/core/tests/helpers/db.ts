@@ -8,7 +8,7 @@ export async function resetDb() {
   await prisma.auditLog.deleteMany()
   await prisma.orderLine.deleteMany()
   await prisma.order.deleteMany()
-  await prisma.stripeEvent.deleteMany()
+  await prisma.paymentEvent.deleteMany()
   await prisma.customer.deleteMany()
   await prisma.referralCode.deleteMany()
   await prisma.affiliatePartner.deleteMany()

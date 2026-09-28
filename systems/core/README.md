@@ -189,30 +189,45 @@ WALMART_API_BASE=https://sandbox.walmartapis.com
 WALMART_WEBHOOK_SECRET=
 ```
 
-## Checkout and Stripe
+## Checkout and Square
 
-Spec: `docs/superpowers/specs/2026-09-27-revenue-loop-checkout-design.md`.
+Spec: `docs/superpowers/specs/2026-09-28-square-payments-design.md` (it
+supersedes the payment and tax parts of the 09-27 checkout spec).
 
-- `POST /api/v1/checkout` (public, storefront CORS, 20/min per IP) reserves
-  stock via `placeOrder`, opens a Stripe Embedded Checkout session
-  (`ui_mode: 'embedded_page'`), and returns `{ orderId, clientSecret }`.
-- `POST /api/v1/webhooks/stripe` is mounted **before** `express.json` with a
-  raw-body parser; each event is applied once (`stripe_events`), in one
-  transaction with its effects. Handled: `checkout.session.completed`,
-  `checkout.session.expired`, `charge.refunded`, `charge.dispute.created`.
-- The abandoned-checkout sweep runs every 5 minutes **in the web process**
-  (`src/checkout/sweep.ts`), unlike the Walmart scheduler.
-- `stripe` is pinned to **22.6.2** (API `2026-08-26.dahlia`). Upgrading the SDK
-  changes the API version: update `STRIPE_API_VERSION`, the webhook endpoint's
-  version in the Stripe dashboard, and re-verify the field locations noted in
-  `src/payments/stripe-events.ts`.
+- `POST /api/v1/checkout` (public, storefront CORS) reserves stock through
+  `placeOrder` and returns `{ orderId }`.
+- `POST /api/v1/checkout/:orderId/quote { email, name, address }` refuses
+  anything outside the contiguous US (422), writes the address, and stores
+  a versioned quote: flat-rate shipping, and Michigan 6% on goods only.
+- `POST /api/v1/checkout/:orderId/pay { sourceToken, quoteVersion }` stamps
+  `paymentAttemptAt`, then charges through Square `CreatePayment` (no Square
+  Order), with idempotency key `orderId:quoteVersion:attemptCount`.
+- Start, quote and pay share one limit: 20 per minute per IP.
+- `GET /api/v1/checkout/status?orderId=` returns no address and no email.
+- `POST /api/v1/webhooks/square` is mounted **before** `express.json` with a
+  raw-body parser. The signature is an HMAC over
+  `SQUARE_WEBHOOK_NOTIFICATION_URL` + the body, compared in constant time.
+  Each event is applied once (`payment_events`), in one transaction with its
+  effects. Handled: `payment.updated`, `refund.created`, `refund.updated`,
+  `dispute.created`, `dispute.state.updated`. Events for other Square
+  locations are ignored.
+- The abandoned-checkout sweep runs every 5 minutes **in the web process**.
+  It makes no Square call, and skips orders with a payment attempt in the
+  last 10 minutes.
+- `square` is pinned to **46.0.0** (API `2026-09-16`). Upgrading the SDK
+  changes the API version: update `SQUARE_API_VERSION`, re-pin the webhook
+  subscription's version, and re-check the payload fields read in
+  `src/payments/square-events.ts`.
 
 | Var | Purpose |
 |---|---|
-| `STRIPE_SECRET_KEY` | Secret, pasted by Jack. Test mode (`sk_test_…`) on staging. |
-| `STRIPE_WEBHOOK_SECRET` | Secret (`whsec_…`) of this environment's webhook endpoint. |
-| `STOREFRONT_PUBLIC_URL` | Base of Checkout's `return_url`. |
+| `SQUARE_ENVIRONMENT` | `sandbox` (staging) or `production`. |
+| `SQUARE_ACCESS_TOKEN` | Secret, pasted by Jack. |
+| `SQUARE_LOCATION_ID` | The "Online" location; web payments are taken there. |
+| `SQUARE_WEBHOOK_SIGNATURE_KEY` | Secret, from this environment's webhook subscription. |
+| `SQUARE_WEBHOOK_NOTIFICATION_URL` | Exactly the subscription's URL, e.g. `https://api-staging.alpinebrickexchange.com/api/v1/webhooks/square`. |
+| `STOREFRONT_PUBLIC_URL` | Storefront origin, for links. |
 
-None set: checkout answers 503 and the sweep does not start. One Stripe key
-set without the other, or both without `STOREFRONT_PUBLIC_URL`: core
-**refuses to start**, naming the missing keys.
+None of the five Square keys set: checkout and the webhook answer 503 and
+the sweep does not start. Any other partial set: core **refuses to start**,
+naming the missing keys.
