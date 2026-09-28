@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatCents, minPriceCents } from './money'
+import { centsToDecimal, formatCents, minPriceCents } from './money'
 import { deriveBadge } from './badge'
 import { COLLECTIONS, CATEGORY_COLLECTIONS, findCollection } from './collections'
 import type { Product } from './api/types'
@@ -119,5 +119,14 @@ describe('collection registry', () => {
     expect(CATEGORY_COLLECTIONS.map(c => c.slug)).toEqual([
       'architecture', 'fantasy', 'space', 'ocean', 'nature',
     ])
+  })
+})
+
+describe('centsToDecimal', () => {
+  it('gives the decimal string Square takes', () => expect(centsToDecimal(11593)).toBe('115.93'))
+  it('pads single-digit cents', () => expect(centsToDecimal(12005)).toBe('120.05'))
+  it('handles under a dollar and zero', () => {
+    expect(centsToDecimal(9)).toBe('0.09')
+    expect(centsToDecimal(0)).toBe('0.00')
   })
 })
