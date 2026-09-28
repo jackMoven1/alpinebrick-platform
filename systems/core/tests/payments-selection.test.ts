@@ -1,35 +1,45 @@
-import { describe, it, expect } from 'vitest'
-import { createPaymentsPort } from '../src/ports/payments/index.js'
-import { PaymentsUnavailableError } from '../src/ports/payments/payments.port.js'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { createPaymentsPort, SQUARE_KEYS } from '../src/ports/payments/index.js'
+import { PaymentsUnavailableError, WebhookSignatureError } from '../src/ports/payments/payments.port.js'
 
 const FULL = {
-  STRIPE_SECRET_KEY: 'sk_test_unused_placeholder',
-  STRIPE_WEBHOOK_SECRET: 'whsec_selection_test',
-  STOREFRONT_PUBLIC_URL: 'https://staging.alpinebrickexchange.com',
+  SQUARE_ENVIRONMENT: 'sandbox',
+  SQUARE_ACCESS_TOKEN: 'sq-access-token-unused-placeholder',
+  SQUARE_LOCATION_ID: 'LONLINE',
+  SQUARE_WEBHOOK_SIGNATURE_KEY: 'selection-test-signature-key',
+  SQUARE_WEBHOOK_NOTIFICATION_URL: 'https://api-staging.alpinebrickexchange.com/api/v1/webhooks/square',
 }
+afterEach(() => vi.restoreAllMocks())
 
 describe('createPaymentsPort', () => {
-  it('is unconfigured, not broken, when no Stripe key is set', async () => {
+  it('is unconfigured, not broken, when no Square key is set', async () => {
     const port = createPaymentsPort({})
     expect(port.configured).toBe(false)
-    await expect(port.retrieveCheckoutSession('cs_x')).rejects.toBeInstanceOf(PaymentsUnavailableError)
+    expect(port.locationId).toBeNull()
+    await expect(port.getPayment('x')).rejects.toBeInstanceOf(PaymentsUnavailableError)
+    expect(() => port.verifyWebhook(Buffer.from('{}'), 'x')).toThrow(WebhookSignatureError)
   })
 
-  it('refuses to start with only one Stripe key, naming the missing one', () => {
-    expect(() => createPaymentsPort({ STRIPE_SECRET_KEY: FULL.STRIPE_SECRET_KEY }))
-      .toThrow(/STRIPE_WEBHOOK_SECRET/)
-    expect(() => createPaymentsPort({ STRIPE_WEBHOOK_SECRET: FULL.STRIPE_WEBHOOK_SECRET }))
-      .toThrow(/STRIPE_SECRET_KEY/)
+  it.each(SQUARE_KEYS.map((k) => [k]))('refuses to start without %s when the others are set, naming it', (missing) => {
+    const env: Record<string, string> = { ...FULL }
+    delete env[missing]
+    expect(() => createPaymentsPort(env)).toThrow(new RegExp(`Square is half-configured; missing: ${missing}`))
   })
 
-  it('refuses to start with both keys but no storefront URL for return_url', () => {
-    expect(() => createPaymentsPort({ STRIPE_SECRET_KEY: FULL.STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET: FULL.STRIPE_WEBHOOK_SECRET }))
-      .toThrow(/STOREFRONT_PUBLIC_URL/)
+  it('refuses an unknown SQUARE_ENVIRONMENT and a non-https notification URL', () => {
+    expect(() => createPaymentsPort({ ...FULL, SQUARE_ENVIRONMENT: 'live' })).toThrow(/sandbox or production/)
+    expect(() => createPaymentsPort({ ...FULL, SQUARE_WEBHOOK_NOTIFICATION_URL: 'http://x.example/h' })).toThrow(/https/)
   })
 
-  it('builds the Stripe adapter when fully configured', () => {
+  it('builds the Square adapter when fully configured', () => {
     const port = createPaymentsPort(FULL)
     expect(port.configured).toBe(true)
-    expect(port.livemode).toBe(false)
+    expect(port.locationId).toBe('LONLINE')
+  })
+
+  it('warns about leftover Stripe keys instead of failing', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    createPaymentsPort({ ...FULL, STRIPE_SECRET_KEY: 'x' })
+    expect(warn.mock.calls.join(' ')).toContain('STRIPE_')
   })
 })

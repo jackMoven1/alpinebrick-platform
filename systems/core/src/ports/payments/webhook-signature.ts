@@ -1,22 +1,26 @@
-import type Stripe from 'stripe'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { WebhookSignatureError } from './payments.port.js'
 
 /**
- * Shared by stripe.adapter.ts and fake.adapter.ts (controller ruling P6): one
- * signature-verification helper, not a constructEvent wrapper duplicated in
- * each adapter. Both pass a real `Stripe.webhooks` instance — the live client
- * for the Stripe adapter, an offline `new Stripe(...)` for the fake — so both
- * exercise genuine stripe-node signature verification.
+ * Square's scheme (https://developer.squareup.com/docs/webhooks/step3validate):
+ * base64 HMAC-SHA256, keyed with the subscription's signature key, over the
+ * notification URL followed by the raw request body. Computed over bytes, so
+ * the body is never re-encoded.
  */
-export function verifyWebhookSignature(
-  webhooks: Stripe['webhooks'],
-  rawBody: Buffer,
-  signature: string,
-  secret: string,
-): Stripe.Event {
-  try {
-    return webhooks.constructEvent(rawBody, signature, secret)
-  } catch (err) {
-    throw new WebhookSignatureError(err instanceof Error ? err.message : undefined)
-  }
+export function squareSignature(notificationUrl: string, rawBody: Buffer, signatureKey: string): string {
+  return createHmac('sha256', signatureKey)
+    .update(Buffer.concat([Buffer.from(notificationUrl, 'utf8'), rawBody]))
+    .digest('base64')
+}
+
+/**
+ * Constant-time check (plan decision 1): square@46.0.0's
+ * WebhooksHelper.verifySignature compares with ===. `notificationUrl` comes
+ * from config, never from request headers (spec §3) -- behind Render's proxy
+ * a URL rebuilt from the request would not be the one Square signed.
+ */
+export function verifySquareSignature(rawBody: Buffer, signature: string, signatureKey: string, notificationUrl: string): void {
+  const expected = Buffer.from(squareSignature(notificationUrl, rawBody, signatureKey), 'utf8')
+  const given = Buffer.from(signature, 'utf8')
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) throw new WebhookSignatureError()
 }

@@ -19,7 +19,6 @@ import type { ShippingPort } from './ports/shipping/shipping.port.js'
 import { noopEmailAdapter } from './ports/email/noop.adapter.js'
 import type { EmailPort } from './ports/email/email.port.js'
 import { createCheckoutRouter } from './checkout/checkout.routes.js'
-import { createStripeWebhookHandler } from './payments/stripe-webhook.routes.js'
 import { createRateLimiter } from './lib/rate-limit.js'
 
 export interface AppDeps {
@@ -41,8 +40,8 @@ const checkoutJsonErrorHandler: ErrorRequestHandler = (err, _req, res, next) => 
 }
 
 export function buildApp(deps: Partial<AppDeps> = {}): Express {
-  // createPaymentsPort throws on half-configured Stripe -- the process refuses
-  // to start rather than take money it can never mark paid (spec §8).
+  // createPaymentsPort throws on partial Square config -- the process refuses
+  // to start rather than take money it can never mark paid (spec 2026-09-28 §4).
   const payments = deps.payments ?? createPaymentsPort()
   const shipping = deps.shipping ?? createFlatRateShippingPort()
   const email = deps.email ?? noopEmailAdapter
@@ -55,15 +54,6 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
   // req.ip is the proxy's address and the checkout rate limit (and the
   // session ip recorded at sign-in) would treat every customer as one.
   app.set('trust proxy', 1)
-  // Stripe webhook: raw body, registered BEFORE express.json. body-parser
-  // skips a request whose body was already read (req._body), so the JSON
-  // parser below never touches these bytes. Nothing else is mounted on this
-  // path -- see stripe-webhook.routes.ts.
-  app.post(
-    '/api/v1/webhooks/stripe',
-    express.raw({ type: 'application/json', limit: '1mb' }),
-    createStripeWebhookHandler({ payments, email }),
-  )
   // Checkout CORS mounts BEFORE the JSON parser so a malformed-body 400
   // (below) still carries the storefront's Access-Control-Allow-Origin and
   // the browser can read it. createCors never touches the body.
