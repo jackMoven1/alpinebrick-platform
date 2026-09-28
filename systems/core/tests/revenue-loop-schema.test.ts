@@ -31,7 +31,7 @@ describe('revenue loop schema', () => {
     })
     expect(o).toMatchObject({
       shippingCents: 0, refundedCents: 0, marketingOptIn: false, referralUnmatched: false,
-      reviewReason: null, stripeCheckoutSessionId: null, shipLine1: null,
+      reviewReason: null, squarePaymentId: null, shipLine1: null,
     })
   })
 
