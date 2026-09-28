@@ -11,6 +11,8 @@ function setEnv(environment = 'sandbox') {
   vi.stubEnv('VITE_SQUARE_ENVIRONMENT', environment)
 }
 afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
   vi.unstubAllEnvs()
   tags().forEach((s) => s.remove())
   delete (window as { Square?: unknown }).Square
@@ -18,6 +20,7 @@ afterEach(() => {
 
 describe('squareConfig / loadSquare', () => {
   it('is null unless all three settings are present and the environment is known', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.stubEnv('VITE_SQUARE_APPLICATION_ID', 'x')
     let m = await fresh()
     expect(m.squareConfig()).toBeNull()
@@ -69,6 +72,61 @@ describe('squareConfig / loadSquare', () => {
     expect(tags()).toHaveLength(0)
     void m.loadSquare()
     expect(tags()).toHaveLength(1)
+  })
+
+  it('trims and lower-cases the environment', async () => {
+    setEnv('  Production ')
+    const m = await fresh()
+    expect(m.squareConfig()).toEqual({ applicationId: 'sandbox-sq0idb-test', locationId: 'LONLINE', environment: 'production' })
+  })
+
+  it('warns once when the environment is set but is neither sandbox nor production', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    setEnv('live')
+    const m = await fresh()
+    expect(m.squareConfig()).toBeNull()
+    expect(m.squareConfig()).toBeNull()
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(String(warn.mock.calls[0][0])).toContain('VITE_SQUARE_ENVIRONMENT')
+  })
+
+  it('does not warn when the environment is simply unset', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const m = await fresh()
+    expect(m.squareConfig()).toBeNull()
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('gives up on a script that never loads: null after the timeout, tag removed, retried next time', async () => {
+    vi.useFakeTimers()
+    setEnv()
+    const m = await fresh()
+    const p = m.loadSquare()!
+    let result: unknown = 'pending'
+    void p.then((r) => { result = r })
+    await vi.advanceTimersByTimeAsync(m.SQUARE_LOAD_TIMEOUT_MS - 1)
+    expect(result).toBe('pending')
+    expect(tags()).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(result).toBeNull()
+    expect(tags()).toHaveLength(0)
+    expect(m.SQUARE_LOAD_TIMEOUT_MS).toBe(15_000)
+    void m.loadSquare()
+    expect(tags()).toHaveLength(1)
+  })
+
+  it('a script that loads in time is not failed by the timeout later', async () => {
+    vi.useFakeTimers()
+    setEnv()
+    const m = await fresh()
+    const p = m.loadSquare()!
+    const square = { payments: vi.fn() }
+    ;(window as { Square?: unknown }).Square = square
+    tags()[0].dispatchEvent(new Event('load'))
+    expect(await p).toBe(square)
+    await vi.advanceTimersByTimeAsync(m.SQUARE_LOAD_TIMEOUT_MS)
+    expect(tags()).toHaveLength(1)
+    expect(m.loadSquare()).toBe(p)
   })
 
   it('only ever points at Square’s two CDN hosts', async () => {

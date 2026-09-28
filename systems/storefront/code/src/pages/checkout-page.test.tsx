@@ -1,8 +1,8 @@
 // src/pages/checkout-page.test.tsx
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, within, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router'
+import { MemoryRouter, Routes, Route, useLocation, useNavigationType } from 'react-router'
 import { CartProvider, CART_STORAGE_KEY } from '../lib/cart/CartContext'
 
 // What the page's onToken returned on the last click (controller ruling: it
@@ -35,7 +35,7 @@ import {
 } from '../lib/api/checkout'
 import Checkout from './Checkout'
 
-afterEach(() => { vi.clearAllMocks(); fake.returned = undefined })
+afterEach(() => { vi.clearAllMocks(); vi.restoreAllMocks(); fake.returned = undefined })
 
 // user-event resolves its own @testing-library/dom, which RTL has not wired to
 // act(), so each action (and the async state it sets off) is flushed in act here.
@@ -53,10 +53,23 @@ const PAID: PaidResult = {
 }
 const CART = [{ variantId: 'v', productId: 'p', productSlug: 's', name: 'n', priceCents: 1, imageKey: '', quantity: 1 }]
 const CANCELLED_STATUS: CheckoutStatus = { ...PAID, status: 'cancelled' }
+const PENDING_STATUS: CheckoutStatus = { ...PAID, status: 'pending' }
+
+// The page checks the order's status once on mount (Ruling S-F1); by default
+// the order is still pending, so the address form shows.
+beforeEach(() => { vi.mocked(getCheckoutStatus).mockResolvedValue(PENDING_STATUS) })
 
 function Probe() {
   const { pathname, search } = useLocation()
-  return <p>{`at ${pathname}${search}`}</p>
+  return <><p>{`at ${pathname}${search}`}</p><p>{`navigation ${useNavigationType()}`}</p></>
+}
+
+/** A paid order leaves /checkout for /order/complete, replacing the history entry. */
+async function expectCompleted() {
+  expect(await screen.findByText('at /order/complete?order=order-1')).toBeInTheDocument()
+  expect(screen.getByText('navigation REPLACE')).toBeInTheDocument()
+  expect(JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY)!)).toEqual([])
+  expect(window.sessionStorage.getItem('ab.previousOrderId')).toBeNull()
 }
 
 function renderCheckout(state: { orderId: string } | null = { orderId: 'order-1' }) {
@@ -75,7 +88,7 @@ function renderCheckout(state: { orderId: string } | null = { orderId: 'order-1'
 }
 
 async function fillAddress(state = 'MI') {
-  await user.type(screen.getByLabelText('Email'), 'ann@example.com')
+  await user.type(await screen.findByLabelText('Email'), 'ann@example.com')
   await user.type(screen.getByLabelText('Full name'), 'Ann Buyer')
   await user.type(screen.getByLabelText('Address line 1'), '1 Main St')
   await user.type(screen.getByLabelText('City'), 'Traverse City')
@@ -114,7 +127,7 @@ describe('/checkout', () => {
 
   it('collects the address first, then shows the quoted total with tax on goods', async () => {
     renderCheckout()
-    expect(screen.getByText('We ship to the contiguous US only.')).toBeInTheDocument()
+    expect(await screen.findByText('We ship to the contiguous US only.')).toBeInTheDocument()
     expect(window.sessionStorage.getItem('ab.previousOrderId')).toBe('order-1')
     await toPayStepFromHere()
     expect(quoteCheckout).toHaveBeenCalledWith('order-1', {
@@ -171,14 +184,13 @@ describe('/checkout', () => {
     expect(screen.getByLabelText('ZIP code')).not.toHaveAccessibleDescription()
   })
 
-  it('confirms a paid order in place, then clears the cart and the previous order', async () => {
+  // Ruling S-F1 / I1: a confirmation rendered in place came back as a blank
+  // address form on refresh; /order/complete survives a reload.
+  it('on a paid result clears the cart and the previous order, then replaces /checkout with /order/complete', async () => {
     vi.mocked(payCheckout).mockResolvedValue(PAID)
     await user.click(await toPayStep())
     expect(payCheckout).toHaveBeenCalledWith('order-1', { sourceToken: 'tok_1', quoteVersion: 1 })
-    expect(await screen.findByText('Order ABE-000042 confirmed')).toBeInTheDocument()
-    expect(screen.getByText('Keep your order number for your reference.')).toBeInTheDocument()
-    expect(JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY)!)).toEqual([])
-    expect(window.sessionStorage.getItem('ab.previousOrderId')).toBeNull()
+    await expectCompleted()
   })
 
   it('hands SquarePayment the pay call itself, so its lock lasts until the charge settles', async () => {
@@ -191,7 +203,7 @@ describe('/checkout', () => {
     await Promise.resolve()
     expect(settled).toBe(false)
     d.resolve(PAID)
-    expect(await screen.findByText('Order ABE-000042 confirmed')).toBeInTheDocument()
+    await expectCompleted()
     expect(settled).toBe(true)
   })
 
@@ -203,7 +215,7 @@ describe('/checkout', () => {
     await user.click(screen.getByRole('button', { name: 'Edit address' }))
     expect(screen.queryByLabelText('Email')).not.toBeInTheDocument()
     d.resolve(PAID)
-    expect(await screen.findByText('Order ABE-000042 confirmed')).toBeInTheDocument()
+    await expectCompleted()
     expect(quoteCheckout).toHaveBeenCalledTimes(1)
   })
 
@@ -227,7 +239,7 @@ describe('/checkout', () => {
     expect(pay.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Fake pay 11593' }))
-    expect(await screen.findByText('Order ABE-000042 confirmed')).toBeInTheDocument()
+    await expectCompleted()
   })
 
   it('re-quotes on quote_changed, shows the new total, and pays the new quote version', async () => {
@@ -243,38 +255,35 @@ describe('/checkout', () => {
     expect(within(summary).getByText('$120.00')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Fake pay 12000' }))
     expect(vi.mocked(payCheckout).mock.calls[1][1]).toEqual({ sourceToken: 'tok_1', quoteVersion: 2 })
-    expect(await screen.findByText('Order ABE-000042 confirmed')).toBeInTheDocument()
+    await expectCompleted()
   })
 
   it('says the checkout expired, with a link back to the cart', async () => {
     vi.mocked(payCheckout).mockRejectedValue(new CheckoutError('order_expired', 'This checkout expired.'))
-    vi.mocked(getCheckoutStatus).mockResolvedValue(CANCELLED_STATUS)
+    vi.mocked(getCheckoutStatus).mockResolvedValueOnce(PENDING_STATUS).mockResolvedValue(CANCELLED_STATUS)
     await user.click(await toPayStep())
     expect(await screen.findByText('This checkout expired')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Back to cart' })).toHaveAttribute('href', '/cart')
   })
 
-  // Controller ruling (carried from Task 11 review): history state can still
-  // carry the orderId after the order already paid (back/forward, a
-  // refresh). core then refuses the stale quote with order_expired or
-  // not_found even though money changed hands -- check status once rather
-  // than tell a paying customer their checkout expired.
+  // Controller ruling (carried from Task 11 review): the order can pay after
+  // this page loaded (another tab). core then refuses the quote with
+  // order_expired or not_found even though money changed hands -- check
+  // status once rather than tell a paying customer their checkout expired.
   it.each([['order_expired'], ['not_found']] as const)(
-    'a stale reload for an order that already paid shows the confirmation instead of expired (%s)', async (code) => {
+    'an order that paid after the page loaded goes to the confirmation instead of expired (%s)', async (code) => {
       vi.mocked(quoteCheckout).mockRejectedValue(new CheckoutError(code, 'x'))
-      vi.mocked(getCheckoutStatus).mockResolvedValue(PAID)
+      vi.mocked(getCheckoutStatus).mockResolvedValueOnce(PENDING_STATUS).mockResolvedValue(PAID)
       renderCheckout()
       await fillAddress()
-      expect(getCheckoutStatus).toHaveBeenCalledWith('order-1')
-      expect(await screen.findByText('Order ABE-000042 confirmed')).toBeInTheDocument()
-      expect(screen.queryByText('This checkout expired')).not.toBeInTheDocument()
-      expect(JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY)!)).toEqual([])
-      expect(window.sessionStorage.getItem('ab.previousOrderId')).toBeNull()
+      await expectCompleted()
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(2)
+      expect(getCheckoutStatus).toHaveBeenLastCalledWith('order-1')
     })
 
-  it('a stale reload for an order that is genuinely expired still shows the expired view', async () => {
+  it('a quote refused for an order that is genuinely expired still shows the expired view', async () => {
     vi.mocked(quoteCheckout).mockRejectedValue(new CheckoutError('order_expired', 'x'))
-    vi.mocked(getCheckoutStatus).mockResolvedValue(CANCELLED_STATUS)
+    vi.mocked(getCheckoutStatus).mockResolvedValueOnce(PENDING_STATUS).mockResolvedValue(CANCELLED_STATUS)
     renderCheckout()
     await fillAddress()
     expect(await screen.findByText('This checkout expired')).toBeInTheDocument()
@@ -312,7 +321,7 @@ describe('/checkout', () => {
     expect(vi.mocked(payCheckout).mock.calls.map((c) => c[1])).toEqual([
       { sourceToken: 'tok_1', quoteVersion: 1 }, { sourceToken: 'tok_1', quoteVersion: 1 },
     ])
-    expect(await screen.findByText('Order ABE-000042 confirmed')).toBeInTheDocument()
+    await expectCompleted()
   })
 
   it('keeps the unknown-outcome lock when Try again is rate limited', async () => {
@@ -338,6 +347,90 @@ describe('/checkout', () => {
     expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Edit address' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Fake pay 11593' })).toBeEnabled()
+  })
+})
+
+// Ruling S-F1 / I1: history state carries the orderId through a refresh, so
+// the page asks core once on mount where this order stands.
+describe('/checkout on mount', () => {
+  it('shows a loading status, not a blank form, while it asks', async () => {
+    const d = deferred<CheckoutStatus>()
+    vi.mocked(getCheckoutStatus).mockReturnValue(d.promise)
+    renderCheckout()
+    expect(screen.getByRole('status')).toHaveTextContent('Loading your checkout…')
+    expect(screen.queryByLabelText('Email')).not.toBeInTheDocument()
+    await act(async () => { d.resolve(PENDING_STATUS) })
+    expect(screen.getByLabelText('Email')).toBeInTheDocument()
+  })
+
+  it('a pending order gets the address form, after exactly one status call', async () => {
+    renderCheckout()
+    expect(await screen.findByLabelText('Email')).toHaveValue('')
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(1)
+    expect(getCheckoutStatus).toHaveBeenCalledWith('order-1')
+  })
+
+  it('a paid order (a refreshed confirmation) goes to /order/complete and forgets the cart', async () => {
+    vi.mocked(getCheckoutStatus).mockResolvedValue(PAID)
+    renderCheckout()
+    await expectCompleted()
+    expect(quoteCheckout).not.toHaveBeenCalled()
+  })
+
+  it('a cancelled order shows the expired view', async () => {
+    vi.mocked(getCheckoutStatus).mockResolvedValue(CANCELLED_STATUS)
+    renderCheckout()
+    expect(await screen.findByText('This checkout expired')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Back to cart' })).toHaveAttribute('href', '/cart')
+    expect(JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY)!)).toEqual(CART)
+  })
+
+  it('an order core does not know shows the not-found view', async () => {
+    vi.mocked(getCheckoutStatus).mockRejectedValue(new CheckoutError('not_found', 'Order not found.'))
+    renderCheckout()
+    expect(await screen.findByText("We couldn't find that order")).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Back to cart' })).toHaveAttribute('href', '/cart')
+    expect(JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY)!)).toEqual(CART)
+  })
+
+  it.each([
+    ['checkout_unavailable', () => new CheckoutError('checkout_unavailable', UNAVAILABLE_MESSAGE)],
+    ['rate_limited', () => new CheckoutError('rate_limited', 'Too many checkout attempts. Please wait a minute and try again.')],
+    ['an unexpected error', () => new Error('boom')],
+  ])('a failed status check (%s) is logged, and the address form shows', async (_n, make) => {
+    const err = make()
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(getCheckoutStatus).mockRejectedValue(err)
+    renderCheckout()
+    expect(await screen.findByLabelText('Email')).toBeInTheDocument()
+    expect(log).toHaveBeenCalledWith(expect.any(String), err)
+  })
+})
+
+describe('/checkout address form', () => {
+  it.each([
+    ['Full name', '100'], ['Address line 1', '100'], ['Address line 2 (optional)', '100'], ['City', '60'],
+  ])("caps %s at core's limit", async (label, max) => {
+    renderCheckout()
+    expect(await screen.findByLabelText(label)).toHaveAttribute('maxlength', max)
+  })
+
+  it.each([
+    ['invalid_request', 'address.postalCode', 'ZIP code'],
+    ['outside_shipping_area', 'address.state', 'State'],
+  ] as const)('moves focus to the field core refused (%s)', async (code, field, label) => {
+    vi.mocked(quoteCheckout).mockRejectedValue(new CheckoutError(code, 'x', [], field))
+    renderCheckout()
+    await fillAddress()
+    await screen.findByRole('alert')
+    expect(screen.getByLabelText(label)).toHaveFocus()
+  })
+
+  it('moves focus to the payment heading when the payment step opens', async () => {
+    await toPayStep()
+    const heading = screen.getByRole('heading', { name: 'Payment' })
+    expect(heading).toHaveAttribute('tabindex', '-1')
+    expect(heading).toHaveFocus()
   })
 })
 

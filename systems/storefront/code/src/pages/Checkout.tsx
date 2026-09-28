@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import {
   quoteCheckout, payCheckout, getCheckoutStatus, CheckoutError, UNAVAILABLE_MESSAGE,
-  type CheckoutStatus, type Quote, type QuoteRequest,
+  type Quote, type QuoteRequest,
 } from '../lib/api/checkout'
 import { squareConfig } from '../lib/square'
 import { setPreviousOrderId, clearPreviousOrderId } from '../lib/checkout/previousOrder'
@@ -13,17 +13,19 @@ import { PageHeader } from '../components/PageHeader'
 import { Button } from '../design-system/primitives'
 import AddressForm, { EMPTY_QUOTE_REQUEST, type AddressField, type FieldErrors } from '../components/checkout/AddressForm'
 import SquarePayment from '../components/checkout/SquarePayment'
-import OrderConfirmation from '../components/checkout/OrderConfirmation'
 
 /**
  * The quote travels as one value: the amount the card form shows and the
  * quoteVersion pay sends always come from the same quote response.
  */
 type Step =
+  | { kind: 'checking' }
   | { kind: 'address' }
   | { kind: 'pay'; quote: Quote }
-  | { kind: 'paid'; status: CheckoutStatus }
   | { kind: 'ended'; title: string; body: string }
+
+const EXPIRED: Step = { kind: 'ended', title: 'This checkout expired', body: 'Start again from your cart.' }
+const NOT_FOUND: Step = { kind: 'ended', title: "We couldn't find that order", body: 'Start again from your cart.' }
 
 /** Friendly copy for a field core refused with 400 invalid_request (Q-P11). */
 const FIELD_COPY: Record<AddressField, string> = {
@@ -93,8 +95,8 @@ function Summary({ quote }: { quote: Quote }) {
 
 /**
  * Spec §2 steps 2-6 on our own page (Q6): address -> quote -> Square card
- * form and wallets -> confirmation from the pay response.
- * /order/complete is only for reloads and the processing state.
+ * form and wallets. A paid order replaces this page with /order/complete,
+ * which renders the confirmation and survives a reload (Ruling S-F1).
  */
 export default function Checkout() {
   const orderId = (useLocation().state as { orderId?: string } | null)?.orderId
@@ -102,27 +104,76 @@ export default function Checkout() {
   const { clear } = useCart()
   const [config] = useState(squareConfig)
   const [form, setForm] = useState<QuoteRequest>(EMPTY_QUOTE_REQUEST)
-  const [step, setStep] = useState<Step>({ kind: 'address' })
+  const [step, setStep] = useState<Step>({ kind: 'checking' })
   const [busy, setBusy] = useState(false)
   // true while SquarePayment holds its pay lock (tokenizing, then our pay call).
   const [paying, setPaying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
+  // Bumped when core refuses a field, so the form focuses the first invalid one.
+  const [focusRequest, setFocusRequest] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   // The token of an attempt whose outcome is unknown: Try again re-sends it,
   // so core reuses the idempotency key and Square replays (plan decision 3).
   const [retryToken, setRetryToken] = useState<string | null>(null)
   // Guards against a second pay call before React re-renders `busy`.
   const inFlight = useRef(false)
+  const heading = useRef<HTMLHeadingElement>(null)
+  const shownStep = useRef<Step['kind']>(step.kind)
 
   useEffect(() => {
     if (orderId) setPreviousOrderId(orderId)
   }, [orderId])
 
+  /** A paid order is confirmed on /order/complete; replace, so Back and a reload stay there. */
+  const completePaid = useCallback((id: string) => {
+    clear()
+    clearPreviousOrderId()
+    navigate(`/order/complete?order=${encodeURIComponent(id)}`, { replace: true })
+  }, [clear, navigate])
+
+  // History state carries the orderId through a refresh, back/forward, or a
+  // reload of a finished checkout: ask core once where this order stands
+  // before showing a form (Ruling S-F1).
+  useEffect(() => {
+    if (!orderId || !config) return
+    let live = true
+    void (async () => {
+      try {
+        const status = await getCheckoutStatus(orderId)
+        if (!live) return
+        if (status.status === 'paid') completePaid(orderId)
+        else setStep(status.status === 'cancelled' ? EXPIRED : { kind: 'address' })
+      } catch (err) {
+        if (!live) return
+        if (err instanceof CheckoutError && err.code === 'not_found') {
+          setStep(NOT_FOUND)
+          return
+        }
+        // Not an answer (network, rate limit, core down): the form is the safe default.
+        console.error('Checkout status check failed', err)
+        setStep({ kind: 'address' })
+      }
+    })()
+    return () => { live = false }
+  }, [orderId, config, completePaid])
+
+  // Moving from the address to the payment step: focus the step's heading.
+  useEffect(() => {
+    if (shownStep.current === 'address' && step.kind === 'pay') heading.current?.focus()
+    shownStep.current = step.kind
+  }, [step.kind])
+
   if (!orderId) return <Problem title="Your checkout has ended" body="Start again from your cart." />
   if (!config) return <Problem title="We couldn't load the payment form" body={UNAVAILABLE_MESSAGE} />
   if (step.kind === 'ended') return <Problem title={step.title} body={step.body} />
-  if (step.kind === 'paid') return <OrderConfirmation status={step.status} />
+  if (step.kind === 'checking') {
+    return (
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-24">
+        <p role="status" className="text-sm text-muted-foreground">Loading your checkout…</p>
+      </div>
+    )
+  }
   const id = orderId
   const complete = () => navigate(`/order/complete?order=${encodeURIComponent(id)}`)
   // Q-P1: core may be charging. No re-quote (Edit address) and no new card
@@ -132,28 +183,23 @@ export default function Checkout() {
   /**
    * Everything but the codes each caller handles itself.
    *
-   * A stale reload can carry an orderId that already paid (history state
-   * survives a back/forward or a refresh): core then refuses the quote with
+   * The mount check covers a reload of a paid order; this covers an order
+   * that paid after the page loaded (another tab): core then refuses with
    * order_expired or not_found even though money changed hands. Rather than
    * show "This checkout expired" on a paid order, check status once -- if
-   * paid, show the confirmation and clear the cart; otherwise it really is
-   * expired.
+   * paid, go to the confirmation; otherwise it really is expired.
    */
   async function show(err: unknown) {
     if (!(err instanceof CheckoutError)) { setError(UNAVAILABLE_MESSAGE); return }
     if (err.code === 'order_expired' || err.code === 'not_found') {
       try {
         const status = await getCheckoutStatus(id)
-        if (status.status === 'paid') {
-          clear()
-          clearPreviousOrderId()
-          setStep({ kind: 'paid', status })
-          return
-        }
-      } catch {
-        // Fall through to the expired view: the status check itself is best-effort.
+        if (status.status === 'paid') { completePaid(id); return }
+      } catch (statusErr) {
+        // Best-effort here: the refusal itself stands, so fall through to expired.
+        console.error('Checkout status check failed', statusErr)
       }
-      setStep({ kind: 'ended', title: 'This checkout expired', body: 'Start again from your cart.' })
+      setStep(EXPIRED)
       return
     }
     if (err.code === 'too_many_attempts') { setStep({ kind: 'ended', title: 'Too many payment attempts', body: err.message }); return }
@@ -164,6 +210,7 @@ export default function Checkout() {
       setStep({ kind: 'address' })
       setNotice(null)
       setFieldErrors(fields)
+      setFocusRequest((n) => n + 1)
       return
     }
     setError(err.code === 'invalid_request' ? GENERIC_PROBLEM : err.message)
@@ -213,13 +260,8 @@ export default function Checkout() {
     try {
       const result = await payCheckout(id, { sourceToken: token, quoteVersion: step.quote.quoteVersion })
       setRetryToken(null)
-      if (result.status === 'paid') {
-        clear()
-        clearPreviousOrderId()
-        setStep({ kind: 'paid', status: result })
-      } else {
-        complete()
-      }
+      if (result.status === 'paid') completePaid(id)
+      else complete()
     } catch (err) {
       if (err instanceof CheckoutError && SETTLES_ATTEMPT.has(err.code)) setRetryToken(null)
       if (err instanceof CheckoutError && err.code === 'quote_changed') {
@@ -252,10 +294,12 @@ export default function Checkout() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-16 space-y-8">
-      <PageHeader eyebrow="Checkout" title={step.kind === 'address' ? 'Shipping' : 'Payment'} intro={CONTIGUOUS_NOTICE} />
+      <PageHeader eyebrow="Checkout" title={step.kind === 'address' ? 'Shipping' : 'Payment'} intro={CONTIGUOUS_NOTICE}
+        headingRef={heading} />
       {step.kind === 'address' ? (
         <div className="space-y-4">
-          <AddressForm value={form} onChange={changeForm} onSubmit={() => { void submitAddress() }} busy={busy} errors={fieldErrors} />
+          <AddressForm value={form} onChange={changeForm} onSubmit={() => { void submitAddress() }} busy={busy} errors={fieldErrors}
+            focusRequest={focusRequest} />
           {alert}
         </div>
       ) : (

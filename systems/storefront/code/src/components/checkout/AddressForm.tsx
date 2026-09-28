@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react'
+import { useEffect, useId, useRef, type ReactNode } from 'react'
 import type { QuoteRequest } from '../../lib/api/checkout'
 import { Button } from '../../design-system/primitives'
 
@@ -33,21 +33,32 @@ function Field({ label, error, children }: { label: string; error?: string; chil
 }
 
 /** Spec §2 step 2: email, name and a US shipping address, before any payment form. */
-export default function AddressForm({ value, onChange, onSubmit, busy, errors = {} }: {
+export default function AddressForm({ value, onChange, onSubmit, busy, errors = {}, focusRequest = 0 }: {
   value: QuoteRequest
   onChange: (next: QuoteRequest) => void
   onSubmit: () => void
   busy: boolean
   /** Per-field copy for what core refused, shown next to the field. */
   errors?: FieldErrors
+  /**
+   * Bumped by the page when core refuses a field: focus then moves to the
+   * first invalid field. A counter, not `errors`, so typing (which prunes
+   * errors) never pulls focus away from the field being edited.
+   */
+  focusRequest?: number
 }) {
+  const formRef = useRef<HTMLFormElement>(null)
+  useEffect(() => {
+    if (focusRequest === 0) return
+    formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
+  }, [focusRequest])
   const setAddress = (patch: Partial<QuoteRequest['address']>) => onChange({ ...value, address: { ...value.address, ...patch } })
   const a11y = (field: AddressField, describedBy?: string) => ({
     'aria-invalid': errors[field] ? true : undefined,
     'aria-describedby': describedBy,
   })
   return (
-    <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); onSubmit() }}>
+    <form ref={formRef} className="space-y-4" onSubmit={(e) => { e.preventDefault(); onSubmit() }}>
       <Field label="Email" error={errors.email}>
         {(d) => (
           <input className={input} type="email" required autoComplete="email" value={value.email} {...a11y('email', d)}
@@ -56,26 +67,26 @@ export default function AddressForm({ value, onChange, onSubmit, busy, errors = 
       </Field>
       <Field label="Full name" error={errors.name}>
         {(d) => (
-          <input className={input} required autoComplete="name" value={value.name} {...a11y('name', d)}
+          <input className={input} required autoComplete="name" maxLength={100} value={value.name} {...a11y('name', d)}
             onChange={(e) => onChange({ ...value, name: e.target.value })} />
         )}
       </Field>
       <Field label="Address line 1" error={errors['address.line1']}>
         {(d) => (
-          <input className={input} required autoComplete="address-line1" value={value.address.line1} {...a11y('address.line1', d)}
+          <input className={input} required autoComplete="address-line1" maxLength={100} value={value.address.line1} {...a11y('address.line1', d)}
             onChange={(e) => setAddress({ line1: e.target.value })} />
         )}
       </Field>
       <Field label="Address line 2 (optional)" error={errors['address.line2']}>
         {(d) => (
-          <input className={input} autoComplete="address-line2" value={value.address.line2} {...a11y('address.line2', d)}
+          <input className={input} autoComplete="address-line2" maxLength={100} value={value.address.line2} {...a11y('address.line2', d)}
             onChange={(e) => setAddress({ line2: e.target.value })} />
         )}
       </Field>
       <div className="grid gap-4 sm:grid-cols-3">
         <Field label="City" error={errors['address.city']}>
           {(d) => (
-            <input className={input} required autoComplete="address-level2" value={value.address.city} {...a11y('address.city', d)}
+            <input className={input} required autoComplete="address-level2" maxLength={60} value={value.address.city} {...a11y('address.city', d)}
               onChange={(e) => setAddress({ city: e.target.value })} />
           )}
         </Field>

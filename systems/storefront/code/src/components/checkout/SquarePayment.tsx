@@ -207,10 +207,11 @@ export default function SquarePayment({ config, amountCents, contact, disabled, 
         <button type="button" aria-label="Pay with Apple Pay" style={APPLE_PAY_STYLE} disabled={locked}
           onClick={() => payByWallet(applePay)} />
       )}
-      <div ref={googleEl} role="button" aria-label="Pay with Google Pay" aria-disabled={locked} hidden={!googlePay}
+      {/* Square renders its own labelled Google Pay button inside this container. */}
+      <div ref={googleEl} data-testid="google-pay-container" hidden={!googlePay}
         onClick={() => { if (googlePay) payByWallet(googlePay) }} />
       <div ref={cardEl} data-testid="card-container" />
-      {state === 'loading' && <p className="text-sm text-muted-foreground">Loading the payment form…</p>}
+      {state === 'loading' && <p role="status" className="text-sm text-muted-foreground">Loading the payment form…</p>}
       {problem && <p role="alert" className="text-sm text-destructive">{problem}</p>}
       <Button className="w-full" onClick={payByCard} disabled={locked || state !== 'ready'}>
         {`Pay ${formatCents(amountCents)}`}

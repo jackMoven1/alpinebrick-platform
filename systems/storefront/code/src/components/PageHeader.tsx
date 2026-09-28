@@ -1,11 +1,16 @@
+import type { Ref } from 'react'
+
 export function PageHeader({
   eyebrow,
   title,
   intro,
+  headingRef,
 }: {
   eyebrow: string
   title: string
   intro?: string
+  /** For moving focus to the heading (it then takes tabIndex -1). */
+  headingRef?: Ref<HTMLHeadingElement>
 }) {
   return (
     <header className="max-w-3xl">
@@ -13,6 +18,8 @@ export function PageHeader({
         {eyebrow}
       </span>
       <h1
+        ref={headingRef}
+        tabIndex={headingRef ? -1 : undefined}
         className="text-4xl sm:text-5xl font-black uppercase tracking-[0.05em] text-foreground"
         style={{ fontFamily: 'var(--font-display)' }}
       >

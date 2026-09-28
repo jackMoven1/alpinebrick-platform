@@ -54,7 +54,7 @@ async function initDone(f: ReturnType<typeof fakeSquare>, googlePay = false) {
   await waitFor(() => expect(f.payments.googlePay).toHaveBeenCalled())
   if (googlePay) {
     await waitFor(() => expect(f.google.attach).toHaveBeenCalled())
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Pay with Google Pay' })).toBeVisible())
+    await waitFor(() => expect(screen.getByTestId('google-pay-container')).toBeVisible())
   }
   await act(async () => {})
 }
@@ -75,6 +75,22 @@ function deferred<T>() {
 afterEach(() => vi.clearAllMocks())
 
 describe('SquarePayment', () => {
+  it('announces the loading payment form as a status', async () => {
+    const f = fakeSquare()
+    renderPay()
+    expect(screen.getByRole('status')).toHaveTextContent('Loading the payment form…')
+    await initDone(f)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('leaves the Google Pay container unlabelled: Square renders its own button inside it', async () => {
+    const f = fakeSquare({ googlePay: true })
+    renderPay()
+    await initDone(f, true)
+    const gp = screen.getByTestId('google-pay-container')
+    for (const attr of ['role', 'aria-label', 'aria-disabled']) expect(gp).not.toHaveAttribute(attr)
+    expect(screen.queryByRole('button', { name: 'Pay with Google Pay' })).not.toBeInTheDocument()
+  })
   it('attaches the card form at the configured location and tokenizes with verification details', async () => {
     const f = fakeSquare()
     const { square, card } = f
@@ -171,7 +187,7 @@ describe('SquarePayment', () => {
     const f = fakeSquare({ googlePay: true })
     const { google, request, payments } = f
     const { onToken } = renderPay()
-    const gp = await screen.findByRole('button', { name: 'Pay with Google Pay' })
+    const gp = await screen.findByTestId('google-pay-container')
     await initDone(f, true)
     expect(screen.queryByRole('button', { name: 'Pay with Apple Pay' })).not.toBeInTheDocument()
     expect(payments.paymentRequest).toHaveBeenCalledWith({ countryCode: 'US', currencyCode: 'USD', total: { amount: '115.93', label: STORE_LABEL } })
@@ -212,7 +228,7 @@ describe('SquarePayment', () => {
     // Google Pay attaches last, so once it shows the form is fully ready:
     // the only thing stopping a payment below is `disabled`.
     await initDone(f, true)
-    const gp = screen.getByRole('button', { name: 'Pay with Google Pay' })
+    const gp = screen.getByTestId('google-pay-container')
     const pay = screen.getByRole('button', { name: 'Pay $115.93' })
     expect(pay).toBeDisabled()
     await press(pay)
@@ -232,7 +248,7 @@ describe('SquarePayment', () => {
     const onToken = vi.fn(() => paid.promise)
     renderPay({ onToken, onPayingChange })
     await initDone(f, true)
-    const gp = screen.getByRole('button', { name: 'Pay with Google Pay' })
+    const gp = screen.getByTestId('google-pay-container')
     const pay = screen.getByRole('button', { name: 'Pay $115.93' })
 
     await press(pay)
@@ -260,7 +276,7 @@ describe('SquarePayment', () => {
     const onPayingChange = vi.fn()
     renderPay({ onPayingChange })
     await initDone(f, true)
-    const gp = screen.getByRole('button', { name: 'Pay with Google Pay' })
+    const gp = screen.getByTestId('google-pay-container')
     fireEvent.click(gp)
     fireEvent.click(gp)
     expect(f.google.tokenize).toHaveBeenCalledTimes(1)
@@ -273,7 +289,7 @@ describe('SquarePayment', () => {
     const onPayingChange = vi.fn()
     const { onToken } = renderPay({ onPayingChange })
     await initDone(f, true)
-    await press(screen.getByRole('button', { name: 'Pay with Google Pay' }))
+    await press(screen.getByTestId('google-pay-container'))
     await waitFor(() => expect(onPayingChange).toHaveBeenLastCalledWith(false))
     expect(screen.queryByText(CARD_PROBLEM)).not.toBeInTheDocument()
     expect(onToken).not.toHaveBeenCalled()
@@ -286,7 +302,7 @@ describe('SquarePayment', () => {
     const onPayingChange = vi.fn()
     const { onToken } = renderPay({ onPayingChange })
     await initDone(f, true)
-    await press(screen.getByRole('button', { name: 'Pay with Google Pay' }))
+    await press(screen.getByTestId('google-pay-container'))
     expect(f.google.tokenize).toHaveBeenCalledTimes(1)
     expect(await screen.findByText(CARD_PROBLEM)).toBeInTheDocument()
     expect(onPayingChange).not.toHaveBeenLastCalledWith(true)
@@ -319,7 +335,7 @@ describe('SquarePayment', () => {
     const onPayingChange = vi.fn()
     const { onToken } = renderPay({ onPayingChange })
     await initDone(f, true)
-    const gp = screen.getByRole('button', { name: 'Pay with Google Pay' })
+    const gp = screen.getByTestId('google-pay-container')
     await press(gp)
     expect(await screen.findByText(CARD_PROBLEM)).toBeInTheDocument()
     await waitFor(() => expect(onPayingChange).toHaveBeenLastCalledWith(false))

@@ -23,7 +23,10 @@ const KNOWN: ReadonlySet<string> = new Set([
 export class CheckoutError extends Error {
   readonly code: CheckoutErrorCode
   readonly lines: LineProblem[]
-  /** For invalid_request: which field core refused (e.g. `address.postalCode`). */
+  /**
+   * The field core named in details.field, else null: set for invalid_request
+   * (e.g. `address.postalCode`) and for outside_shipping_area (`address.state`).
+   */
   readonly field: string | null
   constructor(code: CheckoutErrorCode, message: string, lines: LineProblem[] = [], field: string | null = null) {
     super(message)
