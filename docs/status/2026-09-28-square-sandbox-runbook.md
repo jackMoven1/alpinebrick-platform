@@ -65,8 +65,8 @@ Any subset refuses to start ("Square is half-configured; missing: …").
 log a warning, but they should not linger.
 
 After the save, check the `core-api` deploy log shows `core listening`, with no
-"half-configured" error. Then use **Send test event** on the subscription and
-confirm core answers 200.
+"half-configured" error. Then use **Send test event** on the subscription, pick
+`payment.updated`, and confirm core answers 200.
 
 **Stale pending orders are released.** About 5 minutes after the first
 configured boot, the sweep cancels every pending storefront order older than
@@ -100,7 +100,7 @@ each result (order number, console view, pass/fail) on the core PR.
 |---|---|---|
 | 1 | Buy one set, ship to a Michigan address | Summary shows MI tax = 6% of the goods (not shipping), $9.95 shipping; console **To ship** with the address, email and a Payment ID; the payment appears in the sandbox Dashboard at the Online location |
 | 2 | Buy ≥ $150 | Shipping $0 |
-| 3 | Pay with `4000 0000 0000 0002`, then with `4111 1111 1111 1111` | "Your card was declined — try another card.", then paid; one payment in the Dashboard |
+| 3 | Pay with `4000 0000 0000 0002`, then with `4111 1111 1111 1111` | "Your card was declined — try another card.", then paid; one completed payment in the Dashboard |
 | 4 | Pay, then refund in full from the sandbox Dashboard before shipping | Order `refunded`, reserved stock released (proves §9.2: Dashboard refunds reach the webhook) |
 | 5 | Make an order total exactly **$88.01** (non-MI address, a product at $78.06 plus $9.95 shipping; set a staging variant's price in the console for this) and pay | Dispute created (`EVIDENCE_REQUIRED`); order in **Needs review** (`disputed`); Cancel with acknowledgement releases stock. Put the price back afterwards |
 | 6 | Visit `/?ref=test-partner`, then buy | Order detail: referral `test-partner`, Test Partner, 10.00% |
@@ -122,6 +122,13 @@ event. If you will ship it, Mark shipped also needs the acknowledgement.
 **`amount_mismatch`** (Needs review). Square charged a different amount
 from the order total (a re-quote raced a payment). Compare them in the
 Dashboard, and refund the difference or the whole order.
+
+**`duplicate_payment`** (Needs review). The shopper was charged twice for one
+order. The order keeps the payment shown as its Payment ID; the core log
+names the other one ("… also completed for it"). Refund that duplicate
+payment in full in the Square Dashboard. The order stays as it is: ship it
+as normal. The duplicate's refund is recorded but does not change the order,
+and a redelivered event for the same duplicate never flags the order again.
 
 ## 9. Trust-proxy check
 
