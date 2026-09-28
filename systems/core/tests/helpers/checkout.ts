@@ -4,17 +4,10 @@ import { buildApp, type AppDeps } from '../../src/app.js'
 import { createFakePaymentsPort, type FakePaymentsPort } from '../../src/ports/payments/fake.adapter.js'
 import { prisma } from '../../src/prisma.js'
 
-export const STOREFRONT_URL = 'https://staging.alpinebrickexchange.com'
-
-/** An app wired to the fake Stripe, with the rate limit off unless a test supplies one. */
+/** An app wired to the fake Square, with the rate limit off unless a test supplies one. */
 export function makeApp(over: Partial<AppDeps> = {}): { app: Express; payments: FakePaymentsPort } {
   const payments = (over.payments as FakePaymentsPort | undefined) ?? createFakePaymentsPort()
-  const app = buildApp({
-    storefrontUrl: STOREFRONT_URL,
-    checkoutRateLimit: (_req, _res, next) => next(),
-    ...over,
-    payments,
-  })
+  const app = buildApp({ checkoutRateLimit: (_req, _res, next) => next(), ...over, payments })
   return { app, payments }
 }
 
@@ -36,48 +29,24 @@ export function postCheckout(app: Express, body: Record<string, unknown>) {
   return request(app).post('/api/v1/checkout').send({ marketingOptIn: false, referral: null, ...body })
 }
 
-let seq = 0
-/** A Stripe event envelope as the endpoint would render it (API 2026-08-26.dahlia). */
-export function stripeEvent(type: string, object: Record<string, unknown>, id = `evt_test_${Date.now()}_${++seq}`) {
-  return {
-    id, object: 'event', type, api_version: '2026-08-26.dahlia', created: Math.floor(Date.now() / 1000),
-    livemode: false, pending_webhooks: 1, request: { id: null, idempotency_key: null }, data: { object },
-  }
+export const MI_ADDRESS = { line1: '1 Main St', line2: 'Apt 2', city: 'Traverse City', state: 'MI', postalCode: '49684' }
+
+export function quoteBody(over: { email?: string; name?: string; address?: Record<string, unknown> } = {}) {
+  return { email: over.email ?? 'Buyer@Example.com', name: over.name ?? 'Ann Buyer', address: { ...MI_ADDRESS, ...over.address } }
 }
 
-/** POSTs `event` with a valid signature (or the one given) exactly as Stripe does: raw JSON bytes. */
-export function deliver(app: Express, payments: FakePaymentsPort, event: object, signature?: string) {
-  const payload = JSON.stringify(event)
-  return request(app).post('/api/v1/webhooks/stripe')
-    .set('Content-Type', 'application/json')
-    .set('Stripe-Signature', signature ?? payments.sign(payload))
-    .send(payload)
+export function postQuote(app: Express, orderId: string, body: object = quoteBody()) {
+  return request(app).post(`/api/v1/checkout/${orderId}/quote`).send(body)
 }
 
-/**
- * A checkout.session.completed object. Defaults are internally consistent:
- * amount_total = subtotal + shipping + tax.
- */
-export function completedSession(o: {
-  orderId: string; sessionId: string; subtotal: number; shipping?: number; tax?: number; total?: number
-  state?: string; country?: string; email?: string; name?: string; paymentIntent?: string; paymentStatus?: string
-}) {
-  const shipping = o.shipping ?? 995
-  const tax = o.tax ?? 0
-  return {
-    id: o.sessionId, object: 'checkout.session', mode: 'payment', status: 'complete',
-    payment_status: o.paymentStatus ?? 'paid',
-    client_reference_id: o.orderId, metadata: { orderId: o.orderId },
-    amount_subtotal: o.subtotal, amount_total: o.total ?? o.subtotal + shipping + tax,
-    total_details: { amount_discount: 0, amount_shipping: shipping, amount_tax: tax },
-    shipping_cost: { amount_subtotal: shipping, amount_tax: 0, amount_total: shipping, shipping_rate: 'shr_test' },
-    customer_details: { email: o.email ?? 'Buyer@Example.com', name: o.name ?? 'Ann Buyer', address: null },
-    collected_information: {
-      shipping_details: {
-        name: o.name ?? 'Ann Buyer',
-        address: { line1: '1 Main St', line2: 'Apt 2', city: 'Traverse City', state: o.state ?? 'MI', postal_code: '49684', country: o.country ?? 'US' },
-      },
-    },
-    payment_intent: o.paymentIntent ?? `pi_test_${o.orderId}`,
-  }
+/** Start a checkout (`qty` x `sku`, default 2 x BBS-STD at $49.99) and quote it. */
+export async function readyToPay(
+  app: Express,
+  o: { qty?: number; sku?: string; address?: Record<string, unknown>; extra?: Record<string, unknown> } = {},
+): Promise<{ orderId: string; quoteVersion: number; totalCents: number }> {
+  const start = await postCheckout(app, { lines: [{ variantId: await variantIdBySku(o.sku ?? 'BBS-STD'), quantity: o.qty ?? 2 }], ...o.extra })
+  if (start.status !== 201) throw new Error(`checkout failed: ${start.status} ${JSON.stringify(start.body)}`)
+  const quote = await postQuote(app, start.body.orderId, quoteBody({ address: o.address }))
+  if (quote.status !== 200) throw new Error(`quote failed: ${quote.status} ${JSON.stringify(quote.body)}`)
+  return { orderId: start.body.orderId, quoteVersion: quote.body.quoteVersion, totalCents: quote.body.totalCents }
 }

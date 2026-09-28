@@ -7,7 +7,7 @@ import {
   placeOrder, markOrderPaid, fulfillOrder, cancelOrder, refundOrderTx, OrderError, PENDING_CHECKOUT_EMAIL,
   lockOrderRow, markOrderPaidTx, cancelOrderTx,
 } from '../src/orders/orders.service.js'
-import { deferredTaxAdapter } from '../src/ports/tax/deferred.adapter.js'
+import { BEFORE_QUOTE_TAX } from '../src/checkout/checkout.service.js'
 
 beforeEach(async () => { await resetDb(); await seed() })
 afterAll(() => prisma.$disconnect())
@@ -15,21 +15,21 @@ afterAll(() => prisma.$disconnect())
 async function vid(sku: string) { return (await prisma.variant.findFirstOrThrow({ where: { sku } })).id }
 async function inv(variantId: string) { return prisma.inventory.findFirstOrThrow({ where: { variantId } }) }
 const pending = (variantId: string, quantity = 1) => placeOrder(
-  { email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId, quantity }] }, deferredTaxAdapter,
+  { email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId, quantity }] }, BEFORE_QUOTE_TAX,
 )
 const refund = (orderId: string, refundedCents: number, full: boolean) =>
   prisma.$transaction((tx) => refundOrderTx(tx, orderId, { refundedCents, full }))
 
 describe('placeOrder for checkout', () => {
-  it('records opt-in and referral, with tax deferred to Stripe', async () => {
+  it('records opt-in and referral, with tax left for the quote', async () => {
     const v = await vid('BBS-STD')
     const o = await placeOrder({
       email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId: v, quantity: 2 }],
       marketingOptIn: true, referral: { code: 'club', firstSeenAt: new Date('2026-09-20T00:00:00Z') },
-    }, deferredTaxAdapter)
+    }, BEFORE_QUOTE_TAX)
     const row = await prisma.order.findUniqueOrThrow({ where: { id: o.id } })
     expect(row).toMatchObject({
-      taxCents: 0, taxRateBps: 0, taxJurisdiction: 'stripe_tax_pending', totalCents: 9998,
+      taxCents: 0, taxRateBps: 0, taxJurisdiction: 'quote_pending', totalCents: 9998,
       marketingOptIn: true, referralCode: 'club', referralFirstSeenAt: new Date('2026-09-20T00:00:00Z'),
     })
   })
@@ -94,9 +94,9 @@ describe('refundOrderTx', () => {
   })
 })
 
-// Fix round 1 (Ruling T4-R1): Stripe's amount_refunded is cumulative, but
-// charge.refunded events are distinct and can arrive out of order, so an
-// older, smaller figure must never lower the amount or downgrade the status.
+// Fix round 1 (Ruling T4-R1): the refunded total is cumulative, but refund
+// webhooks are distinct and can arrive out of order, so an older, smaller
+// figure must never lower the amount or downgrade the status.
 describe('refundOrderTx is monotonic and validated', () => {
   const orderRow = (id: string) => prisma.order.findUniqueOrThrow({ where: { id } })
   const audits = (id: string, action: string) => prisma.auditLog.count({ where: { action, target: `order:${id}` } })
@@ -327,7 +327,7 @@ describe('stock writes lock inventory rows in variantId order', () => {
     const { low, high } = await pair()
     await assertLowLockedFirst(low, high, () => placeOrder({
       email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId: high, quantity: 1 }, { variantId: low, quantity: 1 }],
-    }, deferredTaxAdapter))
+    }, BEFORE_QUOTE_TAX))
     expect((await inv(low)).reserved).toBe(1)
     expect((await inv(high)).reserved).toBe(1)
   })
@@ -336,7 +336,7 @@ describe('stock writes lock inventory rows in variantId order', () => {
     const { low, high } = await pair()
     const o = await placeOrder({
       email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId: high, quantity: 1 }, { variantId: low, quantity: 1 }],
-    }, deferredTaxAdapter)
+    }, BEFORE_QUOTE_TAX)
     await assertLowLockedFirst(low, high, () => cancelOrder(o.id))
     expect((await inv(low)).reserved).toBe(0)
     expect((await inv(high)).reserved).toBe(0)
@@ -346,7 +346,7 @@ describe('stock writes lock inventory rows in variantId order', () => {
     const { low, high } = await pair()
     const o = await placeOrder({
       email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId: high, quantity: 1 }, { variantId: low, quantity: 1 }],
-    }, deferredTaxAdapter)
+    }, BEFORE_QUOTE_TAX)
     await markOrderPaid(o.id)
     await assertLowLockedFirst(low, high, () => fulfillOrder(o.id))
     expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ status: 'fulfilled' })

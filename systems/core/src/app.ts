@@ -16,6 +16,8 @@ import { createPaymentsPort } from './ports/payments/index.js'
 import type { PaymentsPort } from './ports/payments/payments.port.js'
 import { createFlatRateShippingPort } from './ports/shipping/flat-rate.adapter.js'
 import type { ShippingPort } from './ports/shipping/shipping.port.js'
+import { createFlatRateTaxPort } from './ports/tax/flat-rate.adapter.js'
+import type { TaxPort } from './ports/tax/tax.port.js'
 import { noopEmailAdapter } from './ports/email/noop.adapter.js'
 import type { EmailPort } from './ports/email/email.port.js'
 import { createCheckoutRouter } from './checkout/checkout.routes.js'
@@ -24,9 +26,9 @@ import { createRateLimiter } from './lib/rate-limit.js'
 export interface AppDeps {
   payments: PaymentsPort
   shipping: ShippingPort
+  /** Checkout tax: Michigan 6% on goods, $0 elsewhere (spec Q3, Q8). */
+  tax: TaxPort
   email: EmailPort
-  /** Base for Stripe's return_url; env STOREFRONT_PUBLIC_URL by default. */
-  storefrontUrl: string | null
   checkoutRateLimit: RequestHandler
 }
 
@@ -44,9 +46,8 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
   // to start rather than take money it can never mark paid (spec 2026-09-28 §4).
   const payments = deps.payments ?? createPaymentsPort()
   const shipping = deps.shipping ?? createFlatRateShippingPort()
+  const tax = deps.tax ?? createFlatRateTaxPort()
   const email = deps.email ?? noopEmailAdapter
-  const storefrontUrl = (deps.storefrontUrl !== undefined ? deps.storefrontUrl : (process.env.STOREFRONT_PUBLIC_URL ?? null))
-    ?.replace(/\/+$/, '') ?? null
   const checkoutRateLimit = deps.checkoutRateLimit ?? createRateLimiter({ limit: 20, windowMs: 60_000 })
 
   const app = express()
@@ -73,12 +74,12 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
   app.use('/api/v1/catalog', catalogRouter)
 
   // Storefront checkout (spec §4). Public like catalog: storefront allowlist,
-  // credentials off (its CORS is mounted above, ahead of express.json). POST
-  // is rate-limited per IP inside the router so the endpoint cannot be used
-  // to hold stock. The old public POST/GET
+  // credentials off (its CORS is mounted above, ahead of express.json). start,
+  // quote and pay are rate-limited per IP inside the router so the endpoint
+  // cannot be used to hold stock. The old public POST/GET
   // /api/v1/orders routes are retired (spec §2): POST reserved stock with no
   // payment, GET exposed addresses to anyone holding an order id.
-  app.use('/api/v1/checkout', createCheckoutRouter({ payments, shipping, storefrontUrl, rateLimit: checkoutRateLimit }))
+  app.use('/api/v1/checkout', createCheckoutRouter({ payments, shipping, tax, email, rateLimit: checkoutRateLimit }))
 
   // Walmart calls this endpoint directly with no session cookie and no
   // Origin header -- its own x-webhook-secret header (checked inside the
