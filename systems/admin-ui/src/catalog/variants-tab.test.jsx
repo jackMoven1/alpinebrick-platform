@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { act } from 'react'
+import { render, screen, within, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ToastProvider } from '../ui/toast.jsx'
 import VariantsTab from './tabs/VariantsTab.jsx'
@@ -15,6 +16,12 @@ vi.mock('../data/api.js', () => ({ default: {
 } }))
 import api from '../data/api.js'
 afterEach(() => vi.clearAllMocks())
+
+const deferred = () => {
+  let resolve
+  const promise = new Promise((res) => { resolve = res })
+  return { promise, resolve }
+}
 
 const v = withStock.variants[0]
 const renderTab = (p = withStock, onUpdated = vi.fn()) =>
@@ -217,6 +224,19 @@ describe('VariantsTab', () => {
     const dialog = screen.getByRole('dialog')
     await userEvent.type(within(dialog).getByLabelText('Weight (g)'), '8.5')
     expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
+  it('two Save clicks in the dimensions dialog in one tick send one request', async () => {
+    const d = deferred()
+    vi.mocked(api.updateVariant).mockReturnValue(d.promise)
+    renderTab()
+    await userEvent.click(screen.getByRole('button', { name: /dimensions/i }))
+    const dialog = screen.getByRole('dialog')
+    await userEvent.type(within(dialog).getByLabelText('Weight (g)'), '850')
+    const save = within(dialog).getByRole('button', { name: 'Save' })
+    act(() => { fireEvent.click(save); fireEvent.click(save) })
+    expect(api.updateVariant).toHaveBeenCalledTimes(1)
+    await act(async () => { d.resolve(withStock) })
   })
 })
 

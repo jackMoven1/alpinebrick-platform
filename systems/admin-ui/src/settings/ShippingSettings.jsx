@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import api from '../data/api.js'
 import Card from '../ui/Card.jsx'
 import Button from '../ui/Button.jsx'
@@ -17,6 +17,10 @@ export default function ShippingSettings() {
   const [threshold, setThreshold] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  // Ref, not just state: setBusy(true) doesn't repaint before a second click
+  // in the same tick can land, so the guard against a double-send has to be
+  // synchronous.
+  const inFlight = useRef(false)
 
   const apply = (s) => {
     setFlat(toText(s.flatRateCents))
@@ -36,7 +40,8 @@ export default function ShippingSettings() {
   const valid = flatCents !== null && (!freeOn || (thresholdCents !== null && thresholdCents > 0))
 
   const save = async () => {
-    if (busy || !valid) return
+    if (inFlight.current || !valid) return
+    inFlight.current = true
     setBusy(true)
     setError(null)
     try {
@@ -45,6 +50,7 @@ export default function ShippingSettings() {
     } catch (e) {
       setError(errorText(e))
     } finally {
+      inFlight.current = false
       setBusy(false)
     }
   }

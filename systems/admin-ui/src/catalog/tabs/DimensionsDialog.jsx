@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import api from '../../data/api.js'
 import Modal from '../../ui/Modal.jsx'
 import { errorText } from '../../lib/errorText.js'
@@ -17,6 +17,10 @@ export default function DimensionsDialog({ variant, onClose, onSaved }) {
     Object.fromEntries(FIELDS.map(([k]) => [k, variant[k] == null ? '' : String(variant[k])])))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  // Ref, not just state: setBusy(true) doesn't repaint before a second click
+  // in the same tick can land, so the guard against a double-send has to be
+  // synchronous.
+  const inFlight = useRef(false)
 
   const parsed = Object.fromEntries(FIELDS.map(([k]) => {
     const t = values[k].trim()
@@ -26,8 +30,9 @@ export default function DimensionsDialog({ variant, onClose, onSaved }) {
   const patch = Object.fromEntries(Object.entries(parsed).filter(([k, v]) => v !== (variant[k] ?? null)))
 
   const save = async () => {
-    if (busy || !valid) return
+    if (inFlight.current || !valid) return
     if (Object.keys(patch).length === 0) { onClose(); return }
+    inFlight.current = true
     setBusy(true)
     setError(null)
     try {
@@ -36,6 +41,7 @@ export default function DimensionsDialog({ variant, onClose, onSaved }) {
     } catch (e) {
       setError(errorText(e))
     } finally {
+      inFlight.current = false
       setBusy(false)
     }
   }
