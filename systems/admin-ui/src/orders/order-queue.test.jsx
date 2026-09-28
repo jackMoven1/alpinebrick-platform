@@ -49,4 +49,26 @@ describe('OrderQueue', () => {
     renderQueue()
     expect(await screen.findByRole('alert')).toHaveTextContent('Server unavailable')
   })
+
+  it('shows each row’s own status pill, since Needs review mixes statuses', async () => {
+    vi.mocked(api.listOrders).mockResolvedValue({
+      ...queue,
+      items: [
+        { ...queue.items[0], id: 'a', orderNumber: 'ABE-1', status: 'paid', reviewReason: 'amount_mismatch' },
+        { ...queue.items[0], id: 'b', orderNumber: 'ABE-2', status: 'fulfilled', reviewReason: 'disputed' },
+      ],
+    })
+    renderQueue('/orders?tab=review')
+    const rowA = await screen.findByRole('row', { name: /ABE-1/ })
+    const rowB = screen.getByRole('row', { name: /ABE-2/ })
+    expect(within(rowA).getByText('Paid')).toBeInTheDocument()
+    expect(within(rowB).getByText('Shipped')).toBeInTheDocument()
+  })
+
+  it('clamps to the last page when the current page no longer exists', async () => {
+    vi.mocked(api.listOrders).mockResolvedValue({ items: [], total: 30, page: 5, pageSize: 25 })
+    renderQueue('/orders?tab=to_ship&page=5')
+    await screen.findByText('Page 2 of 2')
+    expect(api.listOrders).toHaveBeenLastCalledWith({ tab: 'to_ship', page: 2, pageSize: 25 })
+  })
 })

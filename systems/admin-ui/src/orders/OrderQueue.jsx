@@ -4,7 +4,7 @@ import api from '../data/api.js'
 import Pill from '../ui/Pill.jsx'
 import { formatCents } from '../lib/money.js'
 import { errorText } from '../lib/errorText.js'
-import { ORDER_TABS, REVIEW_LABELS } from './labels.js'
+import { ORDER_TABS, REVIEW_LABELS, STATUS_LABELS } from './labels.js'
 
 const PAGE_SIZE = 25
 const day = (iso) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -28,6 +28,14 @@ export default function OrderQueue() {
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1
 
+  // A tab switch, or another admin clearing the last item on this page,
+  // can leave `page` past the end (e.g. the URL still says page=3 after the
+  // last order on it ships). Clamp back onto the real last page rather than
+  // showing an empty table with "Next" disabled and no way back.
+  useEffect(() => {
+    if (data && page > totalPages) setParams({ tab, page: String(totalPages) })
+  }, [data, totalPages, page, tab, setParams])
+
   return (
     <div>
       <h1 className="text-3xl font-bold">Orders</h1>
@@ -48,7 +56,7 @@ export default function OrderQueue() {
         <>
           <table className="mt-4 w-full text-sm">
             <thead className="text-left text-gray-500">
-              <tr><th className="py-2">Order</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Ship to</th><th></th></tr>
+              <tr><th className="py-2">Order</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Ship to</th><th>Status</th><th></th></tr>
             </thead>
             <tbody>
               {data.items.map((o) => (
@@ -59,10 +67,13 @@ export default function OrderQueue() {
                   <td>{o.itemCount}</td>
                   <td>{formatCents(o.totalCents)}</td>
                   <td>{o.shipToState ?? '—'}</td>
+                  {/* Needs review mixes every status (pending/paid/fulfilled...),
+                      so the row needs its own status, not just the review reason. */}
+                  <td><Pill>{STATUS_LABELS[o.status] ?? o.status}</Pill></td>
                   <td>{o.reviewReason && <Pill>{REVIEW_LABELS[o.reviewReason] ?? o.reviewReason}</Pill>}</td>
                 </tr>
               ))}
-              {data.items.length === 0 && <tr><td colSpan={7} className="py-4 text-gray-400">No orders here.</td></tr>}
+              {data.items.length === 0 && <tr><td colSpan={8} className="py-4 text-gray-400">No orders here.</td></tr>}
             </tbody>
           </table>
           <div className="mt-4 flex items-center gap-3 text-sm">

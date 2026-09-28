@@ -22,6 +22,7 @@ export default function OrderDetail() {
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [cancelAck, setCancelAck] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [cancelError, setCancelError] = useState(null)
   // Ref guard: same reasoning as ShipDialog -- a double click before the
   // first setCancelling(true) repaints must not fire cancelOrder twice.
   const cancelInFlight = useRef(false)
@@ -44,7 +45,7 @@ export default function OrderDetail() {
 
   const openCancel = () => {
     setCancelAck(false)
-    setError(null)
+    setCancelError(null)
     setConfirmCancel(true)
   }
 
@@ -52,7 +53,7 @@ export default function OrderDetail() {
     if (cancelInFlight.current || (requiresAckToCancel && !cancelAck)) return
     cancelInFlight.current = true
     setCancelling(true)
-    setError(null)
+    setCancelError(null)
     try {
       const updated = requiresAckToCancel
         ? await api.cancelOrder(order.id, { acknowledgeReview: true })
@@ -61,15 +62,29 @@ export default function OrderDetail() {
       toast.push('Order cancelled')
       setConfirmCancel(false)
     } catch (e) {
-      setError(errorText(e))
+      setCancelError(errorText(e))
+      // ORDER_PAID: the customer paid while the confirm dialog was open.
+      // INVALID_TRANSITION: the order moved on (e.g. someone else acted on
+      // it) between load and confirm. Either way the status and Cancel
+      // button shown behind the modal are stale -- refresh them.
+      if (e?.code === 'ORDER_PAID' || e?.code === 'INVALID_TRANSITION') {
+        api.getOrder(order.id).then(setOrder).catch(() => {})
+      }
     } finally {
       cancelInFlight.current = false
       setCancelling(false)
     }
   }
 
+  // Tax and total are unresolved while Stripe Tax hasn't run yet (spec:
+  // taxJurisdiction === 'stripe_tax_pending', or any future '*_pending'
+  // jurisdiction) -- showing $0.00 would read as "this order owes no tax".
+  const taxPending = Boolean(order.taxJurisdiction) && order.taxJurisdiction.endsWith('_pending')
   const money = [
-    ['Subtotal', order.subtotalCents], ['Shipping', order.shippingCents], ['Tax', order.taxCents], ['Total', order.totalCents],
+    ['Subtotal', order.subtotalCents],
+    ['Shipping', order.shippingCents],
+    ['Tax', taxPending ? 'pending' : formatCents(order.taxCents)],
+    ['Total', taxPending ? 'pending tax' : formatCents(order.totalCents)],
   ]
 
   return (
@@ -98,7 +113,7 @@ export default function OrderDetail() {
             ))}
           </ul>
           <dl className="mt-4 space-y-1 text-sm">
-            {money.map(([k, v]) => <div key={k} className="flex justify-between"><dt>{k}</dt><dd>{formatCents(v)}</dd></div>)}
+            {money.map(([k, v]) => <div key={k} className="flex justify-between"><dt>{k}</dt><dd>{v}</dd></div>)}
             {order.refundedCents > 0 && <div className="flex justify-between text-accent"><dt>Refunded</dt><dd>{formatCents(order.refundedCents)}</dd></div>}
           </dl>
           {order.stripePaymentUrl && (
@@ -127,7 +142,12 @@ export default function OrderDetail() {
             <div className="flex justify-between"><dt>Referral</dt><dd>{
               !order.referral ? '—'
                 : order.referral.unmatched ? <span>{order.referral.code} · <span>unmatched</span></span>
-                  : `${order.referral.code} · ${order.referral.partnerName} · ${(order.referral.commissionRateBps / 100).toFixed(2)}%`
+                  // A pending (or swept) order's referral hasn't been resolved
+                  // against the partner table yet -- core only does that once
+                  // the order is paid -- so partnerName/commissionRateBps are
+                  // still null without the code being unmatched.
+                  : order.referral.partnerName == null ? `${order.referral.code} · resolves when paid`
+                    : `${order.referral.code} · ${order.referral.partnerName} · ${(order.referral.commissionRateBps / 100).toFixed(2)}%`
             }</dd></div>
           </dl>
         </Card>
@@ -147,15 +167,19 @@ export default function OrderDetail() {
           onShipped={(o) => { setOrder(o); setShipping(false); toast.push('Order marked shipped') }} />
       )}
       <Modal open={confirmCancel} title={`Cancel ${order.orderNumber}?`} danger confirmLabel="Cancel order"
+        dismissLabel={requiresAckToCancel ? 'Keep order' : 'Cancel'}
         confirmDisabled={cancelling || (requiresAckToCancel && !cancelAck)}
         onClose={() => setConfirmCancel(false)} onConfirm={cancel}>
-        <p>This closes the customer's Stripe checkout and returns the items to stock.</p>
+        <p>{requiresAckToCancel
+          ? 'This cancels the order and returns the items to stock. Any refund happens in the payment dashboard.'
+          : "This closes the customer's Stripe checkout and returns the items to stock."}</p>
         {requiresAckToCancel && (
           <label className="mt-3 flex items-start gap-2 text-accent">
             <input type="checkbox" checked={cancelAck} onChange={(e) => setCancelAck(e.target.checked)} />
             <span>This order is disputed. I have reviewed it and it should still be cancelled.</span>
           </label>
         )}
+        {cancelError && <p role="alert" className="mt-3 text-accent">{cancelError}</p>}
       </Modal>
     </div>
   )

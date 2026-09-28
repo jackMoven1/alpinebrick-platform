@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { ToastProvider } from '../ui/toast.jsx'
@@ -91,12 +91,20 @@ describe('OrderDetail', () => {
     expect(await screen.findByText('Cancelled')).toBeInTheDocument()
   })
 
-  it('explains when the customer paid before the cancel landed', async () => {
+  it('explains when the customer paid before the cancel landed, inside the modal, and refreshes the order', async () => {
     vi.mocked(api.cancelOrder).mockRejectedValue(new AdminApiError('The customer has just paid for this order.', 'ORDER_PAID'))
+    vi.mocked(api.getOrder)
+      .mockResolvedValueOnce({ ...detail, status: 'pending' })
+      .mockResolvedValueOnce({ ...detail, status: 'paid' })
     renderDetail({ ...detail, status: 'pending' })
     await userEvent.click(await screen.findByRole('button', { name: /cancel order/i }))
-    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel order' }))
-    expect(await screen.findByText(/has just paid/)).toBeInTheDocument()
+    const dialog = screen.getByRole('dialog')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel order' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/has just paid/)
+    // The page behind the modal refreshes once the refetch lands: a paid,
+    // non-disputed order drops the header's own "Cancel order" button, so
+    // only the modal's confirm button (same label) is left.
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Cancel order' })).toHaveLength(1))
   })
 
   it('shows Cancel for a paid+disputed order behind an acknowledgement checkbox', async () => {
@@ -118,13 +126,74 @@ describe('OrderDetail', () => {
     expect(screen.queryByRole('button', { name: /cancel order/i })).not.toBeInTheDocument()
   })
 
-  it('maps a 409 REVIEW_REQUIRED response from core to readable text', async () => {
+  it('maps a 409 REVIEW_REQUIRED response from core to readable text, inside the modal', async () => {
     vi.mocked(api.cancelOrder).mockRejectedValue(new AdminApiError('This order needs the review acknowledged before it can be cancelled.', 'REVIEW_REQUIRED'))
     renderDetail({ ...detail, status: 'paid', reviewReason: 'disputed' })
     await userEvent.click(await screen.findByRole('button', { name: /cancel order/i }))
     const dialog = screen.getByRole('dialog')
     await userEvent.click(within(dialog).getByRole('checkbox', { name: /disputed/i }))
     await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel order' }))
-    expect(await screen.findByText(/needs the review acknowledged/)).toBeInTheDocument()
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/needs the review acknowledged/)
+  })
+
+  it('clears a stale cancel error and re-shows the acknowledgement copy each time the modal reopens', async () => {
+    vi.mocked(api.cancelOrder).mockRejectedValueOnce(new AdminApiError('boom', 'INTERNAL'))
+    renderDetail({ ...detail, status: 'pending' })
+    await userEvent.click(await screen.findByRole('button', { name: /cancel order/i }))
+    let dialog = screen.getByRole('dialog')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel order' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('boom')
+    // Dismiss with "Cancel" (this order isn't disputed, so no rename) and reopen.
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await userEvent.click(await screen.findByRole('button', { name: /cancel order/i }))
+    dialog = screen.getByRole('dialog')
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('describes a disputed cancel without naming a payment provider, and calls the dismiss button "Keep order"', async () => {
+    renderDetail({ ...detail, status: 'paid', reviewReason: 'disputed' })
+    await userEvent.click(await screen.findByRole('button', { name: /cancel order/i }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText(/cancels the order and returns the items to stock/i)).toBeInTheDocument()
+    expect(within(dialog).queryByText(/closes the customer's stripe checkout/i)).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Keep order' })).toBeInTheDocument()
+  })
+
+  it('shows "resolves when paid" for a referral core has not resolved to a partner yet', async () => {
+    renderDetail({ ...detail, status: 'pending', referral: { code: 'club', partnerName: null, commissionRateBps: null, unmatched: false } })
+    expect(await screen.findByText('club · resolves when paid')).toBeInTheDocument()
+  })
+
+  it('shows tax and total as pending while Stripe Tax has not run yet', async () => {
+    renderDetail({ ...detail, taxJurisdiction: 'stripe_tax_pending' })
+    await screen.findByRole('heading', { name: new RegExp(detail.orderNumber) })
+    expect(screen.getByText('pending')).toBeInTheDocument()
+    expect(screen.getByText('pending tax')).toBeInTheDocument()
+  })
+
+  it('recovers the acknowledgement checkbox when core flags an order that looked clean (details.reviewReason)', async () => {
+    vi.mocked(api.shipOrder).mockRejectedValueOnce(
+      new AdminApiError('This order is flagged. Confirm you have reviewed it before shipping.', 'REVIEW_REQUIRED', undefined, { reviewReason: 'amount_mismatch' }),
+    )
+    renderDetail({ ...detail, status: 'paid', reviewReason: null })
+    await userEvent.click(await screen.findByRole('button', { name: 'Mark shipped' }))
+    const dialog = screen.getByRole('dialog')
+    await userEvent.type(within(dialog).getByLabelText('Tracking number'), '9400')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Mark shipped' }))
+    expect(await within(dialog).findByRole('checkbox', { name: /reviewed it/i })).toBeInTheDocument()
+    expect(within(dialog).getByText(/amount mismatch/i)).toBeInTheDocument()
+  })
+
+  it('recovers the acknowledgement checkbox by refetching when core omits details.reviewReason', async () => {
+    vi.mocked(api.shipOrder).mockRejectedValueOnce(new AdminApiError('flagged', 'REVIEW_REQUIRED'))
+    vi.mocked(api.getOrder)
+      .mockResolvedValueOnce({ ...detail, status: 'paid', reviewReason: null })
+      .mockResolvedValueOnce({ ...detail, status: 'paid', reviewReason: 'disputed' })
+    renderDetail({ ...detail, status: 'paid', reviewReason: null })
+    await userEvent.click(await screen.findByRole('button', { name: 'Mark shipped' }))
+    const dialog = screen.getByRole('dialog')
+    await userEvent.type(within(dialog).getByLabelText('Tracking number'), '9400')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Mark shipped' }))
+    expect(await within(dialog).findByRole('checkbox', { name: /reviewed it/i })).toBeInTheDocument()
   })
 })
