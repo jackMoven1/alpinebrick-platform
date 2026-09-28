@@ -60,6 +60,17 @@ describe('squareConfig / loadSquare', () => {
     expect(tags()).toHaveLength(1)
   })
 
+  it('treats a load without window.Square as a failure: null, tag removed, retried next time', async () => {
+    setEnv()
+    const m = await fresh()
+    const p = m.loadSquare()!
+    tags()[0].dispatchEvent(new Event('load'))
+    expect(await p).toBeNull()
+    expect(tags()).toHaveLength(0)
+    void m.loadSquare()
+    expect(tags()).toHaveLength(1)
+  })
+
   it('only ever points at Square’s two CDN hosts', async () => {
     const m = await fresh()
     expect(Object.values(m.SQUARE_SCRIPT_URLS).map((u) => new URL(u).host).sort())

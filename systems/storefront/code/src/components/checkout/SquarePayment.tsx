@@ -55,6 +55,15 @@ export default function SquarePayment({ config, amountCents, contact, disabled, 
   useEffect(() => {
     let live = true
     const made: { destroy(): Promise<boolean> }[] = []
+    /** Tracks an instance for cleanup; one made after cleanup is destroyed at once. */
+    function keep(m: { destroy(): Promise<boolean> }): boolean {
+      if (live) {
+        made.push(m)
+        return true
+      }
+      void m.destroy().catch(() => false)
+      return false
+    }
     void (async () => {
       const square = await loadSquare()
       if (!live) return
@@ -65,29 +74,29 @@ export default function SquarePayment({ config, amountCents, contact, disabled, 
       try {
         const payments = square.payments(applicationId, locationId)
         const c = await payments.card()
-        made.push(c)
-        if (!live || !cardEl.current) return
+        if (!keep(c) || !cardEl.current) return
         await c.attach(cardEl.current)
+        if (!live) return
         card.current = c
         const req = payments.paymentRequest({
           countryCode: 'US', currencyCode: 'USD', total: { amount: centsToDecimal(amount.current), label: STORE_LABEL },
         })
         request.current = req
-        if (live) setState('ready')
+        setState('ready')
         try {
           const ap = await payments.applePay(req)
-          made.push(ap)
-          if (live) setApplePay(ap)
+          if (!keep(ap)) return
+          setApplePay(ap)
         } catch { /* Apple Pay is not available on this device or domain */ }
+        if (!live) return
         try {
           const gp = await payments.googlePay(req)
-          made.push(gp)
-          if (live && googleEl.current) {
-            await gp.attach(googleEl.current)
-            setGooglePay(gp)
-          }
+          if (!keep(gp) || !googleEl.current) return
+          await gp.attach(googleEl.current)
+          if (live) setGooglePay(gp)
         } catch { /* Google Pay is not available here */ }
-      } catch {
+      } catch (err) {
+        console.error('Payment form failed to initialise', err)
         if (live) setState('failed')
       }
     })()
@@ -166,7 +175,15 @@ export default function SquarePayment({ config, amountCents, contact, disabled, 
   function payByWallet(method: ApplePay | GooglePay) {
     if (!claim()) return
     // Apple requires tokenize() to start inside the click handler, before any await.
-    const pending = method.tokenize()
+    let pending: Promise<TokenResult>
+    try {
+      pending = method.tokenize()
+    } catch {
+      // A synchronous throw must not keep the slot claimed forever.
+      paying.current = false
+      setProblem(CARD_PROBLEM)
+      return
+    }
     started()
     pending.then(settle, () => {
       setProblem(CARD_PROBLEM)

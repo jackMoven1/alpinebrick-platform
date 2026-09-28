@@ -41,7 +41,11 @@ export function loadSquare(): Promise<Square | null> | null {
       script.src = SQUARE_SCRIPT_URLS[config.environment]
       script.async = true
       script.dataset.squareSdk = ''
-      script.onload = () => resolve(window.Square ?? null)
+      script.onload = () => {
+        // Loaded but no SDK (e.g. a proxy's error page): drop the tag so a retry reinjects it.
+        if (!window.Square) script.remove()
+        resolve(window.Square ?? null)
+      }
       script.onerror = () => {
         script.remove()
         resolve(null)
