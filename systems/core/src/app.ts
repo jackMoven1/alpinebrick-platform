@@ -21,6 +21,7 @@ import type { TaxPort } from './ports/tax/tax.port.js'
 import { noopEmailAdapter } from './ports/email/noop.adapter.js'
 import type { EmailPort } from './ports/email/email.port.js'
 import { createCheckoutRouter } from './checkout/checkout.routes.js'
+import { createSquareWebhookHandler } from './payments/square-webhook.routes.js'
 import { createRateLimiter } from './lib/rate-limit.js'
 
 export interface AppDeps {
@@ -55,6 +56,15 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
   // req.ip is the proxy's address and the checkout rate limit (and the
   // session ip recorded at sign-in) would treat every customer as one.
   app.set('trust proxy', 1)
+  // Square webhook: raw body, registered BEFORE express.json. body-parser
+  // skips a request whose body was already read, so the JSON parser below
+  // never touches these bytes. Any content type is accepted: the HMAC over
+  // the configured notification URL + body is the only auth (spec §3).
+  app.post(
+    '/api/v1/webhooks/square',
+    express.raw({ type: () => true, limit: '1mb' }),
+    createSquareWebhookHandler({ payments, email }),
+  )
   // Checkout CORS mounts BEFORE the JSON parser so a malformed-body 400
   // (below) still carries the storefront's Access-Control-Allow-Origin and
   // the browser can read it. createCors never touches the body.

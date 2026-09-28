@@ -120,3 +120,19 @@ export async function applyCompletedPayment(
     },
   }
 }
+
+/**
+ * A payment we recorded while it was not final (pay answered `processing`)
+ * has FAILED or been CANCELED: no money was taken. Ruling T4-R4 -- the order
+ * drops the payment id and closes the attempt (as a decline does, ruling
+ * T2-R2), so it can be re-quoted and paid under a new idempotency key.
+ * Matches only on the recorded id, so a stale failure for some other payment
+ * never clears a live attempt. Safe to repeat.
+ */
+export async function releaseFailedPayment(db: Pick<Prisma.TransactionClient, 'order'>, paymentId: string): Promise<boolean> {
+  const { count } = await db.order.updateMany({
+    where: { squarePaymentId: paymentId, status: 'pending' },
+    data: { squarePaymentId: null, paymentAttemptAt: null, paymentAttemptCount: { increment: 1 } },
+  })
+  return count > 0
+}

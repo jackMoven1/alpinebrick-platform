@@ -1,7 +1,7 @@
 import request from 'supertest'
 import type { Express } from 'express'
 import { buildApp, type AppDeps } from '../../src/app.js'
-import { createFakePaymentsPort, type FakePaymentsPort } from '../../src/ports/payments/fake.adapter.js'
+import { createFakePaymentsPort, FAKE_LOCATION_ID, type FakePaymentsPort } from '../../src/ports/payments/fake.adapter.js'
 import { prisma } from '../../src/prisma.js'
 
 /** An app wired to the fake Square, with the rate limit off unless a test supplies one. */
@@ -61,4 +61,46 @@ export async function paidOrder(app: Express, o: Parameters<typeof readyToPay>[1
   const res = await postPay(app, r.orderId, { sourceToken: `tok_${r.orderId}`, quoteVersion: r.quoteVersion })
   if (res.body.status !== 'paid') throw new Error(`pay failed: ${res.status} ${JSON.stringify(res.body)}`)
   return prisma.order.findUniqueOrThrow({ where: { id: r.orderId } })
+}
+
+let seq = 0
+/** A Square webhook envelope as the subscription (API 2026-09-16) delivers it: raw snake_case. */
+export function squareEvent(type: string, object: Record<string, unknown>, o: { id?: string; createdAt?: Date } = {}) {
+  const dataType = type.split('.')[0]
+  return {
+    merchant_id: 'MFAKEMERCHANT', type,
+    event_id: o.id ?? `evt_${Date.now()}_${++seq}`,
+    created_at: (o.createdAt ?? new Date()).toISOString(),
+    data: { type: dataType, id: String(object.id ?? ''), object: { [dataType]: object } },
+  }
+}
+
+/** POSTs `event` exactly as Square does: raw JSON bytes, signed over the notification URL. */
+export function deliver(app: Express, payments: FakePaymentsPort, event: object, signature?: string) {
+  const payload = JSON.stringify(event)
+  return request(app).post('/api/v1/webhooks/square')
+    .set('Content-Type', 'application/json')
+    .set('x-square-hmacsha256-signature', signature ?? payments.sign(payload))
+    .send(payload)
+}
+
+export function sqPayment(o: { id: string; orderId?: string; amount: number; status?: string; locationId?: string }) {
+  return {
+    id: o.id, status: o.status ?? 'COMPLETED', amount_money: { amount: o.amount, currency: 'USD' },
+    ...(o.orderId ? { reference_id: o.orderId } : {}), location_id: o.locationId ?? FAKE_LOCATION_ID,
+  }
+}
+
+export function sqRefund(o: { id: string; paymentId: string; amount: number; status?: string; locationId?: string }) {
+  return {
+    id: o.id, status: o.status ?? 'COMPLETED', amount_money: { amount: o.amount, currency: 'USD' },
+    payment_id: o.paymentId, location_id: o.locationId ?? FAKE_LOCATION_ID,
+  }
+}
+
+export function sqDispute(o: { id: string; paymentId: string; state?: string; locationId?: string }) {
+  return {
+    id: o.id, state: o.state ?? 'EVIDENCE_REQUIRED', disputed_payment: { payment_id: o.paymentId },
+    location_id: o.locationId ?? FAKE_LOCATION_ID,
+  }
 }
