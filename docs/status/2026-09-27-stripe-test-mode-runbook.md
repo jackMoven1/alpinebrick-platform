@@ -15,10 +15,23 @@ by Jack into Render; they never go into chat, the repo, or a ticket.
 
 1. Stripe Dashboard → toggle **Test mode**.
 2. Developers → API keys: copy the **publishable** key (`pk_test_…`) and **secret** key (`sk_test_…`).
-3. Create the webhook endpoint **first** (step 3 below) so its signing secret exists.
-4. Render → staging `core-env` group: set `STRIPE_SECRET_KEY` (the `sk_test_…`
-   value), `STRIPE_WEBHOOK_SECRET` (the `whsec_…` value from step 3) and
-   `STOREFRONT_PUBLIC_URL` = `https://staging.alpinebrickexchange.com`
+3. **Storefront first.** Render → staging `storefront` service: set
+   `VITE_STRIPE_PUBLISHABLE_KEY` = the `pk_test_…` value, then make sure a
+   storefront rebuild runs (Manual Deploy if Render did not start one) and
+   **wait until that deploy has finished and is live** (Render → storefront →
+   Events). Vite bakes the key in at build time, so
+   the running storefront has no key until that rebuild is live.
+   Why this order: once core has its Stripe keys, every checkout **reserves
+   stock** before the payment form loads. A storefront still built without the
+   publishable key refuses to start checkout (it shows "Checkout is
+   temporarily unavailable — please try again in a minute." and never POSTs),
+   but only once this PR's build is deployed — do not rely on that as the
+   guard; do the storefront first.
+4. Create the webhook endpoint (section 3 below) **before core's keys**, so
+   its signing secret exists.
+5. Render → staging `core-env` group: set `STRIPE_SECRET_KEY` (the `sk_test_…`
+   value), `STRIPE_WEBHOOK_SECRET` (the `whsec_…` value from the webhook
+   endpoint) and `STOREFRONT_PUBLIC_URL` = `https://staging.alpinebrickexchange.com`
    **together, in one save**. Render redeploys on every save, and the
    in-between states are not all safe:
    - Either Stripe key without the other, or both Stripe keys without
@@ -28,7 +41,6 @@ by Jack into Render; they never go into chat, the repo, or a ticket.
      unconfigured** — checkout answers 503 `checkout_unavailable` and the
      webhook answers 503 to every delivery. Nothing looks broken in the deploy log,
      so don't mistake this for a finished setup.
-5. Render → staging `storefront` service: set `VITE_STRIPE_PUBLISHABLE_KEY` = the `pk_test_…` value.
 
 ## 2. Stripe Tax (test mode)
 
@@ -39,7 +51,7 @@ by Jack into Render; they never go into chat, the repo, or a ticket.
 
 ## 3. Webhook endpoint
 
-Do this **before** step 1.4 above — the signing secret this produces is one
+Do this after step 1.3 and **before** step 1.5 above — the signing secret this produces is one
 of the three values saved together.
 
 1. Workbench → Webhooks → **Add destination** (test mode).
@@ -52,12 +64,12 @@ of the three values saved together.
    - `checkout.session.expired`
    - `charge.refunded`
    - `charge.dispute.created`
-5. Reveal the **signing secret** (`whsec_…`) and use it in step 1.4's combined
+5. Reveal the **signing secret** (`whsec_…`) and use it in step 1.5's combined
    save.
 6. After that save, Render redeploys `core-api` (staging) automatically.
    Check the deploy log shows `core listening` and no "Stripe is
-   half-configured" error. Redeploy the `storefront` (staging) so the
-   publishable key is baked into the build.
+   half-configured" error. (The storefront was already rebuilt with the
+   publishable key in step 1.3 — do not skip ahead of it.)
 
    **Two different deploy paths — don't confuse them:** saving env vars (as
    above) makes Render redeploy automatically. Code changes reach staging

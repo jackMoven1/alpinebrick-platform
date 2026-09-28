@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { CartProvider, useCart } from './CartContext'
+import { CartProvider, useCart, MAX_LINES } from './CartContext'
 
 const wrapper = ({ children }: { children: ReactNode }) => <CartProvider>{children}</CartProvider>
 
@@ -68,5 +68,63 @@ describe('cart', () => {
     act(() => result.current.addItem({ ...LINE_A, variantId: 'v9', priceCents: 1999 }, 3))
     expect(result.current.subtotalCents).toBe(5997)
     expect(Number.isInteger(result.current.subtotalCents)).toBe(true)
+  })
+
+  it('caps a line at 10', () => {
+    const { result } = renderHook(() => useCart(), { wrapper })
+    act(() => result.current.addItem(LINE_A, 8))
+    act(() => result.current.addItem(LINE_A, 5))
+    expect(result.current.items[0].quantity).toBe(10)
+    act(() => result.current.setQuantity('v1', 25))
+    expect(result.current.items[0].quantity).toBe(10)
+  })
+
+  it('persists across a reload and clears', () => {
+    const first = renderHook(() => useCart(), { wrapper })
+    act(() => first.result.current.addItem(LINE_A, 2))
+    first.unmount()
+    const second = renderHook(() => useCart(), { wrapper })
+    expect(second.result.current.items).toEqual([{ ...LINE_A, quantity: 2 }])
+    act(() => second.result.current.clear())
+    expect(second.result.current.count).toBe(0)
+    expect(JSON.parse(window.localStorage.getItem('ab.cart.v1')!)).toEqual([])
+  })
+
+  it('ignores a corrupt stored cart', () => {
+    window.localStorage.setItem('ab.cart.v1', '{"nope":1}')
+    const { result } = renderHook(() => useCart(), { wrapper })
+    expect(result.current.items).toEqual([])
+  })
+
+  it('keeps its actions stable across renders', () => {
+    const { result } = renderHook(() => useCart(), { wrapper })
+    const clear = result.current.clear
+    act(() => result.current.addItem(LINE_A))
+    expect(result.current.clear).toBe(clear)
+  })
+  // Core rejects a checkout with more than 20 lines (spec §4); refusing the
+  // 21st distinct variant here keeps a cart from being built that cannot be
+  // bought.
+  it('refuses a 21st distinct line but still tops up an existing one', () => {
+    const { result } = renderHook(() => useCart(), { wrapper })
+    expect(MAX_LINES).toBe(20)
+    let ok = true
+    act(() => {
+      for (let n = 0; n < 20; n++) result.current.addItem({ ...LINE_A, variantId: `v${n}` })
+    })
+    expect(result.current.items).toHaveLength(20)
+    act(() => { ok = result.current.addItem({ ...LINE_A, variantId: 'v20' }) })
+    expect(ok).toBe(false)
+    expect(result.current.items).toHaveLength(20)
+    act(() => { ok = result.current.addItem({ ...LINE_A, variantId: 'v3' }) })
+    expect(ok).toBe(true)
+    expect(result.current.items.find(i => i.variantId === 'v3')?.quantity).toBe(2)
+  })
+
+  it('trims a stored cart to 20 lines', () => {
+    const lines = Array.from({ length: 25 }, (_, n) => ({ ...LINE_A, variantId: `v${n}`, quantity: 1 }))
+    window.localStorage.setItem('ab.cart.v1', JSON.stringify(lines))
+    const { result } = renderHook(() => useCart(), { wrapper })
+    expect(result.current.items).toHaveLength(20)
   })
 })

@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest'
+import { beforeEach } from 'vitest'
 
 // jsdom does not implement window.scrollTo. Root's ScrollToTop calls it on
 // every navigation, which floods stderr with "Not implemented" traces and can
@@ -10,3 +11,10 @@ window.scrollTo = () => {}
 // all assertions pass. Setting IS_REACT_ACT_ENVIRONMENT was tried and did NOT
 // silence them, so it is not set. Do not "fix" this by removing assertions;
 // if these warnings ever accompany a FAILING test, that is a real bug.
+
+// The cart, referral and previous-order handle now live in browser storage.
+// Clear it before every test so no test sees another's cart.
+beforeEach(() => {
+  window.localStorage.clear()
+  window.sessionStorage.clear()
+})
