@@ -1,113 +1,145 @@
-// tests/checkout-sweep.test.ts
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest'
+
+vi.mock('../src/channels/walmart/inventory.sync.js', async (importOriginal) => {
+  const actual: any = await importOriginal()
+  return { ...actual, enqueueInventoryPush: vi.fn(actual.enqueueInventoryPush) }
+})
 import { prisma } from '../src/prisma.js'
 import { resetDb } from './helpers/db.js'
 import { seed } from '../prisma/seed.js'
-import { placeOrder, markOrderPaid, PENDING_CHECKOUT_EMAIL } from '../src/orders/orders.service.js'
-import { deferredTaxAdapter } from '../src/ports/tax/deferred.adapter.js'
+import { markOrderPaid } from '../src/orders/orders.service.js'
+import { enqueueInventoryPush } from '../src/channels/walmart/inventory.sync.js'
 import { unconfiguredPaymentsPort } from '../src/ports/payments/index.js'
 import { sweepAbandonedCheckouts, startCheckoutSweep } from '../src/checkout/sweep.js'
-import { makeApp, postCheckout, variantIdBySku, inventoryOf } from './helpers/checkout.js'
+import { makeApp, postCheckout, readyToPay, postPay, variantIdBySku, inventoryOf } from './helpers/checkout.js'
 
 let errorSpy: ReturnType<typeof vi.spyOn>
 beforeEach(async () => {
   await resetDb(); await seed()
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  vi.mocked(enqueueInventoryPush).mockClear()
 })
-afterAll(async () => { errorSpy.mockRestore(); await prisma.$disconnect() })
+afterEach(() => { errorSpy.mockRestore() })
+afterAll(async () => { await prisma.$disconnect() })
 
-const age = (id: string, minutes: number) =>
-  prisma.order.update({ where: { id }, data: { createdAt: new Date(Date.now() - minutes * 60_000) } })
+const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000)
+const age = (id: string, minutes: number) => prisma.order.update({ where: { id }, data: { createdAt: minutesAgo(minutes) } })
 
-async function agedCheckout(app: any, minutes: number) {
-  const res = await postCheckout(app, { lines: [{ variantId: await variantIdBySku('BBS-STD'), quantity: 1 }] })
+// `prisma.order` is a Prisma delegate (Proxy-backed): vi.spyOn(...).mockRestore()
+// (and vi.restoreAllMocks()) leaves the property undefined afterwards instead of
+// putting the real implementation back, breaking every later test in the file.
+// Save the original function and reassign it directly instead of relying on
+// vitest's own restore for this one mock.
+function stubFindManyOnce(rows: Array<{ id: string }>): () => void {
+  const original = prisma.order.findMany
+  vi.spyOn(prisma.order, 'findMany').mockResolvedValueOnce(rows as never)
+  return () => { prisma.order.findMany = original }
+}
+
+async function pendingAged(minutes: number, qty = 1): Promise<string> {
+  const { app } = makeApp()
+  const res = await postCheckout(app, { lines: [{ variantId: await variantIdBySku('BBS-STD'), quantity: qty }] })
   await age(res.body.orderId, minutes)
-  return prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } })
+  return res.body.orderId
 }
 
 describe('sweepAbandonedCheckouts', () => {
-  it('cancels an old pending order whose session Stripe reports expired', async () => {
-    const { app, payments } = makeApp()
-    const o = await agedCheckout(app, 41) // session 30 + grace 10
-    payments.setSession(o.stripeCheckoutSessionId!, 'expired')
-    expect(await sweepAbandonedCheckouts(payments)).toEqual({ cancelled: [o.id], skipped: [] })
-    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('cancelled')
+  it('cancels a pending order older than the session lifetime (30 min) with no payment attempt', async () => {
+    const id = await pendingAged(31, 2)
+    vi.mocked(enqueueInventoryPush).mockClear()
+    expect(await sweepAbandonedCheckouts()).toEqual({ cancelled: [id], skipped: [] })
+    expect((await prisma.order.findUniqueOrThrow({ where: { id } })).status).toBe('cancelled')
     expect((await inventoryOf('BBS-STD')).reserved).toBe(0)
+    expect(enqueueInventoryPush).toHaveBeenCalledWith(await variantIdBySku('BBS-STD'))
   })
 
-  it('cancels complete-but-unpaid sessions', async () => {
+  it('leaves an order younger than the session lifetime alone', async () => {
+    await pendingAged(29)
+    expect(await sweepAbandonedCheckouts()).toEqual({ cancelled: [], skipped: [] })
+  })
+
+  it('waits 10 minutes after the last payment attempt, then cancels', async () => {
+    const id = await pendingAged(45)
+    await prisma.order.update({ where: { id }, data: { paymentAttemptAt: minutesAgo(9) } })
+    expect(await sweepAbandonedCheckouts()).toEqual({ cancelled: [], skipped: [] })
+    await prisma.order.update({ where: { id }, data: { paymentAttemptAt: minutesAgo(11) } })
+    expect(await sweepAbandonedCheckouts()).toEqual({ cancelled: [id], skipped: [] })
+  })
+
+  // Spec §2 race rule: pay stamps paymentAttemptAt and commits before charging.
+  it('skips an order whose charge is in flight, and the charge completes', async () => {
     const { app, payments } = makeApp()
-    const o = await agedCheckout(app, 41)
-    payments.setSession(o.stripeCheckoutSessionId!, 'complete', 'unpaid')
-    expect((await sweepAbandonedCheckouts(payments)).cancelled).toEqual([o.id])
+    const r = await readyToPay(app)
+    await age(r.orderId, 45)
+    let during: Awaited<ReturnType<typeof sweepAbandonedCheckouts>> | null = null
+    payments.duringCharge = async () => { during = await sweepAbandonedCheckouts() }
+    const res = await postPay(app, r.orderId, { sourceToken: 'tok_a', quoteVersion: r.quoteVersion })
+    expect(during).toEqual({ cancelled: [], skipped: [] })
+    expect(res.body.status).toBe('paid')
+    expect((await inventoryOf('BBS-STD')).reserved).toBe(2)
   })
 
-  it('leaves a paid session alone and logs the missed webhook', async () => {
-    const { app, payments } = makeApp()
-    const o = await agedCheckout(app, 41)
-    payments.setSession(o.stripeCheckoutSessionId!, 'complete', 'paid')
-    expect(await sweepAbandonedCheckouts(payments)).toEqual({ cancelled: [], skipped: [o.id] })
-    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('pending')
-    expect(errorSpy.mock.calls.map((c) => c.join(' ')).join('\n')).toContain('webhook')
+  it('re-checks the attempt under the row lock (stamped after the sweep read it)', async () => {
+    const id = await pendingAged(45)
+    await prisma.order.update({ where: { id }, data: { paymentAttemptAt: new Date() } })
+    // The unlocked read predates the stamp: make it return the order anyway.
+    const restore = stubFindManyOnce([{ id }])
+    try {
+      expect(await sweepAbandonedCheckouts()).toEqual({ cancelled: [], skipped: [id] })
+    } finally { restore() }
+    expect((await prisma.order.findUniqueOrThrow({ where: { id } })).status).toBe('pending')
   })
 
-  it('leaves open sessions and young orders alone', async () => {
-    const { app, payments } = makeApp()
-    const open = await agedCheckout(app, 41)
-    const young = await agedCheckout(app, 39)
-    payments.setSession(young.stripeCheckoutSessionId!, 'expired')
-    const out = await sweepAbandonedCheckouts(payments)
-    expect(out.cancelled).toEqual([])
-    expect(out.skipped).toEqual([open.id])
+  it('never cancels an order that became paid after the read', async () => {
+    const id = await pendingAged(45)
+    await markOrderPaid(id)
+    const restore = stubFindManyOnce([{ id }])
+    try {
+      expect(await sweepAbandonedCheckouts()).toEqual({ cancelled: [], skipped: [id] })
+    } finally { restore() }
+    expect(await prisma.auditLog.count({ where: { action: 'order.cancelled', target: `order:${id}` } })).toBe(0)
   })
 
-  it('cancels a stale storefront order that never got a session', async () => {
-    const { payments } = makeApp()
-    const orphan = await placeOrder({ email: PENDING_CHECKOUT_EMAIL, shipToState: '', lines: [{ variantId: await variantIdBySku('BBS-STD'), quantity: 2 }] }, deferredTaxAdapter)
-    await age(orphan.id, 41)
-    expect((await sweepAbandonedCheckouts(payments)).cancelled).toEqual([orphan.id])
-    expect((await inventoryOf('BBS-STD')).reserved).toBe(0)
+  it('never cancels an order with a squarePaymentId even when the payment attempt stamp is stale', async () => {
+    const id = await pendingAged(45)
+    await prisma.order.update({
+      where: { id },
+      data: { squarePaymentId: `sqp_${id}`, paymentAttemptAt: minutesAgo(45) },
+    })
+    // The query itself excludes squarePaymentId rows, so the order is never
+    // read as a candidate at all -- neither cancelled nor skipped.
+    expect(await sweepAbandonedCheckouts()).toEqual({ cancelled: [], skipped: [] })
+    expect((await prisma.order.findUniqueOrThrow({ where: { id } })).status).toBe('pending')
   })
 
-  // Fix round 1 (Ruling T8-R1): the sweep's initial SELECT picks up the order
-  // while it is still `pending`, then Stripe reports the session expired --
-  // but the webhook commits pending->paid in the gap between that Stripe
-  // read and the sweep's cancel taking the row lock. The lock forces the
-  // cancel to re-read the committed status: with `onlyIfPending`, it must
-  // skip rather than release stock Stripe was just paid for.
-  it('never cancels an order the webhook marks paid between the Stripe read and the cancel', async () => {
-    const { app, payments } = makeApp()
-    const o = await agedCheckout(app, 41)
-    payments.setSession(o.stripeCheckoutSessionId!, 'expired')
-    const originalRetrieve = payments.retrieveCheckoutSession.bind(payments)
-    payments.retrieveCheckoutSession = async (id: string) => {
-      await markOrderPaid(o.id)
-      return originalRetrieve(id)
-    }
-
-    expect(await sweepAbandonedCheckouts(payments)).toEqual({ cancelled: [], skipped: [o.id] })
-    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe('paid')
-    expect((await inventoryOf('BBS-STD')).reserved).toBe(1)
-    expect(await prisma.auditLog.count({ where: { action: 'order.cancelled', target: `order:${o.id}` } })).toBe(0)
+  it('re-checks squarePaymentId under the row lock (recorded after the sweep read it)', async () => {
+    const id = await pendingAged(45)
+    // The unlocked read predates pay recording the payment id: make it return
+    // the order anyway, as if the read raced a pay that just landed.
+    const restore = stubFindManyOnce([{ id }])
+    await prisma.order.update({ where: { id }, data: { squarePaymentId: `sqp_${id}` } })
+    try {
+      expect(await sweepAbandonedCheckouts()).toEqual({ cancelled: [], skipped: [id] })
+    } finally { restore() }
+    expect((await prisma.order.findUniqueOrThrow({ where: { id } })).status).toBe('pending')
   })
 
   it('never touches Walmart orders', async () => {
-    const { payments } = makeApp()
     const w = await prisma.order.create({ data: {
       channel: 'walmart', externalOrderId: 'PO-1', email: 'w@example.com', shipToState: 'MI',
-      subtotalCents: 100, taxCents: 0, totalCents: 100, taxRateBps: 0, taxJurisdiction: 'none',
-      createdAt: new Date(Date.now() - 3 * 3_600_000),
+      subtotalCents: 100, taxCents: 0, totalCents: 100, taxRateBps: 0, taxJurisdiction: 'none', createdAt: minutesAgo(180),
     } })
-    expect(await sweepAbandonedCheckouts(payments)).toEqual({ cancelled: [], skipped: [] })
+    expect(await sweepAbandonedCheckouts()).toEqual({ cancelled: [], skipped: [] })
     expect((await prisma.order.findUniqueOrThrow({ where: { id: w.id } })).status).toBe('pending')
   })
 
-  it('does not start without Stripe', () => {
+  it('does not start without payments, and starts (returning a stop function) with them', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-    const stop = startCheckoutSweep(unconfiguredPaymentsPort)
+    startCheckoutSweep(unconfiguredPaymentsPort)()
+    expect(logSpy.mock.calls.join(' ')).toContain('not started')
+    const stop = startCheckoutSweep({ configured: true }, 60_000)
     expect(typeof stop).toBe('function')
     stop()
-    expect(logSpy.mock.calls.join(' ')).toContain('not started')
     logSpy.mockRestore()
   })
 })
