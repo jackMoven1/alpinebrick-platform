@@ -324,6 +324,17 @@ describe('/checkout', () => {
     await expectCompleted()
   })
 
+  it('a definite failure (outcome "failed") shows the unavailable message but offers no Try again, and the card form stays usable', async () => {
+    vi.mocked(payCheckout).mockRejectedValueOnce(new CheckoutError('checkout_unavailable', UNAVAILABLE_MESSAGE, [], null, 'failed'))
+    await user.click(await toPayStep())
+    expect(await screen.findByRole('alert')).toHaveTextContent(UNAVAILABLE_MESSAGE)
+    // No payment was created, so a retry with this token can never succeed --
+    // unlike the unknown-outcome case, the attempt is treated as settled.
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit address' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Fake pay 11593' })).toBeEnabled()
+  })
+
   it('keeps the unknown-outcome lock when Try again is rate limited', async () => {
     vi.mocked(payCheckout)
       .mockRejectedValueOnce(new CheckoutError('checkout_unavailable', UNAVAILABLE_MESSAGE))

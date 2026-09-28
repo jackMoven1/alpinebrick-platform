@@ -39,7 +39,7 @@ export default function OrderQueue() {
   return (
     <div>
       <h1 className="text-3xl font-bold">Orders</h1>
-      <p className="text-gray-500">Storefront orders. Refunds are issued in the Stripe dashboard.</p>
+      <p className="text-gray-500">Storefront orders. Refunds are issued in the payment dashboard.</p>
 
       <div role="tablist" aria-label="Order queues" className="mt-4 flex flex-wrap gap-2">
         {ORDER_TABS.map((t) => (

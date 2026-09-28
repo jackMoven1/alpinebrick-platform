@@ -1,10 +1,10 @@
 {
-  "id": "cmuk32w720016nyavbg2lddzy",
-  "orderNumber": "ABE-013348",
+  "id": "cmulpjeas0016rshvfzeu5bcd",
+  "orderNumber": "ABE-020313",
   "channel": "storefront",
   "status": "paid",
   "reviewReason": null,
-  "createdAt": "2026-09-27T17:19:37.599Z",
+  "createdAt": "2026-09-28T20:36:05.284Z",
   "paidAt": "2026-09-27T15:00:00.000Z",
   "shippedAt": null,
   "email": "buyer@example.com",
@@ -19,7 +19,7 @@
   },
   "lines": [
     {
-      "variantId": "cmuk32w2h0009nyavqkuamamr",
+      "variantId": "cmulpje590009rshv3iik0ffu",
       "sku": "ABE-1001",
       "name": "Castle Set — sealed",
       "quantity": 1,
@@ -32,7 +32,7 @@
   "taxCents": 1134,
   "totalCents": 20034,
   "refundedCents": 0,
-  "taxJurisdiction": "stripe_tax",
+  "taxJurisdiction": "MI",
   "taxRateBps": 600,
   "carrier": null,
   "trackingNumber": null,
@@ -42,12 +42,16 @@
     "commissionRateBps": null,
     "unmatched": true
   },
-  "stripePaymentUrl": "https://dashboard.stripe.com/test/payments/pi_test_fixture",
+  "payment": {
+    "provider": "square",
+    "id": "sqpay_fixture",
+    "url": null
+  },
   "audit": [
     {
       "action": "order.place",
       "actorName": "system",
-      "createdAt": "2026-09-27T17:19:37.604Z",
+      "createdAt": "2026-09-28T20:36:05.292Z",
       "after": {
         "status": "pending",
         "totalCents": 18900
@@ -56,7 +60,7 @@
     {
       "action": "order.paid",
       "actorName": "system",
-      "createdAt": "2026-09-27T17:19:37.614Z",
+      "createdAt": "2026-09-28T20:36:05.306Z",
       "after": {
         "status": "paid"
       }
