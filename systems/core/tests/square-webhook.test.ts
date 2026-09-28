@@ -15,6 +15,7 @@ import { enqueueInventoryPush } from '../src/channels/walmart/inventory.sync.js'
 import { unconfiguredPaymentsPort } from '../src/ports/payments/index.js'
 import { FAKE_LOCATION_ID, FAKE_NOTIFICATION_URL, type FakePaymentsPort } from '../src/ports/payments/fake.adapter.js'
 import type { EmailPort } from '../src/ports/email/email.port.js'
+import type { PaymentSummary } from '../src/ports/payments/payments.port.js'
 import { createSquareWebhookHandler } from '../src/payments/square-webhook.routes.js'
 import {
   makeApp, readyToPay, postPay, postQuote, paidOrder, inventoryOf, variantIdBySku,
@@ -363,7 +364,7 @@ describe('payment.updated for a recorded processing payment (T4-R4)', () => {
 describe('final review: money-path gaps', () => {
   /** A COMPLETED payment in the fake, for `orderId`, that our order may or may not carry. */
   function squareHas(payments: FakePaymentsPort, id: string, orderId: string, amountCents: number) {
-    payments.payments.set(id, { id, status: 'COMPLETED', amountCents, referenceId: orderId, locationId: FAKE_LOCATION_ID })
+    payments.payments.set(id, { id, status: 'COMPLETED', amountCents, currency: 'USD', referenceId: orderId, locationId: FAKE_LOCATION_ID })
   }
   const errors = () => errorSpy.mock.calls.map((c) => c.map(String).join(' '))
 
@@ -495,5 +496,45 @@ describe('final review: money-path gaps', () => {
     expect(res.body.outcome).toBe('processed')
     expect(await order(r.orderId)).toMatchObject({ status: 'paid', squarePaymentId: 'sq_odd', reviewReason: null })
     expect(errors().some((m) => m.includes('sq_odd') && m.includes(r.orderId))).toBe(true)
+  })
+})
+
+// Ruling F-R2: follow-ups to the final-review fixes.
+describe('F-R2: refund and duplicate-lookup guards', () => {
+  const summary = (over: Partial<PaymentSummary> & { id: string; referenceId: string }): PaymentSummary => ({
+    status: 'COMPLETED', amountCents: 0, currency: null, locationId: FAKE_LOCATION_ID, ...over,
+  })
+
+  it.each([
+    ['no amount (the adapter reads it as 0)', { amountCents: 0, currency: null }],
+    ['a non-USD amount', { amountCents: 1, currency: 'CAD' }],
+  ] as const)('a refund event is never FULL from Square\u2019s payment amount when it is %s', async (_label, money) => {
+    const { app, payments } = setup()
+    const o = await paidOrder(app, { qty: 1 })
+    payments.getPayment = async (id) => summary({ id, referenceId: o.id, ...money })
+    payments.addRefund(o.squarePaymentId!, { id: 'r0', status: 'PENDING', amountCents: 500 })
+    const res = await deliver(app, payments, squareEvent('refund.created', sqRefund({ id: 'r0', paymentId: o.squarePaymentId!, amount: 500, status: 'PENDING' })))
+    expect(res.body.outcome).toBe('processed')
+    expect(await order(o.id)).toMatchObject({ status: 'paid', refundedCents: 0 })
+    expect((await inventoryOf('BBS-STD')).reserved).toBe(1)
+  })
+
+  it('the reference-id fallback ignores a payment at another Square location (503)', async () => {
+    const { app, payments } = setup()
+    const o = await paidOrder(app, { qty: 1 })
+    payments.payments.set('sq_elsewhere', summary({ id: 'sq_elsewhere', referenceId: o.id, amountCents: o.totalCents, currency: 'USD', locationId: 'LEVENTS' }))
+    payments.addRefund('sq_elsewhere', { id: 'r_e', status: 'COMPLETED', amountCents: o.totalCents })
+    expect((await deliver(app, payments, squareEvent('refund.updated', sqRefund({ id: 'r_e', paymentId: 'sq_elsewhere', amount: o.totalCents })))).status).toBe(503)
+    expect((await deliver(app, payments, squareEvent('dispute.created', sqDispute({ id: 'dp_e', paymentId: 'sq_elsewhere' })))).status).toBe(503)
+    expect((await order(o.id)).reviewReason).toBeNull()
+  })
+
+  it('the reference-id fallback ignores a non-storefront order (503)', async () => {
+    const { app, payments } = setup()
+    const o = await paidOrder(app, { qty: 1 })
+    await prisma.order.update({ where: { id: o.id }, data: { channel: 'walmart' } })
+    payments.payments.set('sq_w', summary({ id: 'sq_w', referenceId: o.id, amountCents: o.totalCents, currency: 'USD' }))
+    expect((await deliver(app, payments, squareEvent('dispute.created', sqDispute({ id: 'dp_w', paymentId: 'sq_w' })))).status).toBe(503)
+    expect((await order(o.id)).reviewReason).toBeNull()
   })
 })

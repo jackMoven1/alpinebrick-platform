@@ -38,6 +38,9 @@ export interface ChargeInput {
  *   rate limit...). No payment was created. `reason` names only the status
  *   and error codes, is for logs, and is never shown to the buyer.
  *
+ * `completed.amountCents` is null when Square's payment carries no USD
+ * amount (ruling F-R2): there is then nothing to compare with the order total.
+ *
  * `declined` and `failed` both mean "no payment in flight"; only `declined`
  * counts as a card attempt (plan decision 3). A `declined` carries
  * `paymentId` when Square did create a payment and it ended FAILED or
@@ -45,7 +48,7 @@ export interface ChargeInput {
  * answered `processing` -- so core can clear that id (ruling T4-R4).
  */
 export type ChargeResult =
-  | { outcome: 'completed'; paymentId: string; amountCents: number }
+  | { outcome: 'completed'; paymentId: string; amountCents: number | null }
   | { outcome: 'processing'; paymentId: string; status: string }
   | { outcome: 'declined'; code: string; message: string; paymentId?: string }
   | { outcome: 'failed'; statusCode: number; code: string; reason: string }
@@ -53,7 +56,9 @@ export type ChargeResult =
 export interface PaymentSummary {
   id: string
   status: string
+  /** 0 when Square's payment has no amount; only meaningful with `currency === 'USD'` (ruling F-R2). */
   amountCents: number
+  currency: string | null
   referenceId: string | null
   locationId: string | null
 }

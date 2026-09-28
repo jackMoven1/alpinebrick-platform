@@ -78,7 +78,7 @@ export function createFakePaymentsPort(): FakePaymentsPort {
       } else {
         const id = `sqpay_fake_${++n}`
         const status = next === 'processing' ? 'PENDING' : 'COMPLETED'
-        fake.payments.set(id, { id, status, amountCents: input.amountCents, referenceId: input.referenceId, locationId: FAKE_LOCATION_ID })
+        fake.payments.set(id, { id, status, amountCents: input.amountCents, currency: 'USD', referenceId: input.referenceId, locationId: FAKE_LOCATION_ID })
         result = status === 'COMPLETED'
           ? { outcome: 'completed', paymentId: id, amountCents: input.amountCents }
           : { outcome: 'processing', paymentId: id, status }

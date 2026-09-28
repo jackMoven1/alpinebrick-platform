@@ -110,7 +110,13 @@ export async function payForOrder(orderId: string, req: PayRequest, deps: Checko
     return { status: 'processing' }
   }
 
-  const completed = { paymentId: result.paymentId, amountCents: result.amountCents }
+  // Ruling F-R2: no usable amount (missing, non-USD, or not positive) is not
+  // evidence of a mismatch. Complete the order unchecked, loudly.
+  const amountCents = result.amountCents !== null && Number.isSafeInteger(result.amountCents) && result.amountCents > 0 ? result.amountCents : null
+  if (amountCents === null) {
+    console.error(`[checkout] order ${orderId}: payment ${result.paymentId} COMPLETED without a usable USD amount (${String(result.amountCents)}) -- applied without the amount check; verify it in the payment dashboard`)
+  }
+  const completed = { paymentId: result.paymentId, amountCents }
   let followUp
   try {
     ({ followUp } = await prisma.$transaction((tx) => applyCompletedPayment(tx, orderId, completed, deps)))

@@ -97,12 +97,14 @@ type Resolved =
   | { kind: 'own'; orderId: string }
   | { kind: 'duplicate'; orderId: string; paymentId: string; orderPaymentId: string }
 
-async function resolveOrder(tx: Tx, paymentId: string | undefined, payment: PaymentSummary | null): Promise<Resolved> {
+async function resolveOrder(tx: Tx, paymentId: string | undefined, payment: PaymentSummary | null, locationId: string | null): Promise<Resolved> {
   const own = paymentId ? await tx.order.findUnique({ where: { squarePaymentId: paymentId }, select: { id: true } }) : null
   if (own) return { kind: 'own', orderId: own.id }
-  const ref = paymentId && payment?.id === paymentId ? payment.referenceId : null
-  const byRef = ref ? await tx.order.findUnique({ where: { id: ref }, select: { id: true, squarePaymentId: true } }) : null
-  if (paymentId && byRef?.squarePaymentId && byRef.squarePaymentId !== paymentId) {
+  // Ruling F-R2: only a payment taken at OUR location, naming a storefront order, is our duplicate.
+  const ours = paymentId && payment?.id === paymentId && locationId !== null && payment.locationId === locationId
+  const ref = ours ? payment.referenceId : null
+  const byRef = ref ? await tx.order.findUnique({ where: { id: ref }, select: { id: true, channel: true, squarePaymentId: true } }) : null
+  if (paymentId && byRef?.channel === 'storefront' && byRef.squarePaymentId && byRef.squarePaymentId !== paymentId) {
     return { kind: 'duplicate', orderId: byRef.id, paymentId, orderPaymentId: byRef.squarePaymentId }
   }
   throw new RetryLater(`no order for payment ${paymentId}`)
@@ -114,8 +116,10 @@ async function resolveOrder(tx: Tx, paymentId: string | undefined, payment: Paym
  * refund is FULL once it covers the order total OR everything Square took for
  * this payment (final review I2: an undercharged amount_mismatch order).
  */
-async function onRefund(tx: Tx, refund: SqRefund, refunds: RefundSummary[], payment: PaymentSummary | null): Promise<FollowUp | null> {
-  const found = await resolveOrder(tx, refund.payment_id, payment)
+async function onRefund(
+  tx: Tx, refund: SqRefund, refunds: RefundSummary[], payment: PaymentSummary | null, locationId: string | null,
+): Promise<FollowUp | null> {
+  const found = await resolveOrder(tx, refund.payment_id, payment, locationId)
   const refundedCents = refunds.filter((r) => r.status === 'COMPLETED').reduce((sum, r) => sum + r.amountCents, 0)
   if (found.kind === 'duplicate') {
     // Money back from a payment the order never applied: nothing of the
@@ -130,7 +134,11 @@ async function onRefund(tx: Tx, refund: SqRefund, refunds: RefundSummary[], paym
   const orderId = found.orderId
   const order = await lockOrderRow(tx, orderId)
   if (!order) throw new RetryLater(`order ${orderId} vanished`)
-  const full = refundedCents >= order.totalCents || refundedCents >= payment.amountCents
+  // Ruling F-R2: Square's amount counts only when it is a real USD amount. The
+  // adapter reads a missing amount as 0, and 0 >= 0 would make any refund event full.
+  const squareTook = payment.currency === 'USD' && Number.isSafeInteger(payment.amountCents) && payment.amountCents > 0
+    ? payment.amountCents : null
+  const full = refundedCents >= order.totalCents || (squareTook !== null && refundedCents >= squareTook)
   // Final review minor 1: the payment is recorded but its completion not yet
   // applied (pay answered processing). Wait for payment.updated.
   if (full && order.status === 'pending') throw new RetryLater(`full refund for order ${orderId}, which is still pending`)
@@ -140,8 +148,10 @@ async function onRefund(tx: Tx, refund: SqRefund, refunds: RefundSummary[], paym
     : null
 }
 
-async function onDispute(tx: Tx, type: string, dispute: SqDispute, payment: PaymentSummary | null): Promise<FollowUp | null> {
-  const found = await resolveOrder(tx, dispute.disputed_payment?.payment_id, payment)
+async function onDispute(
+  tx: Tx, type: string, dispute: SqDispute, payment: PaymentSummary | null, locationId: string | null,
+): Promise<FollowUp | null> {
+  const found = await resolveOrder(tx, dispute.disputed_payment?.payment_id, payment, locationId)
   const orderId = found.orderId
   // Locked, so the reviewReason read here is the one being overwritten; the prior value survives in `before`.
   const order = await lockOrderRow(tx, orderId)
@@ -231,9 +241,9 @@ export async function handleSquareEvent(event: SquareEvent, deps: Deps): Promise
       switch (event.type) {
         case 'payment.updated': return onPaymentUpdated(tx, obj.payment ?? {}, deps)
         case 'refund.created':
-        case 'refund.updated': return refusable(onRefund(tx, obj.refund ?? {}, refunds, payment))
+        case 'refund.updated': return refusable(onRefund(tx, obj.refund ?? {}, refunds, payment, deps.payments.locationId))
         case 'dispute.created':
-        case 'dispute.state.updated': return refusable(onDispute(tx, event.type, obj.dispute ?? {}, payment))
+        case 'dispute.state.updated': return refusable(onDispute(tx, event.type, obj.dispute ?? {}, payment, deps.payments.locationId))
         default: return null
       }
     })

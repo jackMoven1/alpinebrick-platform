@@ -327,3 +327,17 @@ describe('applyCompletedPayment: a second completed payment (ruling Q-P1)', () =
     expect(errorSpy.mock.calls.map((c) => c.join(' ')).some((l) => l.includes('sqpay_again') && l.includes('sqpay_first'))).toBe(true)
   })
 })
+
+// Ruling F-R2: a COMPLETED charge whose amount could not be read is never an amount_mismatch.
+describe('pay: a completed charge with no usable amount', () => {
+  it.each([null, 0])('amountCents %s: paid, no amount_mismatch, and logged', async (amountCents) => {
+    const { app, payments } = setup()
+    const r = await readyToPay(app, { qty: 1 })
+    payments.charge = async () => ({ outcome: 'completed', paymentId: 'sq_noamt', amountCents })
+    errorSpy.mockClear()
+    const res = await postPay(app, r.orderId, { sourceToken: 'tok_a', quoteVersion: r.quoteVersion })
+    expect(res.body.status).toBe('paid')
+    expect(await order(r.orderId)).toMatchObject({ status: 'paid', squarePaymentId: 'sq_noamt', reviewReason: null })
+    expect(errorSpy.mock.calls.map((c) => c.map(String).join(' ')).some((m) => m.includes('sq_noamt') && m.includes(r.orderId))).toBe(true)
+  })
+})

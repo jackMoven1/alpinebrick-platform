@@ -24,6 +24,9 @@ export interface SquareApi {
 const TOKEN_CODES: ReadonlySet<string> = new Set(['CARD_TOKEN_EXPIRED', 'CARD_TOKEN_USED', 'SOURCE_USED', 'SOURCE_EXPIRED', 'INVALID_CARD_DATA'])
 
 const cents = (amount: bigint | null | undefined): number => Number(amount ?? 0n)
+/** A COMPLETED payment's amount in USD cents, or null when it has none or another currency (ruling F-R2). */
+const usdCents = (money: { amount?: bigint | null; currency?: string | null } | null | undefined): number | null =>
+  money?.amount != null && money.currency === 'USD' ? Number(money.amount) : null
 
 /**
  * SquareError.message embeds the whole response body, which can carry the
@@ -112,7 +115,7 @@ export function createSquarePaymentsPort(
       }
       if (!payment?.id) throw new PaymentOutcomeUnknownError('Square returned no payment')
       if (payment.status === 'COMPLETED') {
-        return { outcome: 'completed', paymentId: payment.id, amountCents: cents(payment.amountMoney?.amount) }
+        return { outcome: 'completed', paymentId: payment.id, amountCents: usdCents(payment.amountMoney) }
       }
       if (payment.status === 'FAILED' || payment.status === 'CANCELED') {
         return { outcome: 'declined', code: payment.status, message: declineMessage(payment.status), paymentId: payment.id }
@@ -127,6 +130,7 @@ export function createSquarePaymentsPort(
       if (!payment?.id) throw new Error(`Square returned no payment for ${paymentId}`)
       return {
         id: payment.id, status: payment.status ?? 'UNKNOWN', amountCents: cents(payment.amountMoney?.amount),
+        currency: payment.amountMoney?.currency ?? null,
         referenceId: payment.referenceId ?? null, locationId: payment.locationId ?? null,
       }
     },

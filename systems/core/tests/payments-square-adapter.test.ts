@@ -25,7 +25,7 @@ function stub(over: { create?: AnyAsync; get?: AnyAsync; refundGet?: AnyAsync } 
   const create = vi.fn<AnyAsync>(over.create ?? (async () => ({
     payment: { id: 'sqpay_1', status: 'COMPLETED', amountMoney: { amount: 11593n, currency: 'USD' } },
   })))
-  const get = vi.fn<AnyAsync>(over.get ?? (async () => ({ payment: { id: 'sqpay_1', status: 'COMPLETED', amountMoney: { amount: 11593n }, referenceId: 'ord_1', locationId: 'LONLINE', refundIds: [] } })))
+  const get = vi.fn<AnyAsync>(over.get ?? (async () => ({ payment: { id: 'sqpay_1', status: 'COMPLETED', amountMoney: { amount: 11593n, currency: 'USD' }, referenceId: 'ord_1', locationId: 'LONLINE', refundIds: [] } })))
   const refundGet = vi.fn<AnyAsync>(over.refundGet ?? (async () => ({ refund: null })))
   const client = { payments: { create, get }, refunds: { get: refundGet } } as unknown as SquareApi
   return { client, create, get, refundGet }
@@ -59,6 +59,20 @@ describe('Square payments adapter', () => {
       },
     })
     expect(create.mock.calls[0][0]).not.toHaveProperty('orderId') // Q5: payments only
+  })
+
+  // Ruling F-R2: a COMPLETED payment whose amount is missing or not USD has no comparable amount.
+  it.each([
+    ['no amountMoney', {}],
+    ['a non-USD amount', { amountMoney: { amount: 11593n, currency: 'CAD' } }],
+  ])('reports a COMPLETED payment with %s as completed with amountCents null', async (_label, money) => {
+    const { client } = stub({ create: async () => ({ payment: { id: 'sqpay_1', status: 'COMPLETED', ...money } }) })
+    expect(await createSquarePaymentsPort(CONFIG, client).charge(INPUT)).toEqual({ outcome: 'completed', paymentId: 'sqpay_1', amountCents: null })
+  })
+
+  it('reads a payment with no amount as amount 0 and currency null', async () => {
+    const { client } = stub({ get: async () => ({ payment: { id: 'sqpay_1', status: 'COMPLETED', referenceId: 'ord_1', locationId: 'LONLINE' } }) })
+    expect(await createSquarePaymentsPort(CONFIG, client).getPayment('sqpay_1')).toMatchObject({ amountCents: 0, currency: null })
   })
 
   it('reports APPROVED or PENDING as processing', async () => {
@@ -137,7 +151,7 @@ describe('Square payments adapter', () => {
   it('reads a payment', async () => {
     const { client, get } = stub()
     expect(await createSquarePaymentsPort(CONFIG, client).getPayment('sqpay_1')).toEqual({
-      id: 'sqpay_1', status: 'COMPLETED', amountCents: 11593, referenceId: 'ord_1', locationId: 'LONLINE',
+      id: 'sqpay_1', status: 'COMPLETED', amountCents: 11593, currency: 'USD', referenceId: 'ord_1', locationId: 'LONLINE',
     })
     expect(get).toHaveBeenCalledWith({ paymentId: 'sqpay_1' })
   })
