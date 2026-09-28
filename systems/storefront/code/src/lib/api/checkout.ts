@@ -28,12 +28,20 @@ export class CheckoutError extends Error {
    * (e.g. `address.postalCode`) and for outside_shipping_area (`address.state`).
    */
   readonly field: string | null
-  constructor(code: CheckoutErrorCode, message: string, lines: LineProblem[] = [], field: string | null = null) {
+  /**
+   * Set only when core marks a checkout_unavailable as a DEFINITE payment
+   * failure (details.outcome === 'failed'): no payment was created, so a
+   * retry can never succeed. Unknown outcomes (where a retry may still land)
+   * leave this null.
+   */
+  readonly outcome: 'failed' | null
+  constructor(code: CheckoutErrorCode, message: string, lines: LineProblem[] = [], field: string | null = null, outcome: 'failed' | null = null) {
     super(message)
     this.name = 'CheckoutError'
     this.code = code
     this.lines = lines
     this.field = field
+    this.outcome = outcome
   }
 }
 
@@ -76,13 +84,14 @@ async function toError(res: Response): Promise<CheckoutError> {
   let body: Record<string, unknown> | null = null
   try { body = (await res.json()) as Record<string, unknown> } catch { /* not JSON */ }
   const code = (typeof body?.code === 'string' && KNOWN.has(body.code) ? body.code : 'checkout_unavailable') as CheckoutErrorCode
-  const details = body?.details as { lines?: unknown; field?: unknown } | undefined
+  const details = body?.details as { lines?: unknown; field?: unknown; outcome?: unknown } | undefined
   const lines = Array.isArray(details?.lines) ? details.lines.filter(isLineProblem) : []
   const field = typeof details?.field === 'string' ? details.field : null
+  const outcome = details?.outcome === 'failed' ? 'failed' : null
   const message = code === 'checkout_unavailable' ? UNAVAILABLE_MESSAGE
     : code === 'rate_limited' ? RATE_LIMIT_MESSAGE
       : typeof body?.message === 'string' ? body.message : UNAVAILABLE_MESSAGE
-  return new CheckoutError(code, message, lines, field)
+  return new CheckoutError(code, message, lines, field, outcome)
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
