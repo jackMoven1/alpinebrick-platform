@@ -154,6 +154,25 @@ describe('admin orders', () => {
     expect((await prisma.order.findUniqueOrThrow({ where: { id: p.id } })).status).toBe('pending')
   })
 
+  // pay.service.ts records squarePaymentId on a still-pending order when
+  // Square answers 'processing', without refreshing paymentAttemptAt. Once
+  // the attempt-grace window passes, isPaymentInFlight alone would say this
+  // order is safe to cancel -- only the squarePaymentId half of the guard
+  // still protects it, so it needs its own direct test.
+  it('refuses to cancel a pending order with a recorded (still-processing) Square payment, even once the attempt grace has passed', async () => {
+    const p = await pending(2)
+    await prisma.order.update({
+      where: { id: p.id },
+      data: { squarePaymentId: `sqpay_processing_${p.id}`, paymentAttemptAt: null },
+    })
+    const res = await write('post', `/orders/${p.id}/cancel`)
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('PAYMENT_IN_PROGRESS')
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: p.id } })).status).toBe('pending')
+    expect((await inventoryOf('BBS-STD')).reserved).toBe(2)
+    expect(await prisma.auditLog.count({ where: { action: 'order.cancelled', target: `order:${p.id}` } })).toBe(0)
+  })
+
   it('answers ORDER_PAID, without naming a provider, when the order was paid after the page loaded', async () => {
     const q = await paid()
     const stale = { channel: 'storefront', status: 'pending', reviewReason: null, paymentAttemptAt: null }
@@ -180,9 +199,11 @@ describe('admin orders', () => {
   it('cancels a disputed paid order with acknowledgement, releasing its stock (F-R1)', async () => {
     const d = await disputed(2)
     expect(d).toMatchObject({ status: 'paid', reviewReason: 'disputed' })
+    const chargeSpy = vi.spyOn(ctx.payments, 'charge')
     const res = await write('post', `/orders/${d.id}/cancel`, { acknowledgeReview: true })
     expect(res.status).toBe(200)
     expect(res.body.status).toBe('cancelled')
+    expect(chargeSpy).not.toHaveBeenCalled()
     expect(await inventoryOf('BBS-STD')).toMatchObject({ onHand: 25, reserved: 0 })
     const audit = await prisma.auditLog.findFirstOrThrow({ where: { action: 'order.cancelled', target: `order:${d.id}` } })
     expect(audit.actorId).toBe(actorId)
