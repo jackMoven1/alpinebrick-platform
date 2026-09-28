@@ -115,6 +115,21 @@ describe('POST /api/v1/checkout/:orderId/quote', () => {
     expect(await prisma.order.findUniqueOrThrow({ where: { id } })).toMatchObject({ shipToState: 'MI', taxCents: 600, quoteVersion: 1 })
   })
 
+  // Ruling T3-R1: a Square payment exists (final or not), so the total must not change.
+  it('409s payment_pending for a pending order that already has a Square payment id, even outside the grace window', async () => {
+    const { app } = makeApp()
+    const id = await started(app)
+    await postQuote(app, id)
+    await prisma.order.update({
+      where: { id },
+      data: { squarePaymentId: 'sqpay_processing', paymentAttemptAt: new Date(Date.now() - PAYMENT_ATTEMPT_GRACE_MS - 1000) },
+    })
+    const res = await postQuote(app, id, quoteBody({ address: { state: 'OH', city: 'Toledo', postalCode: '43604' } }))
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('payment_pending')
+    expect(await prisma.order.findUniqueOrThrow({ where: { id } })).toMatchObject({ shipToState: 'MI', taxCents: 600, quoteVersion: 1 })
+  })
+
   it('quotes again once the attempt is older than the grace window', async () => {
     const { app } = makeApp()
     const id = await started(app)

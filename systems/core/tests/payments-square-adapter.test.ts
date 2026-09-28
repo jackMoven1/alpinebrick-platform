@@ -66,6 +66,20 @@ describe('Square payments adapter', () => {
     expect(await createSquarePaymentsPort(CONFIG, client).charge(INPUT)).toEqual({ outcome: 'processing', paymentId: 'sqpay_2', status: 'APPROVED' })
   })
 
+  it.each(['FAILED', 'CANCELED'])('reports a 200 whose payment is %s as declined, with our copy', async (status) => {
+    const { client } = stub({ create: async () => ({ payment: { id: 'sqpay_3', status, amountMoney: { amount: 11593n } } }) })
+    expect(await createSquarePaymentsPort(CONFIG, client).charge(INPUT)).toEqual({ outcome: 'declined', code: status, message: DECLINE_MESSAGE })
+  })
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN])('refuses amountCents %s as a programming error, before calling Square', async (amountCents) => {
+    const { client, create } = stub()
+    const err = await createSquarePaymentsPort(CONFIG, client).charge({ ...INPUT, amountCents }).catch((e) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err).not.toBeInstanceOf(PaymentOutcomeUnknownError)
+    expect(err.message).toMatch(/amountCents/)
+    expect(create).not.toHaveBeenCalled()
+  })
+
   it('turns a card decline into declined with our buyer-safe copy, not Square detail text', async () => {
     const { client } = stub({ create: async () => { throw squareError(402, [{ category: 'PAYMENT_METHOD_ERROR', code: 'GENERIC_DECLINE', detail: "Authorization error: 'GENERIC_DECLINE'" }]) } })
     expect(await createSquarePaymentsPort(CONFIG, client).charge(INPUT)).toEqual({ outcome: 'declined', code: 'GENERIC_DECLINE', message: DECLINE_MESSAGE })
@@ -106,7 +120,7 @@ describe('Square payments adapter', () => {
       ['a 408', squareError(408, [{ category: 'API_ERROR', code: 'REQUEST_TIMEOUT' }]), 'Square request failed (408): REQUEST_TIMEOUT'],
       ['a network error (no status)', new SquareError({ message: 'fetch failed for buyer@example.com', cause: new TypeError('fetch failed') }), 'Square request failed (no status): Unknown'],
       ['a timeout', new SquareTimeoutError('Timeout exceeded when calling POST /v2/payments.'), 'Square request timed out'],
-      ['a non-Square error', new TypeError('socket hang up'), 'socket hang up'],
+      ['a non-Square error (its name only; the message could carry anything)', new TypeError('socket hang up for buyer@example.com'), 'Square request failed: TypeError'],
     ])('throws PaymentOutcomeUnknownError on %s, without the response body', async (_label, thrown, message) => {
       const err = await createSquarePaymentsPort(CONFIG, throwing(thrown).client).charge(INPUT).catch((e) => e)
       expect(err).toBeInstanceOf(PaymentOutcomeUnknownError)

@@ -120,6 +120,10 @@ export async function startCheckout(req: CheckoutRequest, deps: CheckoutDeps): P
   }
 }
 
+function paymentBlocksQuote(o: { squarePaymentId: string | null; paymentAttemptAt: Date | null }, now: Date): boolean {
+  return o.squarePaymentId !== null || isPaymentInFlight(o, now)
+}
+
 export interface QuoteDto { quoteVersion: number; subtotalCents: number; shippingCents: number; taxCents: number; totalCents: number }
 
 /**
@@ -130,13 +134,16 @@ export interface QuoteDto { quoteVersion: number; subtotalCents: number; shippin
  * Ruling Q-P1: while a payment attempt is in flight the quote is refused with
  * 409 payment_pending -- re-pricing under a charge that may be landing would
  * make the paid total disagree with the order.
+ *
+ * Ruling T3-R1: an order that already has a Square payment id (a payment
+ * exists, final or not) is never re-quoted either, whatever its attempt age.
  */
 export async function quoteCheckout(orderId: string, req: QuoteRequest, deps: CheckoutDeps): Promise<QuoteDto> {
   if (!deps.payments.configured) throw checkoutErrors.unavailable()
   const order = await prisma.order.findUnique({ where: { id: orderId }, include: { lines: true } })
   if (!order || order.channel !== 'storefront') throw checkoutErrors.notFound()
   if (order.status !== 'pending') throw checkoutErrors.expired()
-  if (isPaymentInFlight(order, deps.now?.() ?? new Date())) throw checkoutErrors.paymentPending()
+  if (paymentBlocksQuote(order, deps.now?.() ?? new Date())) throw checkoutErrors.paymentPending()
 
   const [shipping] = await deps.shipping.quote({
     subtotalCents: order.subtotalCents, lines: order.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
@@ -150,7 +157,7 @@ export async function quoteCheckout(orderId: string, req: QuoteRequest, deps: Ch
   return prisma.$transaction(async (tx) => {
     const locked = await lockOrderRow(tx, orderId)
     if (!locked || locked.status !== 'pending') throw checkoutErrors.expired()
-    if (isPaymentInFlight(locked, deps.now?.() ?? new Date())) throw checkoutErrors.paymentPending()
+    if (paymentBlocksQuote(locked, deps.now?.() ?? new Date())) throw checkoutErrors.paymentPending()
     const next = await tx.order.update({
       where: { id: orderId },
       data: {

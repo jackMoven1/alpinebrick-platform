@@ -26,6 +26,13 @@ describe('createPaymentsPort', () => {
     expect(() => createPaymentsPort(env)).toThrow(new RegExp(`Square is half-configured; missing: ${missing}`))
   })
 
+  it('names every missing key when several are missing', () => {
+    const { SQUARE_ACCESS_TOKEN: _t, SQUARE_WEBHOOK_SIGNATURE_KEY: _k, SQUARE_WEBHOOK_NOTIFICATION_URL: _u, ...partial } = FULL
+    expect(() => createPaymentsPort(partial)).toThrow(
+      'Square is half-configured; missing: SQUARE_ACCESS_TOKEN, SQUARE_WEBHOOK_SIGNATURE_KEY, SQUARE_WEBHOOK_NOTIFICATION_URL',
+    )
+  })
+
   it('refuses an unknown SQUARE_ENVIRONMENT and a non-https notification URL', () => {
     expect(() => createPaymentsPort({ ...FULL, SQUARE_ENVIRONMENT: 'live' })).toThrow(/sandbox or production/)
     expect(() => createPaymentsPort({ ...FULL, SQUARE_WEBHOOK_NOTIFICATION_URL: 'http://x.example/h' })).toThrow(/https/)

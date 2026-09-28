@@ -50,3 +50,15 @@ export async function readyToPay(
   if (quote.status !== 200) throw new Error(`quote failed: ${quote.status} ${JSON.stringify(quote.body)}`)
   return { orderId: start.body.orderId, quoteVersion: quote.body.quoteVersion, totalCents: quote.body.totalCents }
 }
+
+export function postPay(app: Express, orderId: string, body: Record<string, unknown>) {
+  return request(app).post(`/api/v1/checkout/${orderId}/pay`).send(body)
+}
+
+/** readyToPay, then pay with the fake's default outcome (completed). Returns the paid order row. */
+export async function paidOrder(app: Express, o: Parameters<typeof readyToPay>[1] = {}) {
+  const r = await readyToPay(app, o)
+  const res = await postPay(app, r.orderId, { sourceToken: `tok_${r.orderId}`, quoteVersion: r.quoteVersion })
+  if (res.body.status !== 'paid') throw new Error(`pay failed: ${res.status} ${JSON.stringify(res.body)}`)
+  return prisma.order.findUniqueOrThrow({ where: { id: r.orderId } })
+}

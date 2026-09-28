@@ -35,7 +35,9 @@ function describeFailure(err: unknown): string {
     return `Square request failed (${err.statusCode ?? 'no status'}): ${err.errors.map((e) => e.code).join(', ')}`
   }
   if (err instanceof SquareTimeoutError) return 'Square request timed out'
-  return err instanceof Error ? err.message : String(err)
+  // Anything else (a fetch or socket error) is named by its class only: its
+  // message is not ours and could carry anything, including buyer details.
+  return `Square request failed: ${err instanceof Error ? err.name : 'non-Error thrown'}`
 }
 
 function sanitize(err: unknown): Error {
@@ -79,6 +81,10 @@ export function createSquarePaymentsPort(
     locationId: config.locationId,
 
     async charge(input) {
+      // A bad amount is our bug, not an unknown outcome: nothing is sent to Square.
+      if (!Number.isSafeInteger(input.amountCents) || input.amountCents <= 0) {
+        throw new Error(`charge: amountCents must be a positive safe integer, got ${input.amountCents}`)
+      }
       let payment
       try {
         const res = await client.payments.create({

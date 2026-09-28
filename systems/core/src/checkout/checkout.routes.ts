@@ -1,7 +1,8 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express'
 import { asyncHandler } from '../lib/async-handler.js'
-import { CheckoutError, ORDER_ID_RE, checkoutErrors, parseCheckoutRequest, parseQuoteRequest } from './checkout-input.js'
+import { CheckoutError, ORDER_ID_RE, checkoutErrors, parseCheckoutRequest, parsePayRequest, parseQuoteRequest } from './checkout-input.js'
 import { startCheckout, quoteCheckout, getCheckoutStatus, getCheckoutConfig, type CheckoutDeps } from './checkout.service.js'
+import { payForOrder } from './pay.service.js'
 
 function send(res: Response, err: CheckoutError) {
   return res.status(err.status).json({ code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) })
@@ -34,6 +35,8 @@ export function createCheckoutRouter(deps: CheckoutDeps & { rateLimit: RequestHa
   router.post('/', deps.rateLimit, json(201, (req) => startCheckout(parseCheckoutRequest(req.body), deps)))
   router.post('/:orderId/quote', deps.rateLimit, json(200, (req) =>
     quoteCheckout(orderIdOf(req.params.orderId), parseQuoteRequest(req.body), deps)))
+  router.post('/:orderId/pay', deps.rateLimit, json(200, (req) =>
+    payForOrder(orderIdOf(req.params.orderId), parsePayRequest(req.body), deps)))
   router.get('/status', json(200, async (req) => {
     const status = await getCheckoutStatus(orderIdOf(req.query.orderId))
     if (!status) throw checkoutErrors.notFound()
