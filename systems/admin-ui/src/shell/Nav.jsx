@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom'
 const sections = [
   { to: '/', label: 'Overview', end: true },
   { to: '/products', label: 'Products' },
+  { to: '/orders', label: 'Orders' },
 ]
 
 export default function Nav() {

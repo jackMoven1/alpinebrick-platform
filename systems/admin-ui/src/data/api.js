@@ -116,6 +116,29 @@ export const api = {
     return call(`/variants/${encodeURIComponent(variantId)}/stock-history?limit=${limit}`)
   },
 
+  async listOrders({ tab, page = 1, pageSize = 25 }) {
+    const params = new URLSearchParams({ tab, page: String(page), pageSize: String(pageSize) })
+    return call(`/orders?${params}`)
+  },
+  async getOrder(id) {
+    return call(`/orders/${encodeURIComponent(id)}`)
+  },
+  async shipOrder(id, input) {
+    return call(`/orders/${encodeURIComponent(id)}/ship`, { method: 'POST', body: JSON.stringify(input) })
+  },
+  // acknowledgeReview is optional -- required only to cancel a paid order
+  // whose reviewReason is 'disputed' (core 409s REVIEW_REQUIRED otherwise).
+  async cancelOrder(id, { acknowledgeReview } = {}) {
+    const body = acknowledgeReview === undefined ? {} : { acknowledgeReview }
+    return call(`/orders/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: JSON.stringify(body) })
+  },
+  async getShippingSettings() {
+    return call('/settings/shipping')
+  },
+  async updateShippingSettings(input) {
+    return call('/settings/shipping', { method: 'PUT', body: JSON.stringify(input) })
+  },
+
   async requestImageUpload(productId, file) {
     return call('/images/upload-token', {
       method: 'POST',
