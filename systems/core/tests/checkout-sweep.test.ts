@@ -12,6 +12,7 @@ import { enqueueInventoryPush } from '../src/channels/walmart/inventory.sync.js'
 import { unconfiguredPaymentsPort } from '../src/ports/payments/index.js'
 import { sweepAbandonedCheckouts, startCheckoutSweep } from '../src/checkout/sweep.js'
 import { makeApp, postCheckout, readyToPay, postPay, variantIdBySku, inventoryOf } from './helpers/checkout.js'
+import { stubDelegateOnce } from './helpers/prisma-stub.js'
 
 let errorSpy: ReturnType<typeof vi.spyOn>
 beforeEach(async () => {
@@ -25,15 +26,9 @@ afterAll(async () => { await prisma.$disconnect() })
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000)
 const age = (id: string, minutes: number) => prisma.order.update({ where: { id }, data: { createdAt: minutesAgo(minutes) } })
 
-// `prisma.order` is a Prisma delegate (Proxy-backed): vi.spyOn(...).mockRestore()
-// (and vi.restoreAllMocks()) leaves the property undefined afterwards instead of
-// putting the real implementation back, breaking every later test in the file.
-// Save the original function and reassign it directly instead of relying on
-// vitest's own restore for this one mock.
+// See tests/helpers/prisma-stub.ts for why this doesn't use vi.spyOn directly.
 function stubFindManyOnce(rows: Array<{ id: string }>): () => void {
-  const original = prisma.order.findMany
-  vi.spyOn(prisma.order, 'findMany').mockResolvedValueOnce(rows as never)
-  return () => { prisma.order.findMany = original }
+  return stubDelegateOnce(prisma.order, 'findMany', rows)
 }
 
 async function pendingAged(minutes: number, qty = 1): Promise<string> {

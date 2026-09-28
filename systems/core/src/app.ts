@@ -132,7 +132,7 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
   app.use('/api/v1/admin', requireJsonContentType)
   app.use('/api/v1/admin/images', createAssetsRouter(storagePort))
   app.use('/api/v1/admin', adminCatalogRouter)
-  app.use('/api/v1/admin', createAdminOrdersRouter(payments))
+  app.use('/api/v1/admin', createAdminOrdersRouter())
 
   // Terminal error-handling middleware -- MUST be mounted last, after every
   // router. It is the backstop for asyncHandler-wrapped routes (and for
