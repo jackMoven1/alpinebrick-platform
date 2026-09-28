@@ -98,10 +98,13 @@ export async function payForOrder(orderId: string, req: PayRequest, deps: Checko
   }
 
   if (result.outcome === 'failed') {
-    // Ruling Q-P10: no payment was created. `reason` is for logs only.
+    // Ruling Q-P10: no payment was created. `reason` is for logs only. This is
+    // a DEFINITE failure (unlike the unknown-outcome branch above), so the
+    // response carries a marker: the storefront must not offer a retry that
+    // can never succeed (carried item, storefront review S-F1 minor 1).
     await closeAttempt(orderId, attempt.attemptCount)
     console.error('[checkout] payment request refused', orderId, result.reason)
-    throw checkoutErrors.unavailable()
+    throw checkoutErrors.unavailable({ outcome: 'failed' })
   }
 
   if (result.outcome === 'processing') {
