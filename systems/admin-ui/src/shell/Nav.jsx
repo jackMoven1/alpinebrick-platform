@@ -4,6 +4,7 @@ const sections = [
   { to: '/', label: 'Overview', end: true },
   { to: '/products', label: 'Products' },
   { to: '/orders', label: 'Orders' },
+  { to: '/settings', label: 'Settings' },
 ]
 
 export default function Nav() {

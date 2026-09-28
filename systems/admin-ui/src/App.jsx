@@ -8,6 +8,7 @@ import ProductDetail from './catalog/ProductDetail.jsx'
 import OrderQueue from './orders/OrderQueue.jsx'
 import OrderDetail from './orders/OrderDetail.jsx'
 import SignIn from './pages/SignIn.jsx'
+import ShippingSettings from './settings/ShippingSettings.jsx'
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="products/:id" element={<ProductDetail />} />
           <Route path="orders" element={<OrderQueue />} />
           <Route path="orders/:id" element={<OrderDetail />} />
+          <Route path="settings" element={<ShippingSettings />} />
         </Route>
       </Routes>
     </ToastProvider>

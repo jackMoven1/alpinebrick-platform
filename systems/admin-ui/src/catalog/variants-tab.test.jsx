@@ -199,6 +199,25 @@ describe('VariantsTab', () => {
     const row = screen.getByRole('row', { name: new RegExp(v.sku) })
     expect(within(row).getByText('—')).toBeInTheDocument()
   })
+
+  it('edits weight and dimensions, sending only what changed', async () => {
+    vi.mocked(api.updateVariant).mockResolvedValue(withStock)
+    renderTab()
+    await userEvent.click(screen.getByRole('button', { name: /dimensions/i }))
+    const dialog = screen.getByRole('dialog')
+    await userEvent.type(within(dialog).getByLabelText('Weight (g)'), '850')
+    await userEvent.type(within(dialog).getByLabelText('Length (mm)'), '380')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(api.updateVariant).toHaveBeenCalledWith(v.id, { weightGrams: 850, lengthMm: 380 })
+  })
+
+  it('refuses a non-whole weight', async () => {
+    renderTab()
+    await userEvent.click(screen.getByRole('button', { name: /dimensions/i }))
+    const dialog = screen.getByRole('dialog')
+    await userEvent.type(within(dialog).getByLabelText('Weight (g)'), '8.5')
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
 })
 
 describe('StockDialog sends only what changed', () => {
