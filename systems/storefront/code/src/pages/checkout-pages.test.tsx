@@ -81,6 +81,23 @@ function renderComplete(search = '?session_id=cs_test_1') {
   return render(<RouterProvider router={router} />)
 }
 
+const CART_LINE = [{ variantId: 'v', productId: 'p', productSlug: 's', name: 'n', priceCents: 1, imageKey: '', quantity: 1 }]
+
+function seedCartAndPreviousOrder() {
+  window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(CART_LINE))
+  window.sessionStorage.setItem('ab.previousOrderId', 'order-1')
+}
+
+function expectCartKept() {
+  expect(JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY)!)).toEqual(CART_LINE)
+  expect(window.sessionStorage.getItem('ab.previousOrderId')).toBe('order-1')
+}
+
+function expectCartCleared() {
+  expect(JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY)!)).toEqual([])
+  expect(window.sessionStorage.getItem('ab.previousOrderId')).toBeNull()
+}
+
 describe('/order/complete', () => {
   beforeEach(() => { vi.useFakeTimers() })
 
@@ -97,13 +114,18 @@ describe('/order/complete', () => {
     expect(window.sessionStorage.getItem('ab.previousOrderId')).toBeNull()
   })
 
-  it('polls every 1.5 s and settles on the slow message at 20 s', async () => {
+  // Jack, 2026-09-27: Stripe only redirects here after payment, so the slow
+  // state clears the cart too -- a cart left full invites a second purchase.
+  it('polls every 1.5 s, settles on the slow message at 20 s and clears the cart', async () => {
+    seedCartAndPreviousOrder()
     vi.mocked(getCheckoutStatus).mockResolvedValue({ ...PAID, status: 'pending' })
     renderComplete()
     await act(() => vi.advanceTimersByTimeAsync(3000))
     expect(vi.mocked(getCheckoutStatus).mock.calls.length).toBe(3) // t=0, 1.5, 3.0
+    expectCartKept() // still polling: nothing cleared yet
     await act(() => vi.advanceTimersByTimeAsync(POLL_LIMIT_MS))
     expect(screen.getByText("Payment received — we're confirming your order. Your Stripe receipt is your confirmation.")).toBeInTheDocument()
+    expectCartCleared()
     const calls = vi.mocked(getCheckoutStatus).mock.calls.length
     await act(() => vi.advanceTimersByTimeAsync(10_000))
     expect(vi.mocked(getCheckoutStatus).mock.calls.length).toBe(calls) // stopped
@@ -116,11 +138,13 @@ describe('/order/complete', () => {
     expect(screen.getByText('Order ABE-000042 confirmed')).toBeInTheDocument()
   })
 
-  it('says the checkout expired', async () => {
+  it('says the checkout expired and keeps the cart', async () => {
+    seedCartAndPreviousOrder()
     vi.mocked(getCheckoutStatus).mockResolvedValue({ ...PAID, status: 'cancelled' })
     renderComplete()
     await act(() => vi.advanceTimersByTimeAsync(0))
     expect(screen.getByText('This checkout expired')).toBeInTheDocument()
+    expectCartKept()
     expect(screen.getByRole('link', { name: 'Back to cart' })).toHaveAttribute('href', '/cart')
   })
 
@@ -133,10 +157,12 @@ describe('/order/complete', () => {
 
   it('shows a terminal state when core reports the order not_found (Ruling P10)', async () => {
     const { CheckoutError } = await import('../lib/api/checkout')
+    seedCartAndPreviousOrder()
     vi.mocked(getCheckoutStatus).mockRejectedValue(new CheckoutError('not_found', 'not found'))
     renderComplete()
     await act(() => vi.advanceTimersByTimeAsync(0))
     expect(screen.getByText("We couldn't find that order")).toBeInTheDocument()
+    expectCartKept()
     expect(screen.getByRole('link', { name: 'Back to cart' })).toHaveAttribute('href', '/cart')
     const calls = vi.mocked(getCheckoutStatus).mock.calls.length
     await act(() => vi.advanceTimersByTimeAsync(10_000))

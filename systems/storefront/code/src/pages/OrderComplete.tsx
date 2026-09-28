@@ -18,7 +18,15 @@ type View =
 
 const heading = 'text-3xl font-black uppercase tracking-[0.05em]'
 
-/** Spec §6: poll core every 1.5 s for up to 20 s after Stripe's redirect. */
+/**
+ * Spec §6: poll core every 1.5 s for up to 20 s after Stripe's redirect.
+ *
+ * When the cart (and the previous-order handle) is cleared: on `paid`, and on
+ * the `slow` state (Jack, 2026-09-27). Stripe only redirects here after the
+ * customer has paid, so a cart left full after "Payment received" invites a
+ * second purchase. It is NOT cleared on `cancelled` (expired) or `not_found`:
+ * nothing was bought, and the cart is how the customer tries again.
+ */
 export default function OrderComplete() {
   const [params] = useSearchParams()
   const sessionId = params.get('session_id')
@@ -30,13 +38,16 @@ export default function OrderComplete() {
     let stopped = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const started = Date.now()
+    const forgetCart = () => {
+      clear()
+      clearPreviousOrderId()
+    }
     const tick = async () => {
       try {
         const s = await getCheckoutStatus(sessionId)
         if (stopped) return
         if (s.status === 'paid') {
-          clear()
-          clearPreviousOrderId()
+          forgetCart()
           setView({ kind: 'paid', status: s })
           return
         }
@@ -56,6 +67,7 @@ export default function OrderComplete() {
         // Any other blip is not an answer; keep polling until the limit.
       }
       if (Date.now() - started >= POLL_LIMIT_MS) {
+        forgetCart()
         setView({ kind: 'slow' })
         return
       }
