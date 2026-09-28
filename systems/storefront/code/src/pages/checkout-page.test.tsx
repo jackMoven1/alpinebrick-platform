@@ -26,11 +26,12 @@ vi.mock('../components/checkout/SquarePayment', () => ({
 vi.mock('../lib/square', () => ({ squareConfig: vi.fn(() => ({ applicationId: 'a', locationId: 'l', environment: 'sandbox' })) }))
 vi.mock('../lib/api/checkout', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/api/checkout')>()
-  return { ...actual, quoteCheckout: vi.fn(), payCheckout: vi.fn() }
+  return { ...actual, quoteCheckout: vi.fn(), payCheckout: vi.fn(), getCheckoutStatus: vi.fn() }
 })
 import { squareConfig } from '../lib/square'
 import {
-  quoteCheckout, payCheckout, CheckoutError, UNAVAILABLE_MESSAGE, type Quote, type PaidResult, type PayResult,
+  quoteCheckout, payCheckout, getCheckoutStatus, CheckoutError, UNAVAILABLE_MESSAGE,
+  type Quote, type PaidResult, type PayResult, type CheckoutStatus,
 } from '../lib/api/checkout'
 import Checkout from './Checkout'
 
@@ -51,6 +52,7 @@ const PAID: PaidResult = {
   totals: { subtotalCents: 9998, shippingCents: 995, taxCents: 600, totalCents: 11593 },
 }
 const CART = [{ variantId: 'v', productId: 'p', productSlug: 's', name: 'n', priceCents: 1, imageKey: '', quantity: 1 }]
+const CANCELLED_STATUS: CheckoutStatus = { ...PAID, status: 'cancelled' }
 
 function Probe() {
   const { pathname, search } = useLocation()
@@ -246,7 +248,35 @@ describe('/checkout', () => {
 
   it('says the checkout expired, with a link back to the cart', async () => {
     vi.mocked(payCheckout).mockRejectedValue(new CheckoutError('order_expired', 'This checkout expired.'))
+    vi.mocked(getCheckoutStatus).mockResolvedValue(CANCELLED_STATUS)
     await user.click(await toPayStep())
+    expect(await screen.findByText('This checkout expired')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Back to cart' })).toHaveAttribute('href', '/cart')
+  })
+
+  // Controller ruling (carried from Task 11 review): history state can still
+  // carry the orderId after the order already paid (back/forward, a
+  // refresh). core then refuses the stale quote with order_expired or
+  // not_found even though money changed hands -- check status once rather
+  // than tell a paying customer their checkout expired.
+  it.each([['order_expired'], ['not_found']] as const)(
+    'a stale reload for an order that already paid shows the confirmation instead of expired (%s)', async (code) => {
+      vi.mocked(quoteCheckout).mockRejectedValue(new CheckoutError(code, 'x'))
+      vi.mocked(getCheckoutStatus).mockResolvedValue(PAID)
+      renderCheckout()
+      await fillAddress()
+      expect(getCheckoutStatus).toHaveBeenCalledWith('order-1')
+      expect(await screen.findByText('Order ABE-000042 confirmed')).toBeInTheDocument()
+      expect(screen.queryByText('This checkout expired')).not.toBeInTheDocument()
+      expect(JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY)!)).toEqual([])
+      expect(window.sessionStorage.getItem('ab.previousOrderId')).toBeNull()
+    })
+
+  it('a stale reload for an order that is genuinely expired still shows the expired view', async () => {
+    vi.mocked(quoteCheckout).mockRejectedValue(new CheckoutError('order_expired', 'x'))
+    vi.mocked(getCheckoutStatus).mockResolvedValue(CANCELLED_STATUS)
+    renderCheckout()
+    await fillAddress()
     expect(await screen.findByText('This checkout expired')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Back to cart' })).toHaveAttribute('href', '/cart')
   })

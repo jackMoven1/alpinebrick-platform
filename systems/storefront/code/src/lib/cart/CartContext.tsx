@@ -61,9 +61,9 @@ function loadCart(): CartLine[] {
  * price was added first — and core's checkout takes variantId, so such a line
  * could not be ordered at all.
  *
- * Persisted to localStorage: Stripe's return_url is a full page load, so an
- * in-memory cart would already be gone when the confirmation page clears it.
- * Prices here are display-only; core snapshots live prices at checkout.
+ * Persisted to localStorage so a reload, a new tab, or /order/complete sees
+ * the same cart. Prices here are display-only; core snapshots live prices
+ * at checkout.
  */
 export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartLine[]>(loadCart)

@@ -9,7 +9,7 @@ import {
 } from '../../lib/api/checkout'
 import { readReferral, safeLocalStorage } from '../../lib/referral'
 import { getPreviousOrderId, setPreviousOrderId } from '../../lib/checkout/previousOrder'
-import { getStripe } from '../../lib/stripe'
+import { squareConfig } from '../../lib/square'
 import { Button } from '../../design-system/primitives'
 
 export const CONTIGUOUS_NOTICE = 'We ship to the contiguous US only.'
@@ -55,16 +55,16 @@ export default function CartPanel({ onNavigate }: { onNavigate?: () => void }) {
     if (busy) return
     setError(null)
     setProblems({})
-    // A build without a publishable key cannot show the payment form, so
-    // starting a checkout would only reserve stock for nothing.
-    if (getStripe() === null) {
+    // A build without the VITE_SQUARE_* settings cannot show the payment
+    // form, so starting a checkout would only reserve stock for nothing.
+    if (squareConfig() === null) {
       setError(UNAVAILABLE_MESSAGE)
       return
     }
     setBusy(true)
     try {
       const previousOrderId = getPreviousOrderId()
-      const { orderId, clientSecret } = await startCheckout({
+      const { orderId } = await startCheckout({
         lines: items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
         marketingOptIn: optIn,
         referral: readReferral(safeLocalStorage()),
@@ -72,7 +72,7 @@ export default function CartPanel({ onNavigate }: { onNavigate?: () => void }) {
       })
       setPreviousOrderId(orderId)
       onNavigate?.()
-      navigate('/checkout', { state: { clientSecret, orderId } })
+      navigate('/checkout', { state: { orderId } })
     } catch (err) {
       if (err instanceof CheckoutError && err.lines.length > 0) {
         setProblems(Object.fromEntries(err.lines.map((l) => [l.variantId, l])))

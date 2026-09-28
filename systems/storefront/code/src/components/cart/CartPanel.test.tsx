@@ -8,9 +8,9 @@ vi.mock('../../lib/api/checkout', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/api/checkout')>()
   return { ...actual, startCheckout: vi.fn(), getCheckoutConfig: vi.fn() }
 })
-vi.mock('../../lib/stripe', () => ({ getStripe: vi.fn(() => Promise.resolve({})) }))
+vi.mock('../../lib/square', () => ({ squareConfig: vi.fn(() => ({ applicationId: 'a', locationId: 'l', environment: 'sandbox' })) }))
 import { startCheckout, getCheckoutConfig, CheckoutError } from '../../lib/api/checkout'
-import { getStripe } from '../../lib/stripe'
+import { squareConfig } from '../../lib/square'
 import CartPanel from './CartPanel'
 
 afterEach(() => vi.clearAllMocks())
@@ -20,8 +20,8 @@ const LINE = (variantId: string, name: string, priceCents: number, quantity: num
 })
 
 function StateProbe() {
-  const state = useLocation().state as { clientSecret: string; orderId: string }
-  return <p>checkout page {state.clientSecret} {state.orderId}</p>
+  const state = useLocation().state as { orderId: string }
+  return <p>checkout page {state.orderId}</p>
 }
 
 /**
@@ -80,7 +80,7 @@ describe('CartPanel', () => {
   it('starts checkout with lines, opt-in, referral and the previous order, then opens /checkout', async () => {
     window.localStorage.setItem('ab.referral', JSON.stringify({ code: 'club', firstSeenAt: '2026-10-01T00:00:00.000Z', expiresAt: '2099-01-01T00:00:00.000Z' }))
     window.sessionStorage.setItem('ab.previousOrderId', 'old-order')
-    vi.mocked(startCheckout).mockResolvedValue({ orderId: 'new-order', clientSecret: 'cs_secret_1' })
+    vi.mocked(startCheckout).mockResolvedValue({ orderId: 'new-order' })
     renderCart([LINE('v1', 'Dragon Fortress', 4999, 2)])
     await userEvent.click(screen.getByRole('checkbox', { name: 'Email me about new sets and restocks' }))
     await userEvent.click(screen.getByRole('button', { name: 'Checkout' }))
@@ -88,7 +88,7 @@ describe('CartPanel', () => {
       lines: [{ variantId: 'v1', quantity: 2 }], marketingOptIn: true,
       referral: { code: 'club', firstSeenAt: '2026-10-01T00:00:00.000Z' }, previousOrderId: 'old-order',
     })
-    expect(await screen.findByText('checkout page cs_secret_1 new-order')).toBeInTheDocument()
+    expect(await screen.findByText('checkout page new-order')).toBeInTheDocument()
     expect(window.sessionStorage.getItem('ab.previousOrderId')).toBe('new-order')
   })
 
@@ -112,12 +112,11 @@ describe('CartPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Checkout' }))
     expect(await screen.findByText('Checkout is temporarily unavailable — please try again in a minute.')).toBeInTheDocument()
   })
-  // A build without VITE_STRIPE_PUBLISHABLE_KEY cannot show the payment
+  // A build without the three VITE_SQUARE_* settings cannot show the payment
   // form, so starting a checkout would only reserve stock for nothing.
-  it('does not start checkout when this build cannot load Stripe', async () => {
-    vi.mocked(getStripe).mockReturnValueOnce(null)
+  it('does not start checkout when this build has no Square settings', async () => {
+    vi.mocked(squareConfig).mockReturnValueOnce(null)
     renderCart([LINE('v1', 'Dragon Fortress', 100, 1)])
-    // Wrapped by hand: settle the config fetch, then click, inside act().
     await act(async () => {})
     await act(async () => { await userEvent.click(screen.getByRole('button', { name: 'Checkout' })) })
     expect(await screen.findByText('Checkout is temporarily unavailable — please try again in a minute.')).toBeInTheDocument()

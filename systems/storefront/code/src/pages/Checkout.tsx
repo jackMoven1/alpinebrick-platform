@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 import {
-  quoteCheckout, payCheckout, CheckoutError, UNAVAILABLE_MESSAGE, type CheckoutStatus, type Quote, type QuoteRequest,
+  quoteCheckout, payCheckout, getCheckoutStatus, CheckoutError, UNAVAILABLE_MESSAGE,
+  type CheckoutStatus, type Quote, type QuoteRequest,
 } from '../lib/api/checkout'
 import { squareConfig } from '../lib/square'
 import { setPreviousOrderId, clearPreviousOrderId } from '../lib/checkout/previousOrder'
@@ -128,10 +129,30 @@ export default function Checkout() {
   // until the outcome is known; an unknown outcome is resolved by Try again.
   const charging = busy || paying || retryToken !== null
 
-  /** Everything but the codes each caller handles itself. */
-  function show(err: unknown) {
+  /**
+   * Everything but the codes each caller handles itself.
+   *
+   * A stale reload can carry an orderId that already paid (history state
+   * survives a back/forward or a refresh): core then refuses the quote with
+   * order_expired or not_found even though money changed hands. Rather than
+   * show "This checkout expired" on a paid order, check status once -- if
+   * paid, show the confirmation and clear the cart; otherwise it really is
+   * expired.
+   */
+  async function show(err: unknown) {
     if (!(err instanceof CheckoutError)) { setError(UNAVAILABLE_MESSAGE); return }
     if (err.code === 'order_expired' || err.code === 'not_found') {
+      try {
+        const status = await getCheckoutStatus(id)
+        if (status.status === 'paid') {
+          clear()
+          clearPreviousOrderId()
+          setStep({ kind: 'paid', status })
+          return
+        }
+      } catch {
+        // Fall through to the expired view: the status check itself is best-effort.
+      }
       setStep({ kind: 'ended', title: 'This checkout expired', body: 'Start again from your cart.' })
       return
     }
@@ -164,7 +185,7 @@ export default function Checkout() {
     try {
       return await quoteCheckout(id, { ...form, address: { ...form.address, country: 'US' } })
     } catch (err) {
-      show(err)
+      await show(err)
       return null
     }
   }
@@ -212,7 +233,7 @@ export default function Checkout() {
         setRetryToken(token)
         setError(UNAVAILABLE_MESSAGE)
       } else {
-        show(err)
+        await show(err)
       }
     } finally {
       inFlight.current = false
