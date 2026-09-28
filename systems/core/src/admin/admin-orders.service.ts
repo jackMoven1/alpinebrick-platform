@@ -6,7 +6,7 @@ import {
   fulfillOrder, cancelOrderTx, lockOrderRow, enqueueInventoryPushesAfterCommit, orderNumber, OrderError, PENDING_CHECKOUT_EMAIL,
 } from '../orders/orders.service.js'
 import { lineName } from '../checkout/checkout.service.js'
-import { isPaymentInFlight } from '../checkout/payment-attempt.js'
+import { paymentBlocksRelease } from '../checkout/payment-attempt.js'
 
 export const ORDER_TABS = ['to_ship', 'shipped', 'pending', 'closed', 'review'] as const
 export type OrderTab = (typeof ORDER_TABS)[number]
@@ -219,7 +219,7 @@ export async function cancelPendingOrder(id: string, body: unknown, actorId: str
     cancelled = await prisma.$transaction(async (tx) => {
       const locked = await lockOrderRow(tx, id)
       if (!locked) throw new OrderError('order_not_found', `no order ${id}`)
-      if (locked.status === 'pending' && (locked.squarePaymentId || isPaymentInFlight(locked, now))) throw paymentInProgressError()
+      if (locked.status === 'pending' && paymentBlocksRelease(locked, now)) throw paymentInProgressError()
       return cancelOrderTx(tx, id, actorId, { onlyIfPending: true })
     })
   } catch (err) { throw mapOrderError(err) }

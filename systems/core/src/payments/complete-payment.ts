@@ -8,7 +8,12 @@ import { scrubError } from '../auth/scrub.js'
 
 /** Work to run after the transaction commits (email). */
 export type FollowUp = () => Promise<void>
-export interface CompletedPayment { paymentId: string; amountCents: number }
+/**
+ * `amountCents` is null when Square's amount could not be read as USD cents
+ * (no amount_money, or another currency): the completion still applies, but
+ * no amount_mismatch is inferred from a figure we do not have (final review minor 3).
+ */
+export interface CompletedPayment { paymentId: string; amountCents: number | null }
 export type CompletionOutcome = 'paid' | 'already_paid' | 'paid_after_cancel' | 'not_applied'
 
 /**
@@ -22,8 +27,18 @@ const MORE_SEVERE_THAN_DUPLICATE: ReadonlySet<OrderReviewReason> = new Set(['pai
  * A second COMPLETED payment for an order that already carries a different
  * one: money taken twice. Not applied; flagged, audited and logged with both
  * payment ids so the duplicate can be refunded (ruling Q-P1).
+ *
+ * Idempotent per duplicate payment id (final review I1): Square redelivers
+ * payment.updated under new event ids, and once an operator has refunded the
+ * duplicate and cleared the flag -- perhaps after the order shipped -- a
+ * redelivery must not audit it again or put the flag back.
  */
 async function recordDuplicate(tx: Prisma.TransactionClient, order: OrderWithLines, payment: CompletedPayment): Promise<void> {
+  const seen = await tx.auditLog.findFirst({
+    where: { action: 'order.duplicate_payment', target: `order:${order.id}`, after: { path: ['squarePaymentId'], equals: payment.paymentId } },
+    select: { id: true },
+  })
+  if (seen) return
   const keep = order.reviewReason !== null && MORE_SEVERE_THAN_DUPLICATE.has(order.reviewReason)
   if (!keep) await tx.order.update({ where: { id: order.id }, data: { reviewReason: 'duplicate_payment' } })
   await recordAudit({
@@ -53,6 +68,22 @@ export async function applyCompletedPayment(
   const target = `order:${order.id}`
 
   if (order.status !== 'pending' && order.squarePaymentId === payment.paymentId) {
+    if (order.status === 'cancelled' && order.reviewReason === null) {
+      // Defence in depth (final review C1): a pending order carrying this
+      // payment was cancelled and the payment has now COMPLETED. No path of
+      // ours should cancel such an order (paymentBlocksRelease); if one ever
+      // does, the money must not go unnoticed. An order already flagged
+      // (paid_after_cancel, disputed, ...) is left as it is.
+      // Same record as the cancelled-order path below.
+      const customer = await upsertCustomerFromCheckout({ email: order.email, name: order.shipName, consent: order.marketingOptIn }, tx)
+      await tx.order.update({
+        where: { id: order.id },
+        data: { paidAt: order.paidAt ?? new Date(), customerId: customer.id, reviewReason: 'paid_after_cancel' },
+      })
+      await recordAudit({ actorId: 'system', action: 'order.paid_after_cancel', target, after: { squarePaymentId: payment.paymentId } }, tx)
+      console.error(`[payments] order ${order.id} was PAID AFTER IT WAS CANCELLED (payment ${payment.paymentId}) -- refund it in the payment dashboard`)
+      return { outcome: 'paid_after_cancel', followUp: null }
+    }
     return { outcome: 'already_paid', followUp: null }
   }
 
@@ -87,7 +118,7 @@ export async function applyCompletedPayment(
     console.error(`[payments] order ${order.id} had payment ${order.squarePaymentId} in progress, but payment ${payment.paymentId} completed -- check both in the payment dashboard`)
   }
 
-  const mismatch = payment.amountCents !== order.totalCents
+  const mismatch = payment.amountCents !== null && payment.amountCents !== order.totalCents
   if (mismatch) console.error(`[payments] order ${order.id} amount mismatch: charged ${payment.amountCents}, order total ${order.totalCents}`)
   const paid = await markOrderPaidTx(tx, order.id, 'system', {
     squarePaymentId: payment.paymentId,

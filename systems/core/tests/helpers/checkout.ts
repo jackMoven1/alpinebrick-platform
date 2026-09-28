@@ -4,10 +4,14 @@ import { buildApp, type AppDeps } from '../../src/app.js'
 import { createFakePaymentsPort, FAKE_LOCATION_ID, type FakePaymentsPort } from '../../src/ports/payments/fake.adapter.js'
 import { prisma } from '../../src/prisma.js'
 
-/** An app wired to the fake Square, with the rate limit off unless a test supplies one. */
+/**
+ * An app wired to the fake Square, with both rate limits off unless a test
+ * supplies one (passing `statusRateLimit: undefined` gets the app's default).
+ */
 export function makeApp(over: Partial<AppDeps> = {}): { app: Express; payments: FakePaymentsPort } {
   const payments = (over.payments as FakePaymentsPort | undefined) ?? createFakePaymentsPort()
-  const app = buildApp({ checkoutRateLimit: (_req, _res, next) => next(), ...over, payments })
+  const off: AppDeps['checkoutRateLimit'] = (_req, _res, next) => next()
+  const app = buildApp({ checkoutRateLimit: off, statusRateLimit: off, ...over, payments })
   return { app, payments }
 }
 
@@ -84,9 +88,10 @@ export function deliver(app: Express, payments: FakePaymentsPort, event: object,
     .send(payload)
 }
 
-export function sqPayment(o: { id: string; orderId?: string; amount: number; status?: string; locationId?: string }) {
+export function sqPayment(o: { id: string; orderId?: string; amount: number | null; currency?: string; status?: string; locationId?: string }) {
   return {
-    id: o.id, status: o.status ?? 'COMPLETED', amount_money: { amount: o.amount, currency: 'USD' },
+    id: o.id, status: o.status ?? 'COMPLETED',
+    ...(o.amount === null ? {} : { amount_money: { amount: o.amount, currency: o.currency ?? 'USD' } }),
     ...(o.orderId ? { reference_id: o.orderId } : {}), location_id: o.locationId ?? FAKE_LOCATION_ID,
   }
 }

@@ -13,7 +13,7 @@ import { seed } from '../prisma/seed.js'
 import { cancelOrder, fulfillOrder } from '../src/orders/orders.service.js'
 import { enqueueInventoryPush } from '../src/channels/walmart/inventory.sync.js'
 import { unconfiguredPaymentsPort } from '../src/ports/payments/index.js'
-import { FAKE_NOTIFICATION_URL } from '../src/ports/payments/fake.adapter.js'
+import { FAKE_LOCATION_ID, FAKE_NOTIFICATION_URL, type FakePaymentsPort } from '../src/ports/payments/fake.adapter.js'
 import type { EmailPort } from '../src/ports/email/email.port.js'
 import { createSquareWebhookHandler } from '../src/payments/square-webhook.routes.js'
 import {
@@ -356,5 +356,144 @@ describe('payment.updated for a recorded processing payment (T4-R4)', () => {
     const o = await order(r.orderId)
     expect(o).toMatchObject({ status: 'pending', squarePaymentId: p.id, paymentAttemptCount: 0 })
     expect(o.paymentAttemptAt).toBeInstanceOf(Date)
+  })
+})
+
+// Final-review fix wave (ruling F-R1).
+describe('final review: money-path gaps', () => {
+  /** A COMPLETED payment in the fake, for `orderId`, that our order may or may not carry. */
+  function squareHas(payments: FakePaymentsPort, id: string, orderId: string, amountCents: number) {
+    payments.payments.set(id, { id, status: 'COMPLETED', amountCents, referenceId: orderId, locationId: FAKE_LOCATION_ID })
+  }
+  const errors = () => errorSpy.mock.calls.map((c) => c.map(String).join(' '))
+
+  it('C1 defence: a COMPLETED payment for a cancelled order that carries it flags paid_after_cancel, once', async () => {
+    const { app, payments } = setup()
+    const r = await readyToPay(app, { qty: 1 })
+    await cancelOrder(r.orderId)
+    await prisma.order.update({ where: { id: r.orderId }, data: { squarePaymentId: 'sq_live' } })
+    errorSpy.mockClear()
+    const res = await deliver(app, payments, squareEvent('payment.updated', sqPayment({ id: 'sq_live', orderId: r.orderId, amount: r.totalCents })))
+    expect(res.body.outcome).toBe('processed')
+    expect(await order(r.orderId)).toMatchObject({ status: 'cancelled', squarePaymentId: 'sq_live', reviewReason: 'paid_after_cancel' })
+    expect(errors().some((m) => m.includes(r.orderId) && m.includes('PAID AFTER'))).toBe(true)
+    await deliver(app, payments, squareEvent('payment.updated', sqPayment({ id: 'sq_live', orderId: r.orderId, amount: r.totalCents })))
+    expect(await prisma.auditLog.count({ where: { action: 'order.paid_after_cancel', target: `order:${r.orderId}` } })).toBe(1)
+  })
+
+  it('C1 defence leaves a cancelled order already flagged disputed alone', async () => {
+    const { app, payments } = setup()
+    const r = await readyToPay(app, { qty: 1 })
+    await cancelOrder(r.orderId)
+    await prisma.order.update({ where: { id: r.orderId }, data: { squarePaymentId: 'sq_live', reviewReason: 'disputed' } })
+    await deliver(app, payments, squareEvent('payment.updated', sqPayment({ id: 'sq_live', orderId: r.orderId, amount: r.totalCents })))
+    expect((await order(r.orderId)).reviewReason).toBe('disputed')
+    expect(await prisma.auditLog.count({ where: { action: 'order.paid_after_cancel', target: `order:${r.orderId}` } })).toBe(0)
+  })
+
+  it('I1: a refund of a DUPLICATE payment is acknowledged, recorded and logged, and the order is left alone', async () => {
+    const { app, payments } = setup()
+    const o = await paidOrder(app, { qty: 1 })
+    squareHas(payments, 'sq_dup', o.id, o.totalCents)
+    payments.addRefund('sq_dup', { id: 'r_dup', status: 'COMPLETED', amountCents: o.totalCents })
+    errorSpy.mockClear()
+    const evt = squareEvent('refund.updated', sqRefund({ id: 'r_dup', paymentId: 'sq_dup', amount: o.totalCents }))
+    const res = await deliver(app, payments, evt)
+    expect(res.status).toBe(200)
+    expect(res.body.outcome).toBe('processed')
+    expect(await prisma.paymentEvent.count({ where: { eventId: evt.event_id } })).toBe(1)
+    expect(await order(o.id)).toMatchObject({ status: 'paid', refundedCents: 0, squarePaymentId: o.squarePaymentId })
+    expect((await inventoryOf('BBS-STD')).reserved).toBe(1)
+    expect(errors().some((m) => m.includes('sq_dup') && m.includes(o.id))).toBe(true)
+  })
+
+  it('I1: a dispute on a DUPLICATE payment flags the order disputed, prior reason in the audit', async () => {
+    const { app, payments } = setup()
+    const o = await paidOrder(app, { qty: 1 })
+    squareHas(payments, 'sq_dup', o.id, o.totalCents)
+    await prisma.order.update({ where: { id: o.id }, data: { reviewReason: 'duplicate_payment' } })
+    const res = await deliver(app, payments, squareEvent('dispute.created', sqDispute({ id: 'dp_dup', paymentId: 'sq_dup' })))
+    expect(res.status).toBe(200)
+    expect(res.body.outcome).toBe('processed')
+    expect((await order(o.id)).reviewReason).toBe('disputed')
+    const audit = await prisma.auditLog.findFirstOrThrow({ where: { action: 'order.disputed', target: `order:${o.id}` } })
+    expect(audit.before).toEqual({ reviewReason: 'duplicate_payment' })
+    expect(audit.after).toMatchObject({ dispute: 'dp_dup', reviewReason: 'disputed', squarePaymentId: 'sq_dup' })
+  })
+
+  it('I1: a refund for a payment Square does not know is still retried (503)', async () => {
+    const { app, payments } = setup()
+    const res = await deliver(app, payments, squareEvent('refund.updated', sqRefund({ id: 'r_x', paymentId: 'sq_unknown', amount: 100 })))
+    expect(res.status).toBe(503)
+  })
+
+  it('I1: a redelivered duplicate payment is recorded once and never resets the review reason after shipping', async () => {
+    const { app, payments } = setup()
+    const o = await paidOrder(app, { qty: 1 })
+    const dup = () => squareEvent('payment.updated', sqPayment({ id: 'sq_second', orderId: o.id, amount: o.totalCents }))
+    await deliver(app, payments, dup())
+    expect((await order(o.id)).reviewReason).toBe('duplicate_payment')
+    // The operator refunds the duplicate and clears the flag; the order ships.
+    await prisma.order.update({ where: { id: o.id }, data: { reviewReason: null } })
+    await fulfillOrder(o.id)
+    const res = await deliver(app, payments, dup())
+    expect(res.body.outcome).toBe('processed')
+    expect(await order(o.id)).toMatchObject({ status: 'fulfilled', reviewReason: null })
+    const count = () => prisma.auditLog.count({ where: { action: 'order.duplicate_payment', target: `order:${o.id}` } })
+    expect(await count()).toBe(1)
+    // A different duplicate is still news.
+    await deliver(app, payments, squareEvent('payment.updated', sqPayment({ id: 'sq_third', orderId: o.id, amount: o.totalCents })))
+    expect(await count()).toBe(2)
+  })
+
+  it('I2: refunding everything Square took counts as full on an undercharged (amount_mismatch) order; stock released once', async () => {
+    const { app, payments } = setup()
+    const r = await readyToPay(app, { qty: 1 })
+    const taken = r.totalCents - 100
+    squareHas(payments, 'sq_under', r.orderId, taken)
+    await deliver(app, payments, squareEvent('payment.updated', sqPayment({ id: 'sq_under', orderId: r.orderId, amount: taken })))
+    expect(await order(r.orderId)).toMatchObject({ status: 'paid', reviewReason: 'amount_mismatch' })
+    payments.addRefund('sq_under', { id: 'r1', status: 'COMPLETED', amountCents: taken })
+    vi.mocked(enqueueInventoryPush).mockClear()
+    await deliver(app, payments, squareEvent('refund.updated', sqRefund({ id: 'r1', paymentId: 'sq_under', amount: taken })))
+    expect(await order(r.orderId)).toMatchObject({ status: 'refunded', refundedCents: taken })
+    expect(await inventoryOf('BBS-STD')).toMatchObject({ onHand: 25, reserved: 0 })
+    await deliver(app, payments, squareEvent('refund.created', sqRefund({ id: 'r1', paymentId: 'sq_under', amount: taken })))
+    expect(await inventoryOf('BBS-STD')).toMatchObject({ onHand: 25, reserved: 0 })
+    expect(await prisma.auditLog.count({ where: { action: 'order.refunded', target: `order:${r.orderId}` } })).toBe(1)
+    expect(enqueueInventoryPush).toHaveBeenCalledTimes(1)
+  })
+
+  it('minor 1: a full refund while the order is still pending waits (503), then applies once it is paid', async () => {
+    const { app, payments } = setup()
+    const r = await readyToPay(app, { qty: 1 })
+    payments.nextOutcomes = ['processing']
+    await postPay(app, r.orderId, { sourceToken: 'tok_a', quoteVersion: r.quoteVersion })
+    const p = payments.paymentFor(r.orderId)
+    expect(await order(r.orderId)).toMatchObject({ status: 'pending', squarePaymentId: p.id })
+    payments.addRefund(p.id, { id: 'r1', status: 'COMPLETED', amountCents: p.amountCents })
+    const refundEvt = squareEvent('refund.updated', sqRefund({ id: 'r1', paymentId: p.id, amount: p.amountCents }))
+    const early = await deliver(app, payments, refundEvt)
+    expect(early.status).toBe(503)
+    expect(await prisma.paymentEvent.count({ where: { eventId: refundEvt.event_id } })).toBe(0)
+    expect((await order(r.orderId)).status).toBe('pending')
+
+    payments.resolvePayment(p.id, 'COMPLETED')
+    await deliver(app, payments, squareEvent('payment.updated', sqPayment({ id: p.id, orderId: r.orderId, amount: p.amountCents })))
+    expect((await deliver(app, payments, refundEvt)).body.outcome).toBe('processed')
+    expect((await order(r.orderId)).status).toBe('refunded')
+  })
+
+  it.each([
+    ['no amount_money', (_total: number) => ({ amount: null })],
+    ['a non-USD currency', (total: number) => ({ amount: total - 1, currency: 'CAD' })],
+  ] as const)('minor 3: COMPLETED with %s is logged and completes the order without an amount_mismatch', async (_label, money) => {
+    const { app, payments } = setup()
+    const r = await readyToPay(app, { qty: 1 })
+    errorSpy.mockClear()
+    const res = await deliver(app, payments, squareEvent('payment.updated', sqPayment({ id: 'sq_odd', orderId: r.orderId, ...money(r.totalCents) })))
+    expect(res.body.outcome).toBe('processed')
+    expect(await order(r.orderId)).toMatchObject({ status: 'paid', squarePaymentId: 'sq_odd', reviewReason: null })
+    expect(errors().some((m) => m.includes('sq_odd') && m.includes(r.orderId))).toBe(true)
   })
 })

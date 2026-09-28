@@ -113,6 +113,20 @@ describe('POST /api/v1/checkout', () => {
     expect((await inventoryOf('BBS-STD')).reserved).toBe(2)
   })
 
+  // Final review C1: a recorded Square payment blocks the release however stale the attempt stamp is.
+  it('leaves a previousOrderId alone when it carries a Square payment id, even with a stale attempt stamp', async () => {
+    const { app } = makeApp()
+    const v = await variantIdBySku('BBS-STD')
+    const first = await postCheckout(app, { lines: [{ variantId: v, quantity: 1 }] })
+    await prisma.order.update({
+      where: { id: first.body.orderId },
+      data: { squarePaymentId: 'sq_processing', paymentAttemptAt: new Date(Date.now() - 60 * 60_000) },
+    })
+    await postCheckout(app, { lines: [{ variantId: v, quantity: 1 }], previousOrderId: first.body.orderId })
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: first.body.orderId } })).status).toBe('pending')
+    expect((await inventoryOf('BBS-STD')).reserved).toBe(2)
+  })
+
   it('lets exactly one of two concurrent checkouts take the last unit', async () => {
     const { app } = makeApp()
     const v = await setOnHand('CMP-LTD', 1)
@@ -178,6 +192,27 @@ describe('GET /api/v1/checkout/status', () => {
     expect((await request(app).get('/api/v1/checkout/status?orderId=nope')).status).toBe(404)
     expect((await request(app).get('/api/v1/checkout/status?orderId=../../x')).status).toBe(400)
     expect((await request(app).get('/api/v1/checkout/status')).status).toBe(400)
+  })
+
+  // Final review minor 2: the status poll has its own, more generous, per-IP limiter.
+  it('rate-limits the status poll on its own limiter, separate from the checkout budget', async () => {
+    const { app } = makeApp({
+      checkoutRateLimit: createRateLimiter({ limit: 1, windowMs: 60_000 }),
+      statusRateLimit: createRateLimiter({ limit: 2, windowMs: 60_000 }),
+    })
+    const created = await postCheckout(app, { lines: [{ variantId: await variantIdBySku('BBS-STD'), quantity: 1 }] })
+    const url = `/api/v1/checkout/status?orderId=${created.body.orderId}`
+    expect((await request(app).get(url)).status).toBe(200)
+    expect((await request(app).get(url)).status).toBe(200)
+    const blocked = await request(app).get(url)
+    expect(blocked.status).toBe(429)
+    expect(blocked.body.code).toBe('rate_limited')
+  })
+
+  it('limits the status poll by default at 120 per minute per IP', async () => {
+    const { app } = makeApp({ statusRateLimit: undefined })
+    for (let i = 0; i < 120; i++) expect((await request(app).get('/api/v1/checkout/status?orderId=nope')).status).toBe(404)
+    expect((await request(app).get('/api/v1/checkout/status?orderId=nope')).status).toBe(429)
   })
 })
 

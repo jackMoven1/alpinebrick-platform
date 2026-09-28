@@ -28,16 +28,17 @@ export function json(status: number, fn: (req: Request) => Promise<unknown>): Re
 
 /**
  * Public, storefront CORS, no credentials. Mounted in app.ts. Start, quote
- * and pay share one per-IP limiter (plan decision 6).
+ * and pay share one per-IP limiter (plan decision 6); the status poll has its
+ * own, more generous one (final review minor 2).
  */
-export function createCheckoutRouter(deps: CheckoutDeps & { rateLimit: RequestHandler }): Router {
+export function createCheckoutRouter(deps: CheckoutDeps & { rateLimit: RequestHandler; statusRateLimit: RequestHandler }): Router {
   const router = Router()
   router.post('/', deps.rateLimit, json(201, (req) => startCheckout(parseCheckoutRequest(req.body), deps)))
   router.post('/:orderId/quote', deps.rateLimit, json(200, (req) =>
     quoteCheckout(orderIdOf(req.params.orderId), parseQuoteRequest(req.body), deps)))
   router.post('/:orderId/pay', deps.rateLimit, json(200, (req) =>
     payForOrder(orderIdOf(req.params.orderId), parsePayRequest(req.body), deps)))
-  router.get('/status', json(200, async (req) => {
+  router.get('/status', deps.statusRateLimit, json(200, async (req) => {
     const status = await getCheckoutStatus(orderIdOf(req.query.orderId))
     if (!status) throw checkoutErrors.notFound()
     return status

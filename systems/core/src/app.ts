@@ -31,6 +31,8 @@ export interface AppDeps {
   tax: TaxPort
   email: EmailPort
   checkoutRateLimit: RequestHandler
+  /** GET /checkout/status only: the confirmation page polls it, so it gets its own, larger budget. */
+  statusRateLimit: RequestHandler
 }
 
 /** body-parser marks a JSON parse failure with type 'entity.parse.failed' (a SyntaxError). */
@@ -50,6 +52,8 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
   const tax = deps.tax ?? createFlatRateTaxPort()
   const email = deps.email ?? noopEmailAdapter
   const checkoutRateLimit = deps.checkoutRateLimit ?? createRateLimiter({ limit: 20, windowMs: 60_000 })
+  // Final review minor 2: status is a read by order id, polled by /order/complete.
+  const statusRateLimit = deps.statusRateLimit ?? createRateLimiter({ limit: 120, windowMs: 60_000 })
 
   const app = express()
   // Render terminates TLS one proxy hop in front of the app. Without this,
@@ -89,7 +93,7 @@ export function buildApp(deps: Partial<AppDeps> = {}): Express {
   // cannot be used to hold stock. The old public POST/GET
   // /api/v1/orders routes are retired (spec §2): POST reserved stock with no
   // payment, GET exposed addresses to anyone holding an order id.
-  app.use('/api/v1/checkout', createCheckoutRouter({ payments, shipping, tax, email, rateLimit: checkoutRateLimit }))
+  app.use('/api/v1/checkout', createCheckoutRouter({ payments, shipping, tax, email, rateLimit: checkoutRateLimit, statusRateLimit }))
 
   // Walmart calls this endpoint directly with no session cookie and no
   // Origin header -- its own x-webhook-secret header (checked inside the

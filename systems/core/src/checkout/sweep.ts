@@ -3,7 +3,7 @@ import { cancelOrderTx, lockOrderRow, enqueueInventoryPushesAfterCommit } from '
 import { getShopSettings } from '../settings/shop-settings.service.js'
 import type { PaymentsPort } from '../ports/payments/payments.port.js'
 import { scrubError } from '../auth/scrub.js'
-import { PAYMENT_ATTEMPT_GRACE_MS, attemptInFlight } from './payment-attempt.js'
+import { PAYMENT_ATTEMPT_GRACE_MS, paymentBlocksRelease } from './payment-attempt.js'
 
 export const SWEEP_INTERVAL_MS = 5 * 60_000
 const BATCH = 100
@@ -38,7 +38,7 @@ export async function sweepAbandonedCheckouts(now = new Date()): Promise<{ cance
     try {
       const released = await prisma.$transaction(async (tx) => {
         const o = await lockOrderRow(tx, id)
-        if (!o || o.status !== 'pending' || o.squarePaymentId || attemptInFlight(o.paymentAttemptAt, now)) return null
+        if (!o || o.status !== 'pending' || paymentBlocksRelease(o, now)) return null
         return cancelOrderTx(tx, id, 'system', { onlyIfPending: true })
       })
       if (!released) {

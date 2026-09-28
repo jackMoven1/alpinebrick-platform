@@ -8,7 +8,8 @@
  * A definite answer from Square (declined, failed) clears paymentAttemptAt
  * (ruling T2-R2), so a stamp inside the window means the outcome is unknown.
  * This is the ONE place that rule lives (ruling Q-P6): the sweep, the admin
- * Cancel, the previousOrderId release and the quote all ask it.
+ * Cancel, the previousOrderId release and the quote all ask it, through
+ * paymentBlocksRelease below.
  */
 export const PAYMENT_ATTEMPT_GRACE_MS = 10 * 60_000
 
@@ -19,4 +20,18 @@ export function attemptInFlight(at: Date | null, now: Date): boolean {
 /** `attemptInFlight` for anything carrying an order's `paymentAttemptAt`. */
 export function isPaymentInFlight(order: { paymentAttemptAt: Date | null }, now: Date): boolean {
   return attemptInFlight(order.paymentAttemptAt, now)
+}
+
+/**
+ * Final review C1 (ruling F-R1): may our own code release this pending
+ * order's stock? Not while a Square payment id is recorded (a payment exists,
+ * final or not -- ruling Q-P7), however stale the attempt stamp, and not while
+ * an attempt is in flight. The sweep, the admin Cancel, the previousOrderId
+ * release and the quote all ask THIS, so the four can never disagree again.
+ */
+export function paymentBlocksRelease(
+  order: { squarePaymentId: string | null; paymentAttemptAt: Date | null },
+  now: Date,
+): boolean {
+  return !!order.squarePaymentId || isPaymentInFlight(order, now)
 }

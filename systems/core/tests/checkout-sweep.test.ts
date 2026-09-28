@@ -11,6 +11,7 @@ import { markOrderPaid } from '../src/orders/orders.service.js'
 import { enqueueInventoryPush } from '../src/channels/walmart/inventory.sync.js'
 import { unconfiguredPaymentsPort } from '../src/ports/payments/index.js'
 import { sweepAbandonedCheckouts, startCheckoutSweep } from '../src/checkout/sweep.js'
+import { paymentBlocksRelease, PAYMENT_ATTEMPT_GRACE_MS } from '../src/checkout/payment-attempt.js'
 import { makeApp, postCheckout, readyToPay, postPay, variantIdBySku, inventoryOf } from './helpers/checkout.js'
 import { stubDelegateOnce } from './helpers/prisma-stub.js'
 
@@ -136,5 +137,20 @@ describe('sweepAbandonedCheckouts', () => {
     expect(typeof stop).toBe('function')
     stop()
     logSpy.mockRestore()
+  })
+})
+
+// Final review C1: the one rule every release path asks.
+describe('paymentBlocksRelease', () => {
+  const now = new Date('2026-09-28T12:00:00Z')
+  const ago = (ms: number) => new Date(now.getTime() - ms)
+  it.each([
+    ['no payment id, no attempt', { squarePaymentId: null, paymentAttemptAt: null }, false],
+    ['no payment id, stale attempt', { squarePaymentId: null, paymentAttemptAt: ago(PAYMENT_ATTEMPT_GRACE_MS) }, false],
+    ['no payment id, attempt in flight', { squarePaymentId: null, paymentAttemptAt: ago(PAYMENT_ATTEMPT_GRACE_MS - 1) }, true],
+    ['payment id, no attempt', { squarePaymentId: 'sq_1', paymentAttemptAt: null }, true],
+    ['payment id, stale attempt', { squarePaymentId: 'sq_1', paymentAttemptAt: ago(60 * 60_000) }, true],
+  ] as const)('%s -> %s', (_label, order, blocks) => {
+    expect(paymentBlocksRelease(order, now)).toBe(blocks)
   })
 })

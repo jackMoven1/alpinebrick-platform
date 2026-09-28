@@ -10,7 +10,7 @@ import type { TaxPort } from '../ports/tax/tax.port.js'
 import type { EmailPort } from '../ports/email/email.port.js'
 import { scrubError } from '../auth/scrub.js'
 import { CheckoutError, checkoutErrors, type CheckoutRequest, type QuoteRequest } from './checkout-input.js'
-import { isPaymentInFlight } from './payment-attempt.js'
+import { paymentBlocksRelease } from './payment-attempt.js'
 
 export interface CheckoutDeps {
   payments: PaymentsPort
@@ -62,7 +62,7 @@ async function releasePreviousOrder(orderId: string, now: Date): Promise<void> {
     const cancelled = await prisma.$transaction(async (tx) => {
       const prev = await lockOrderRow(tx, orderId)
       if (!prev || prev.channel !== 'storefront' || prev.status !== 'pending') return null
-      if (isPaymentInFlight(prev, now)) return null
+      if (paymentBlocksRelease(prev, now)) return null // final review C1: a recorded payment blocks it too
       return cancelOrderTx(tx, orderId, 'system', { onlyIfPending: true })
     })
     if (cancelled) {
@@ -120,10 +120,6 @@ export async function startCheckout(req: CheckoutRequest, deps: CheckoutDeps): P
   }
 }
 
-function paymentBlocksQuote(o: { squarePaymentId: string | null; paymentAttemptAt: Date | null }, now: Date): boolean {
-  return o.squarePaymentId !== null || isPaymentInFlight(o, now)
-}
-
 export interface QuoteDto { quoteVersion: number; subtotalCents: number; shippingCents: number; taxCents: number; totalCents: number }
 
 /**
@@ -143,7 +139,7 @@ export async function quoteCheckout(orderId: string, req: QuoteRequest, deps: Ch
   const order = await prisma.order.findUnique({ where: { id: orderId }, include: { lines: true } })
   if (!order || order.channel !== 'storefront') throw checkoutErrors.notFound()
   if (order.status !== 'pending') throw checkoutErrors.expired()
-  if (paymentBlocksQuote(order, deps.now?.() ?? new Date())) throw checkoutErrors.paymentPending()
+  if (paymentBlocksRelease(order, deps.now?.() ?? new Date())) throw checkoutErrors.paymentPending()
 
   const [shipping] = await deps.shipping.quote({
     subtotalCents: order.subtotalCents, lines: order.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
@@ -157,7 +153,7 @@ export async function quoteCheckout(orderId: string, req: QuoteRequest, deps: Ch
   return prisma.$transaction(async (tx) => {
     const locked = await lockOrderRow(tx, orderId)
     if (!locked || locked.status !== 'pending') throw checkoutErrors.expired()
-    if (paymentBlocksQuote(locked, deps.now?.() ?? new Date())) throw checkoutErrors.paymentPending()
+    if (paymentBlocksRelease(locked, deps.now?.() ?? new Date())) throw checkoutErrors.paymentPending()
     const next = await tx.order.update({
       where: { id: orderId },
       data: {
