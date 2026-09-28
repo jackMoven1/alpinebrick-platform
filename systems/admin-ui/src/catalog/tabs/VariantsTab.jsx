@@ -4,6 +4,7 @@ import { dollarsToCents } from '../../lib/money.js'
 import { useToast } from '../../ui/toast.jsx'
 import BulkVariantForm from './BulkVariantForm.jsx'
 import StockDialog from './StockDialog.jsx'
+import DimensionsDialog from './DimensionsDialog.jsx'
 import { errorText } from '../../lib/errorText.js'
 
 const LOCK_REASON = 'Locked: this variant has been sold or listed on Walmart'
@@ -18,7 +19,7 @@ const formatAttributes = (attrs) => {
  * Money: core speaks integer cents. Dollars text becomes cents exactly once,
  * through dollarsToCents, and cents become dollars text only for display.
  */
-function VariantRow({ v, onUpdated, onSetStock }) {
+function VariantRow({ v, onUpdated, onSetStock, onDimensions }) {
   const toast = useToast()
   const [sku, setSku] = useState(v.sku)
   const [price, setPrice] = useState((v.priceCents / 100).toFixed(2))
@@ -66,6 +67,7 @@ function VariantRow({ v, onUpdated, onSetStock }) {
       <td>{inv.walmartAvailable}</td>
       <td className="space-x-2 whitespace-nowrap text-right">
         {dirty && <button onClick={save} disabled={busy || cents === null || !sku.trim()} className="text-xs font-semibold text-brand-dark disabled:text-gray-300">Save</button>}
+        <button onClick={() => onDimensions(v)} className="text-xs font-semibold">Dimensions</button>
         <button onClick={() => onSetStock(v)} className="text-xs font-semibold">Set stock</button>
         <button onClick={remove} disabled={busy || v.locked.delete} title={v.locked.delete ? LOCK_REASON : undefined}
           className="text-xs text-accent disabled:text-gray-300">Delete</button>
@@ -79,6 +81,7 @@ export default function VariantsTab({ product, onUpdated }) {
   const [error, setError] = useState(null)
   // Held here, not in the row, so the dialog never renders inside a <tr>.
   const [stockFor, setStockFor] = useState(null)
+  const [dimsFor, setDimsFor] = useState(null)
   const [adding, setAdding] = useState(false)
   const [bulkBusy, setBulkBusy] = useState(false)
   const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }))
@@ -110,7 +113,7 @@ export default function VariantsTab({ product, onUpdated }) {
         <tbody>
           {product.variants.map((v) => (
             // Keyed on the saved values so a server update resets the row's edit state.
-            <VariantRow key={`${v.id}:${v.sku}:${v.priceCents}`} v={v} onUpdated={onUpdated} onSetStock={setStockFor} />
+            <VariantRow key={`${v.id}:${v.sku}:${v.priceCents}`} v={v} onUpdated={onUpdated} onSetStock={setStockFor} onDimensions={setDimsFor} />
           ))}
           {product.variants.length === 0 && <tr><td colSpan={9} className="py-4 text-gray-400">No variants yet.</td></tr>}
         </tbody>
@@ -132,6 +135,13 @@ export default function VariantsTab({ product, onUpdated }) {
         <StockDialog
           variant={product.variants.find((x) => x.id === stockFor.id) ?? stockFor}
           onClose={() => setStockFor(null)}
+          onSaved={onUpdated}
+        />
+      )}
+      {dimsFor && (
+        <DimensionsDialog
+          variant={product.variants.find((x) => x.id === dimsFor.id) ?? dimsFor}
+          onClose={() => setDimsFor(null)}
           onSaved={onUpdated}
         />
       )}

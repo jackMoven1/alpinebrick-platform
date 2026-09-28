@@ -7,6 +7,9 @@
 const LABELS = {
   sku: 'SKU', priceCents: 'price', onHand: 'quantity', attributes: 'attributes',
   walmartAllocation: 'Walmart allocation', expectedOnHand: 'expected on hand', note: 'note',
+  carrier: 'carrier', trackingNumber: 'tracking number', acknowledgeReview: 'review confirmation',
+  flatRateCents: 'flat rate', freeThresholdCents: 'free-shipping threshold',
+  weightGrams: 'weight', lengthMm: 'length', widthMm: 'width', heightMm: 'height',
 }
 
 const label = (key, labels) => {
