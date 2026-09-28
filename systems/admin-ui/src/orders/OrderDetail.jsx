@@ -80,9 +80,12 @@ export default function OrderDetail() {
   // taxJurisdiction === 'stripe_tax_pending', or any future '*_pending'
   // jurisdiction) -- showing $0.00 would read as "this order owes no tax".
   const taxPending = Boolean(order.taxJurisdiction) && order.taxJurisdiction.endsWith('_pending')
+  // Every row is a pre-formatted display string, not a raw cent integer --
+  // Tax/Total need to fall back to "pending"/"pending tax" instead of
+  // formatCents, so the whole array has to agree on the string contract.
   const money = [
-    ['Subtotal', order.subtotalCents],
-    ['Shipping', order.shippingCents],
+    ['Subtotal', formatCents(order.subtotalCents)],
+    ['Shipping', formatCents(order.shippingCents)],
     ['Tax', taxPending ? 'pending' : formatCents(order.taxCents)],
     ['Total', taxPending ? 'pending tax' : formatCents(order.totalCents)],
   ]

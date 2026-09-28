@@ -6,6 +6,7 @@ import { ToastProvider } from '../ui/toast.jsx'
 import OrderDetail from './OrderDetail.jsx'
 import detail from '../data/__fixtures__/order-detail.json'
 import { AdminApiError } from '../data/errors.js'
+import { formatCents } from '../lib/money.js'
 
 vi.mock('../data/api.js', () => ({ default: { getOrder: vi.fn(), shipOrder: vi.fn(), cancelOrder: vi.fn() } }))
 import api from '../data/api.js'
@@ -32,6 +33,24 @@ describe('OrderDetail', () => {
     expect(screen.getByRole('link', { name: /view payment in stripe/i })).toHaveAttribute('href', detail.stripePaymentUrl)
     expect(screen.getByText('order.paid')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /cancel order/i })).not.toBeInTheDocument() // paid: refund in Stripe
+  })
+
+  it('formats every money row as currency, not raw cents (regression: C-R2)', async () => {
+    // Distinct non-zero values for subtotal/shipping/tax/total/refund so a
+    // row silently rendering raw cents (e.g. "18900") can't hide behind a
+    // fixture value that happens to look plausible either way.
+    renderDetail({
+      ...detail,
+      subtotalCents: 4999, shippingCents: 995, taxCents: 357, totalCents: 6351, refundedCents: 1200,
+    })
+    await screen.findByRole('heading', { name: new RegExp(detail.orderNumber) })
+    expect(screen.getByText(formatCents(4999))).toBeInTheDocument() // Subtotal: $49.99
+    expect(screen.getByText(formatCents(995))).toBeInTheDocument() // Shipping: $9.95
+    expect(screen.getByText(formatCents(357))).toBeInTheDocument() // Tax: $3.57
+    expect(screen.getByText(formatCents(6351))).toBeInTheDocument() // Total: $63.51
+    expect(screen.getByText(formatCents(1200))).toBeInTheDocument() // Refunded: $12.00
+    expect(screen.queryByText('4999')).not.toBeInTheDocument()
+    expect(screen.queryByText('995')).not.toBeInTheDocument()
   })
 
   it('marks shipped: tracking required unless Other', async () => {
