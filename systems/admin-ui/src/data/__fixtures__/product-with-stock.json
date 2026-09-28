@@ -1,5 +1,5 @@
 {
-  "id": "cmuk32w1s0004nyavhzbndwxf",
+  "id": "cmulpje480004rshvo9gaempj",
   "slug": "castle-set",
   "name": "Castle Set",
   "description": "",
@@ -20,15 +20,15 @@
   "builderNotes": "",
   "homePosition": null,
   "collectionPosition": null,
-  "createdAt": "2026-09-27T17:19:37.409Z",
-  "updatedAt": "2026-09-27T17:19:37.409Z",
+  "createdAt": "2026-09-28T20:36:05.048Z",
+  "updatedAt": "2026-09-28T20:36:05.048Z",
   "firstPublishedAt": null,
   "locked": {
     "slug": false
   },
   "variants": [
     {
-      "id": "cmuk32w2h0009nyavqkuamamr",
+      "id": "cmulpje590009rshv3iik0ffu",
       "sku": "ABE-1001",
       "priceCents": 18900,
       "currency": "USD",
