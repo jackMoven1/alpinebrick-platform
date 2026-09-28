@@ -1,4 +1,11 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
+
+// Pass-through spy, so one test can make the completion write fail after a
+// COMPLETED charge (ruling T4-R4). Every other test runs the real function.
+vi.mock('../src/payments/complete-payment.js', async (importOriginal) => {
+  const actual: any = await importOriginal()
+  return { ...actual, applyCompletedPayment: vi.fn(actual.applyCompletedPayment) }
+})
 import { prisma } from '../src/prisma.js'
 import { resetDb } from './helpers/db.js'
 import { seed } from '../prisma/seed.js'
@@ -217,6 +224,57 @@ describe('POST /api/v1/checkout/:orderId/pay', () => {
     expect((await postPay(app, 'no-such-order', { sourceToken: 't', quoteVersion: 1 })).status).toBe(404)
     const { app: bare } = makeApp({ payments: unconfiguredPaymentsPort })
     expect((await postPay(bare, 'no-such-order', { sourceToken: 't', quoteVersion: 1 })).status).toBe(503)
+  })
+})
+
+describe('pay: carried rulings T4-R4 and T4-R5', () => {
+  it('a paid order answers the paid replay for any quoteVersion, without charging (T4-R5)', async () => {
+    const { app, payments } = setup()
+    const r = await readyToPay(app)
+    // Another tab re-quotes and pays at v2; the first tab still holds v1.
+    const v2 = await postQuote(app, r.orderId)
+    expect(v2.body.quoteVersion).toBe(r.quoteVersion + 1)
+    await postPay(app, r.orderId, { sourceToken: 'tok_a', quoteVersion: v2.body.quoteVersion })
+    const stale = await postPay(app, r.orderId, { sourceToken: 'tok_b', quoteVersion: r.quoteVersion })
+    expect(stale.status).toBe(200)
+    expect(stale.body.status).toBe('paid')
+    expect(payments.charges).toHaveLength(1)
+  })
+
+  it('logs and records the payment id when the completion write fails after a COMPLETED charge, then rethrows (T4-R4a)', async () => {
+    const { app, payments } = setup()
+    const r = await readyToPay(app)
+    vi.mocked(applyCompletedPayment).mockRejectedValueOnce(new Error('db went away'))
+    errorSpy.mockClear()
+    const res = await postPay(app, r.orderId, { sourceToken: 'tok_a', quoteVersion: r.quoteVersion })
+    expect(res.status).toBe(500)
+    const p = payments.paymentFor(r.orderId)
+    // The sweep never releases an order carrying a payment id (Q-P7), so the stock stays held for the webhook.
+    const o = await order(r.orderId)
+    expect(o).toMatchObject({ status: 'pending', squarePaymentId: p.id })
+    const logged = errorSpy.mock.calls.map((c) => c.join(' ')).find((l) => l.includes(p.id))
+    expect(logged).toContain(r.orderId)
+    // The webhook (or a replay) then completes it with the real code.
+    const again = await postPay(app, r.orderId, { sourceToken: 'tok_a', quoteVersion: r.quoteVersion })
+    expect(again.body.status).toBe('paid')
+    expect(payments.payments.size).toBe(1)
+  })
+
+  it.each(['FAILED', 'CANCELED'] as const)('a replayed processing payment that ended %s clears the payment id so the order can be re-quoted (T4-R4b)', async (status) => {
+    const { app, payments } = setup()
+    const r = await readyToPay(app)
+    payments.nextOutcomes = ['processing']
+    await postPay(app, r.orderId, { sourceToken: 'tok_a', quoteVersion: r.quoteVersion })
+    const p = payments.paymentFor(r.orderId)
+    payments.resolvePayment(p.id, status)
+    const replay = await postPay(app, r.orderId, { sourceToken: 'tok_a', quoteVersion: r.quoteVersion })
+    expect(replay.status).toBe(402)
+    expect(await order(r.orderId)).toMatchObject({ status: 'pending', squarePaymentId: null, paymentAttemptAt: null, paymentAttemptCount: 1 })
+    const requote = await postQuote(app, r.orderId)
+    expect(requote.status).toBe(200)
+    const paid = await postPay(app, r.orderId, { sourceToken: 'tok_b', quoteVersion: requote.body.quoteVersion })
+    expect(paid.body.status).toBe('paid')
+    expect(payments.charges.at(-1)!.idempotencyKey).toBe(`${r.orderId}:${requote.body.quoteVersion}:1`)
   })
 })
 

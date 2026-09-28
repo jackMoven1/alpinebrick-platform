@@ -3,7 +3,7 @@ import { lockOrderRow } from '../orders/orders.service.js'
 import {
   PaymentAttemptConflictError, PaymentOutcomeUnknownError, type ChargeResult, type ShipToAddress,
 } from '../ports/payments/payments.port.js'
-import { applyCompletedPayment } from '../payments/complete-payment.js'
+import { applyCompletedPayment, releaseFailedPayment } from '../payments/complete-payment.js'
 import { scrubError } from '../auth/scrub.js'
 import { CheckoutError, checkoutErrors, type PayRequest } from './checkout-input.js'
 import { getCheckoutStatus, type CheckoutDeps, type CheckoutStatusDto } from './checkout.service.js'
@@ -49,8 +49,10 @@ export async function payForOrder(orderId: string, req: PayRequest, deps: Checko
   const attempt = await prisma.$transaction(async (tx): Promise<Attempt> => {
     const o = await lockOrderRow(tx, orderId)
     if (!o || o.channel !== 'storefront') throw checkoutErrors.notFound()
-    // A lost 200, retried (plan decision 4): answer from the database.
-    if (o.status === 'paid' && o.quoteVersion === req.quoteVersion) return { replay: true }
+    // A lost 200, retried (plan decision 4): answer from the database. Any
+    // quoteVersion -- a stale tab must not see order_expired for money that
+    // was taken (ruling T4-R5). Fulfilled and refunded orders were paid too.
+    if (o.status === 'paid' || o.status === 'fulfilled' || o.status === 'refunded') return { replay: true }
     if (o.status !== 'pending') throw checkoutErrors.expired()
     if (o.quoteVersion === 0 || o.quoteVersion !== req.quoteVersion || !o.shipLine1) throw checkoutErrors.quoteChanged()
     if (o.paymentAttemptCount >= MAX_PAYMENT_ATTEMPTS) throw checkoutErrors.tooManyAttempts()
@@ -89,6 +91,8 @@ export async function payForOrder(orderId: string, req: PayRequest, deps: Checko
   }
 
   if (result.outcome === 'declined') {
+    // A replayed processing payment that ended FAILED/CANCELED (ruling T4-R4).
+    if (result.paymentId) await releaseFailedPayment(prisma, result.paymentId)
     await closeAttempt(orderId, attempt.attemptCount)
     throw new CheckoutError('payment_declined', result.message, 402)
   }
@@ -107,7 +111,20 @@ export async function payForOrder(orderId: string, req: PayRequest, deps: Checko
   }
 
   const completed = { paymentId: result.paymentId, amountCents: result.amountCents }
-  const { followUp } = await prisma.$transaction((tx) => applyCompletedPayment(tx, orderId, completed, deps))
+  let followUp
+  try {
+    ({ followUp } = await prisma.$transaction((tx) => applyCompletedPayment(tx, orderId, completed, deps)))
+  } catch (err) {
+    // Money was taken and our write failed (ruling T4-R4). Record the payment
+    // id if nothing else holds the slot, so the sweep (Q-P7) keeps the stock
+    // held; the webhook or a replay then completes the order.
+    console.error(`[checkout] order ${orderId}: payment ${completed.paymentId} COMPLETED but marking the order paid failed`, scrubError(err))
+    await prisma.order.updateMany({
+      where: { id: orderId, status: 'pending', squarePaymentId: null },
+      data: { squarePaymentId: completed.paymentId },
+    }).catch((e) => console.error(`[checkout] order ${orderId}: could not record payment ${completed.paymentId}`, scrubError(e)))
+    throw err
+  }
   if (followUp) await followUp()
   return currentResult(orderId)
 }

@@ -1,5 +1,5 @@
 import {
-  DECLINE_MESSAGE, PaymentAttemptConflictError, PaymentOutcomeUnknownError,
+  DECLINE_MESSAGE, declineMessage, PaymentAttemptConflictError, PaymentOutcomeUnknownError,
   type ChargeInput, type ChargeResult, type PaymentSummary, type PaymentsPort, type RefundSummary,
 } from './payments.port.js'
 import { squareSignature, verifySquareSignature } from './webhook-signature.js'
@@ -27,6 +27,11 @@ export interface FakePaymentsPort extends PaymentsPort {
   /** Runs once, inside the next charge, before it answers: races the sweep or an admin against a charge. */
   duringCharge: (() => Promise<void>) | null
   addRefund(paymentId: string, refund: RefundSummary): void
+  /**
+   * A non-final payment settles. Like Square, a later charge under the same
+   * key and token then replays the payment's current state.
+   */
+  resolvePayment(paymentId: string, status: 'COMPLETED' | 'FAILED' | 'CANCELED'): void
   /** The Square payment taken for `orderId` (by reference id). Throws if none. */
   paymentFor(orderId: string): PaymentSummary
   /** A valid x-square-hmacsha256-signature for `payload` (over `notificationUrl`). */
@@ -95,6 +100,18 @@ export function createFakePaymentsPort(): FakePaymentsPort {
 
     verifyWebhook(rawBody, signature) {
       verifySquareSignature(rawBody, signature, FAKE_SIGNATURE_KEY, FAKE_NOTIFICATION_URL)
+    },
+
+    resolvePayment(paymentId, status) {
+      const p = fake.payments.get(paymentId)
+      if (!p) throw new Error(`no such payment ${paymentId} (fake)`)
+      fake.payments.set(paymentId, { ...p, status })
+      for (const entry of byKey.values()) {
+        if (!('paymentId' in entry.result) || entry.result.paymentId !== paymentId) continue
+        entry.result = status === 'COMPLETED'
+          ? { outcome: 'completed', paymentId, amountCents: p.amountCents }
+          : { outcome: 'declined', code: status, message: declineMessage(status), paymentId }
+      }
     },
 
     addRefund(paymentId, refund) {

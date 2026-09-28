@@ -39,12 +39,15 @@ export interface ChargeInput {
  *   and error codes, is for logs, and is never shown to the buyer.
  *
  * `declined` and `failed` both mean "no payment in flight"; only `declined`
- * counts as a card attempt (plan decision 3).
+ * counts as a card attempt (plan decision 3). A `declined` carries
+ * `paymentId` when Square did create a payment and it ended FAILED or
+ * CANCELED -- e.g. a replay, under the same key, of a charge that first
+ * answered `processing` -- so core can clear that id (ruling T4-R4).
  */
 export type ChargeResult =
   | { outcome: 'completed'; paymentId: string; amountCents: number }
   | { outcome: 'processing'; paymentId: string; status: string }
-  | { outcome: 'declined'; code: string; message: string }
+  | { outcome: 'declined'; code: string; message: string; paymentId?: string }
   | { outcome: 'failed'; statusCode: number; code: string; reason: string }
 
 export interface PaymentSummary {

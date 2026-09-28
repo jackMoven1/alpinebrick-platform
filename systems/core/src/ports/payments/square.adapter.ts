@@ -115,7 +115,7 @@ export function createSquarePaymentsPort(
         return { outcome: 'completed', paymentId: payment.id, amountCents: cents(payment.amountMoney?.amount) }
       }
       if (payment.status === 'FAILED' || payment.status === 'CANCELED') {
-        return { outcome: 'declined', code: payment.status, message: declineMessage(payment.status) }
+        return { outcome: 'declined', code: payment.status, message: declineMessage(payment.status), paymentId: payment.id }
       }
       // APPROVED or PENDING: not expected for cards (spec §2 step 5.6); the webhook finishes it.
       return { outcome: 'processing', paymentId: payment.id, status: payment.status ?? 'UNKNOWN' }

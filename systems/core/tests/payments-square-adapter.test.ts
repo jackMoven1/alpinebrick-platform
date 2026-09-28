@@ -66,9 +66,9 @@ describe('Square payments adapter', () => {
     expect(await createSquarePaymentsPort(CONFIG, client).charge(INPUT)).toEqual({ outcome: 'processing', paymentId: 'sqpay_2', status: 'APPROVED' })
   })
 
-  it.each(['FAILED', 'CANCELED'])('reports a 200 whose payment is %s as declined, with our copy', async (status) => {
+  it.each(['FAILED', 'CANCELED'])('reports a 200 whose payment is %s as declined, with our copy and the payment id (T4-R4)', async (status) => {
     const { client } = stub({ create: async () => ({ payment: { id: 'sqpay_3', status, amountMoney: { amount: 11593n } } }) })
-    expect(await createSquarePaymentsPort(CONFIG, client).charge(INPUT)).toEqual({ outcome: 'declined', code: status, message: DECLINE_MESSAGE })
+    expect(await createSquarePaymentsPort(CONFIG, client).charge(INPUT)).toEqual({ outcome: 'declined', code: status, message: DECLINE_MESSAGE, paymentId: 'sqpay_3' })
   })
 
   it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN])('refuses amountCents %s as a programming error, before calling Square', async (amountCents) => {
