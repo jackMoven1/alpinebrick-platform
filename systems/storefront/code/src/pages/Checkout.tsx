@@ -22,7 +22,7 @@ type Step =
   | { kind: 'address' }
   | { kind: 'pay'; quote: Quote }
   | { kind: 'paid'; status: CheckoutStatus }
-  | { kind: 'expired'; body: string }
+  | { kind: 'ended'; title: string; body: string }
 
 /** Friendly copy for a field core refused with 400 invalid_request (Q-P11). */
 const FIELD_COPY: Record<AddressField, string> = {
@@ -33,6 +33,24 @@ const FIELD_COPY: Record<AddressField, string> = {
   'address.city': 'Enter your city',
   'address.state': 'Choose a state',
   'address.postalCode': 'Enter a 5-digit ZIP code',
+}
+
+/** For a refusal naming no address field (or developer wording): never show core's text. */
+const GENERIC_PROBLEM = 'Something went wrong — start again from your cart.'
+
+/**
+ * Pay outcomes that settle the attempt. Anything else (rate_limited,
+ * checkout_unavailable, an unexpected error) leaves an unknown outcome
+ * unknown, so the Try again lock must stay.
+ */
+const SETTLES_ATTEMPT: ReadonlySet<string> = new Set([
+  'payment_declined', 'quote_changed', 'order_expired', 'not_found', 'too_many_attempts', 'payment_pending',
+])
+
+function fieldValue(q: QuoteRequest, f: AddressField): string {
+  if (f === 'email') return q.email
+  if (f === 'name') return q.name
+  return q.address[f.slice('address.'.length) as keyof QuoteRequest['address']] ?? ''
 }
 
 function isAddressField(f: string | null): f is AddressField {
@@ -102,7 +120,7 @@ export default function Checkout() {
 
   if (!orderId) return <Problem title="Your checkout has ended" body="Start again from your cart." />
   if (!config) return <Problem title="We couldn't load the payment form" body={UNAVAILABLE_MESSAGE} />
-  if (step.kind === 'expired') return <Problem title="This checkout expired" body={step.body} />
+  if (step.kind === 'ended') return <Problem title={step.title} body={step.body} />
   if (step.kind === 'paid') return <OrderConfirmation status={step.status} />
   const id = orderId
   const complete = () => navigate(`/order/complete?order=${encodeURIComponent(id)}`)
@@ -113,8 +131,11 @@ export default function Checkout() {
   /** Everything but the codes each caller handles itself. */
   function show(err: unknown) {
     if (!(err instanceof CheckoutError)) { setError(UNAVAILABLE_MESSAGE); return }
-    if (err.code === 'order_expired' || err.code === 'not_found') { setStep({ kind: 'expired', body: 'Start again from your cart.' }); return }
-    if (err.code === 'too_many_attempts') { setStep({ kind: 'expired', body: err.message }); return }
+    if (err.code === 'order_expired' || err.code === 'not_found') {
+      setStep({ kind: 'ended', title: 'This checkout expired', body: 'Start again from your cart.' })
+      return
+    }
+    if (err.code === 'too_many_attempts') { setStep({ kind: 'ended', title: 'Too many payment attempts', body: err.message }); return }
     if (err.code === 'payment_pending') { complete(); return }
     const fields = fieldError(err)
     if (fields) {
@@ -124,7 +145,19 @@ export default function Checkout() {
       setFieldErrors(fields)
       return
     }
-    setError(err.message)
+    setError(err.code === 'invalid_request' ? GENERIC_PROBLEM : err.message)
+  }
+
+  /** Drops the error of each field the shopper has just changed. */
+  function changeForm(next: QuoteRequest) {
+    setFieldErrors((prev) => {
+      const kept: FieldErrors = {}
+      for (const [f, msg] of Object.entries(prev) as [AddressField, string][]) {
+        if (fieldValue(next, f) === fieldValue(form, f)) kept[f] = msg
+      }
+      return kept
+    })
+    setForm(next)
   }
 
   async function quote(): Promise<Quote | null> {
@@ -154,9 +187,11 @@ export default function Checkout() {
     setBusy(true)
     setError(null)
     setNotice(null)
-    setRetryToken(null)
+    // retryToken is NOT cleared here: an earlier unknown outcome stays
+    // unknown until an outcome below settles the attempt.
     try {
       const result = await payCheckout(id, { sourceToken: token, quoteVersion: step.quote.quoteVersion })
+      setRetryToken(null)
       if (result.status === 'paid') {
         clear()
         clearPreviousOrderId()
@@ -165,6 +200,7 @@ export default function Checkout() {
         complete()
       }
     } catch (err) {
+      if (err instanceof CheckoutError && SETTLES_ATTEMPT.has(err.code)) setRetryToken(null)
       if (err instanceof CheckoutError && err.code === 'quote_changed') {
         // Core refused before charging; replace amount and version together.
         const q = await quote()
@@ -198,7 +234,7 @@ export default function Checkout() {
       <PageHeader eyebrow="Checkout" title={step.kind === 'address' ? 'Shipping' : 'Payment'} intro={CONTIGUOUS_NOTICE} />
       {step.kind === 'address' ? (
         <div className="space-y-4">
-          <AddressForm value={form} onChange={setForm} onSubmit={() => { void submitAddress() }} busy={busy} errors={fieldErrors} />
+          <AddressForm value={form} onChange={changeForm} onSubmit={() => { void submitAddress() }} busy={busy} errors={fieldErrors} />
           {alert}
         </div>
       ) : (

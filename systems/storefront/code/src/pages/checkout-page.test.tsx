@@ -106,6 +106,8 @@ describe('/checkout', () => {
     vi.mocked(squareConfig).mockReturnValueOnce(null)
     renderCheckout()
     expect(screen.getByText("We couldn't load the payment form")).toBeInTheDocument()
+    expect(quoteCheckout).not.toHaveBeenCalled()
+    expect(payCheckout).not.toHaveBeenCalled()
   })
 
   it('collects the address first, then shows the quoted total with tax on goods', async () => {
@@ -145,11 +147,26 @@ describe('/checkout', () => {
     expect(screen.getByLabelText(label)).toHaveAccessibleDescription(copy)
   })
 
-  it("falls back to core's message for a field it has no copy for", async () => {
-    vi.mocked(quoteCheckout).mockRejectedValue(new CheckoutError('invalid_request', 'body: must be an object', [], 'body'))
+  it.each([['body'], ['address'], ['orderId'], [null]])(
+    'shows a generic message, never core wording, for a refusal naming no address field (%s)', async (field) => {
+      vi.mocked(quoteCheckout).mockRejectedValue(new CheckoutError('invalid_request', 'body: must be an object', [], field))
+      renderCheckout()
+      await fillAddress()
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveTextContent('Something went wrong — start again from your cart.')
+      expect(alert).not.toHaveTextContent('must be an object')
+    })
+
+  it("clears a field's error once that field changes, and only that field's", async () => {
+    vi.mocked(quoteCheckout).mockRejectedValue(new CheckoutError('invalid_request', 'x', [], 'address.postalCode'))
     renderCheckout()
     await fillAddress()
-    expect(await screen.findByRole('alert')).toHaveTextContent('body: must be an object')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter a 5-digit ZIP code')
+    await user.type(screen.getByLabelText('City'), 'x')
+    expect(screen.getByRole('alert')).toHaveTextContent('Enter a 5-digit ZIP code')
+    await user.type(screen.getByLabelText('ZIP code'), '1')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('ZIP code')).not.toHaveAccessibleDescription()
   })
 
   it('confirms a paid order in place, then clears the cart and the previous order', async () => {
@@ -234,6 +251,15 @@ describe('/checkout', () => {
     expect(screen.getByRole('link', { name: 'Back to cart' })).toHaveAttribute('href', '/cart')
   })
 
+  it("too_many_attempts has its own title and keeps core's body", async () => {
+    vi.mocked(payCheckout).mockRejectedValue(new CheckoutError('too_many_attempts', 'Too many payment attempts on this order. Start again from your cart.'))
+    await user.click(await toPayStep())
+    expect(await screen.findByText('Too many payment attempts')).toBeInTheDocument()
+    expect(screen.getByText('Too many payment attempts on this order. Start again from your cart.')).toBeInTheDocument()
+    expect(screen.queryByText('This checkout expired')).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Back to cart' })).toHaveAttribute('href', '/cart')
+  })
+
   it.each([
     ['processing', () => vi.mocked(payCheckout).mockResolvedValue({ status: 'processing' })],
     ['payment_pending', () => vi.mocked(payCheckout).mockRejectedValue(new CheckoutError('payment_pending', 'x'))],
@@ -253,8 +279,35 @@ describe('/checkout', () => {
     expect(screen.getByRole('button', { name: 'Edit address' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Fake pay 11593' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: 'Try again' }))
-    expect(vi.mocked(payCheckout).mock.calls.map((c) => c[1].sourceToken)).toEqual(['tok_1', 'tok_1'])
+    expect(vi.mocked(payCheckout).mock.calls.map((c) => c[1])).toEqual([
+      { sourceToken: 'tok_1', quoteVersion: 1 }, { sourceToken: 'tok_1', quoteVersion: 1 },
+    ])
     expect(await screen.findByText('Order ABE-000042 confirmed')).toBeInTheDocument()
+  })
+
+  it('keeps the unknown-outcome lock when Try again is rate limited', async () => {
+    vi.mocked(payCheckout)
+      .mockRejectedValueOnce(new CheckoutError('checkout_unavailable', UNAVAILABLE_MESSAGE))
+      .mockRejectedValueOnce(new CheckoutError('rate_limited', 'Too many checkout attempts. Please wait a minute and try again.'))
+    await user.click(await toPayStep())
+    await user.click(await screen.findByRole('button', { name: 'Try again' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Too many checkout attempts. Please wait a minute and try again.')
+    expect(screen.getByRole('button', { name: 'Edit address' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Fake pay 11593' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled()
+    expect(vi.mocked(payCheckout).mock.calls.map((c) => c[1].sourceToken)).toEqual(['tok_1', 'tok_1'])
+  })
+
+  it('a decline on Try again settles the attempt and unlocks a new card', async () => {
+    vi.mocked(payCheckout)
+      .mockRejectedValueOnce(new CheckoutError('checkout_unavailable', UNAVAILABLE_MESSAGE))
+      .mockRejectedValueOnce(new CheckoutError('payment_declined', 'Your card was declined — try another card.'))
+    await user.click(await toPayStep())
+    await user.click(await screen.findByRole('button', { name: 'Try again' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your card was declined — try another card.')
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit address' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Fake pay 11593' })).toBeEnabled()
   })
 })
 
