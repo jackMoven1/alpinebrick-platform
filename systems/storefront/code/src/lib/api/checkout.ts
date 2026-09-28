@@ -53,7 +53,11 @@ export interface CheckoutConfig {
   freeShippingThresholdCents: number | null
 }
 
-export interface ShipAddress { line1: string; line2: string; city: string; state: string; postalCode: string }
+export interface ShipAddress {
+  line1: string; line2: string; city: string; state: string; postalCode: string
+  /** ISO-2; core accepts only 'US'. The page adds it to every quote request. */
+  country?: 'US'
+}
 export interface QuoteRequest { email: string; name: string; address: ShipAddress }
 export interface Quote { quoteVersion: number; subtotalCents: number; shippingCents: number; taxCents: number; totalCents: number }
 export type PaidResult = Omit<CheckoutStatus, 'status'> & { status: 'paid' }
