@@ -6,6 +6,7 @@ import ProductList from './catalog/ProductList.jsx'
 import ProductForm from './catalog/ProductForm.jsx'
 import ProductDetail from './catalog/ProductDetail.jsx'
 import OrderQueue from './orders/OrderQueue.jsx'
+import OrderDetail from './orders/OrderDetail.jsx'
 import SignIn from './pages/SignIn.jsx'
 
 export default function App() {
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="products/new" element={<ProductForm />} />
           <Route path="products/:id" element={<ProductDetail />} />
           <Route path="orders" element={<OrderQueue />} />
+          <Route path="orders/:id" element={<OrderDetail />} />
         </Route>
       </Routes>
     </ToastProvider>
