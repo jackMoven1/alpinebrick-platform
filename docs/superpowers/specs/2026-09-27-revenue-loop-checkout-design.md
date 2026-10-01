@@ -1,14 +1,6 @@
 # Revenue loop — storefront checkout with Stripe (design)
 
 **Date:** 2026-09-27 · **Status:** approved in conversation by Jack, awaiting spec review
-
-> **Superseded in part (2026-09-28).** The payment and tax parts of this spec
-> — D1 Stripe Tax, D5 Stripe receipts, D7 Stripe Embedded Checkout, §4–§5
-> Stripe session and webhooks, §8 Stripe config — are replaced by
-> `2026-09-28-square-payments-design.md`. Square takes payments, there is no
-> Stripe Connect, and tax is Michigan-only via the flat-rate `TaxPort`.
-> Everything else here stands.
-
 **Sub-project 1 of 4** for "get the core site selling" (Jack, 2026-09-27). The
 others — production environment, launch readiness (policy pages, scaffold
 deletion, About page), and the Shopify cutover — each get their own spec.

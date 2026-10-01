@@ -65,17 +65,10 @@ services:
       # The imgix domain, baked in at build time.
       - key: VITE_ASSET_BASE_URL
         sync: false
-      # Square Web Payments SDK (spec docs/superpowers/specs/2026-09-28-square-payments-design.md §4).
-      # Application ID (sandbox-sq0idb-... on staging) and the "Online"
-      # location ID are public identifiers, but they are per environment, so
-      # sync: false. VITE_SQUARE_ENVIRONMENT is `sandbox` or `production` and
-      # picks the SDK script host. Without all three, the cart refuses to
-      # start checkout. Vite bakes them in at build time.
-      - key: VITE_SQUARE_APPLICATION_ID
-        sync: false
-      - key: VITE_SQUARE_LOCATION_ID
-        sync: false
-      - key: VITE_SQUARE_ENVIRONMENT
+      # Stripe publishable key (pk_test_... on staging, pk_live_... on
+      # production). Publishable keys are designed to be public, but they are
+      # still per environment, so sync: false -- never hardcode one here.
+      - key: VITE_STRIPE_PUBLISHABLE_KEY
         sync: false
 
   # ---------------------------------------------------------------- admin-ui
@@ -220,29 +213,19 @@ envVarGroups:
       - key: ASSET_S3_REGION
         sync: false
       # The storefront's public origin for this environment (e.g.
-      # https://staging.alpinebrickexchange.com), kept for links. Checkout
-      # no longer needs it.
+      # https://staging.alpinebrickexchange.com). The base of Stripe
+      # Checkout's return_url. Core refuses to start when STRIPE_SECRET_KEY and
+      # STRIPE_WEBHOOK_SECRET are set without it -- and when only one of
+      # those two is set. See docs/status/2026-09-27-stripe-test-mode-runbook.md
       - key: STOREFRONT_PUBLIC_URL
-        sync: false
-      # Square (spec 2026-09-28 §4). All five or none: any partial set makes
-      # core refuse to start, naming the missing keys. None: checkout and the
-      # webhook answer 503. See docs/status/2026-09-28-square-sandbox-runbook.md
-      #   SQUARE_ENVIRONMENT               sandbox | production
-      #   SQUARE_LOCATION_ID               the "Online" location
-      #   SQUARE_WEBHOOK_NOTIFICATION_URL  EXACTLY the subscription's URL; the signature covers it
-      - key: SQUARE_ENVIRONMENT
-        sync: false
-      - key: SQUARE_LOCATION_ID
-        sync: false
-      - key: SQUARE_WEBHOOK_NOTIFICATION_URL
         sync: false
       # Secrets are NEVER declared here. Set these in the Render dashboard,
       # per environment, entered by Jack:
       #   GOOGLE_CLIENT_SECRET,
-      #   SQUARE_ACCESS_TOKEN, SQUARE_WEBHOOK_SIGNATURE_KEY,
+      #   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
       #   WALMART_CLIENT_ID, WALMART_CLIENT_SECRET, WALMART_WEBHOOK_SECRET,
       #   ASSET_S3_ACCESS_KEY_ID, ASSET_S3_SECRET_ACCESS_KEY
-      # Staging uses the Square sandbox and the Walmart sandbox base URL.
+      # Staging uses Stripe test mode and the Walmart sandbox base URL.
 # ---------------------------------------------------------------------------
 # Bootstrap — dashboard steps this file cannot express
 #

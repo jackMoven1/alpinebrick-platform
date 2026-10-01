@@ -6,7 +6,7 @@ import { seed } from '../prisma/seed.js'
 import { markOrderPaid } from '../src/orders/orders.service.js'
 import { createRateLimiter } from '../src/lib/rate-limit.js'
 import { unconfiguredPaymentsPort } from '../src/ports/payments/index.js'
-import { makeApp, postCheckout, postQuote, variantIdBySku, inventoryOf, setOnHand } from './helpers/checkout.js'
+import { makeApp, postCheckout, variantIdBySku, inventoryOf, setOnHand, STOREFRONT_URL } from './helpers/checkout.js'
 
 const ORIGIN = 'https://staging.alpinebrickexchange.com'
 beforeEach(async () => {
@@ -16,7 +16,7 @@ beforeEach(async () => {
 afterAll(async () => { delete process.env.STOREFRONT_ORIGIN; await prisma.$disconnect() })
 
 describe('POST /api/v1/checkout', () => {
-  it('reserves stock and returns only the order id (no provider session)', async () => {
+  it('reserves stock, creates a pending order and returns the client secret', async () => {
     const { app, payments } = makeApp()
     const v = await variantIdBySku('BBS-STD') // $49.99, onHand 25
     const res = await postCheckout(app, {
@@ -24,15 +24,30 @@ describe('POST /api/v1/checkout', () => {
       referral: { code: 'Brick-Club', firstSeenAt: new Date(Date.now() - 86_400_000).toISOString() },
     })
     expect(res.status).toBe(201)
-    expect(res.body).toEqual({ orderId: expect.any(String) })
+    expect(res.body).toEqual({ orderId: expect.any(String), clientSecret: expect.stringMatching(/_secret_/) })
+
     const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } })
     expect(order).toMatchObject({
       status: 'pending', email: 'pending@checkout.invalid', shipToState: '', subtotalCents: 9998,
-      taxCents: 0, totalCents: 9998, taxJurisdiction: 'quote_pending', quoteVersion: 0,
-      marketingOptIn: true, referralCode: 'brick-club', squarePaymentId: null, paymentAttemptAt: null,
+      taxJurisdiction: 'stripe_tax_pending', marketingOptIn: true, referralCode: 'brick-club',
     })
+    expect(order.stripeCheckoutSessionId).toMatch(/^cs_test_fake_/)
     expect((await inventoryOf('BBS-STD')).reserved).toBe(2)
-    expect(payments.charges).toEqual([])
+
+    const session = payments.sessions.get(order.stripeCheckoutSessionId!)!
+    expect(session.input.lines).toEqual([{ name: 'Brick Builder Set', unitAmountCents: 4999, quantity: 2 }])
+    expect(session.input.shippingOptions).toEqual([{ displayName: 'Standard shipping', amountCents: 995 }])
+    expect(session.input.returnUrl).toBe(`${STOREFRONT_URL}/order/complete?session_id={CHECKOUT_SESSION_ID}`)
+    expect(session.input.expiresAt.getTime() - Date.now()).toBeGreaterThan(30 * 60_000)
+    expect(session.input.orderId).toBe(order.id)
+  })
+
+  it('offers free shipping at the threshold', async () => {
+    const { app, payments } = makeApp()
+    const res = await postCheckout(app, { lines: [{ variantId: await variantIdBySku('ABE-1001'), quantity: 1 }] }) // $189
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } })
+    expect(payments.sessions.get(order.stripeCheckoutSessionId!)!.input.shippingOptions)
+      .toEqual([{ displayName: 'Free shipping', amountCents: 0 }])
   })
 
   it.each([
@@ -75,56 +90,43 @@ describe('POST /api/v1/checkout', () => {
     expect(await prisma.order.count()).toBe(0)
   })
 
-  it('503s without touching stock when payments are not configured', async () => {
+  it('cancels the order and 503s when Stripe fails, releasing the hold', async () => {
+    const { app, payments } = makeApp()
+    payments.failNextCreate = true
+    const res = await postCheckout(app, { lines: [{ variantId: await variantIdBySku('BBS-STD'), quantity: 2 }] })
+    expect(res.status).toBe(503)
+    expect(res.body.code).toBe('checkout_unavailable')
+    expect((await prisma.order.findFirstOrThrow()).status).toBe('cancelled')
+    expect((await inventoryOf('BBS-STD')).reserved).toBe(0)
+  })
+
+  it('503s without touching stock when Stripe is not configured', async () => {
     const { app } = makeApp({ payments: unconfiguredPaymentsPort })
     const res = await postCheckout(app, { lines: [{ variantId: await variantIdBySku('BBS-STD'), quantity: 1 }] })
     expect(res.status).toBe(503)
-    expect(res.body.code).toBe('checkout_unavailable')
     expect(await prisma.order.count()).toBe(0)
   })
 
-  it('previousOrderId cancels our own pending order and releases its hold first', async () => {
-    const { app } = makeApp()
+  it('previousOrderId expires the old session and releases its hold first', async () => {
+    const { app, payments } = makeApp()
     const v = await variantIdBySku('BBS-STD')
     const first = await postCheckout(app, { lines: [{ variantId: v, quantity: 3 }] })
     const second = await postCheckout(app, { lines: [{ variantId: v, quantity: 1 }], previousOrderId: first.body.orderId })
     expect(second.status).toBe(201)
-    expect((await prisma.order.findUniqueOrThrow({ where: { id: first.body.orderId } })).status).toBe('cancelled')
+    const old = await prisma.order.findUniqueOrThrow({ where: { id: first.body.orderId } })
+    expect(old.status).toBe('cancelled')
+    expect(payments.expired).toEqual([old.stripeCheckoutSessionId])
     expect((await inventoryOf('BBS-STD')).reserved).toBe(1)
   })
 
   it('ignores a previousOrderId that is already paid', async () => {
-    const { app } = makeApp()
+    const { app, payments } = makeApp()
     const v = await variantIdBySku('BBS-STD')
     const first = await postCheckout(app, { lines: [{ variantId: v, quantity: 1 }] })
     await markOrderPaid(first.body.orderId)
     await postCheckout(app, { lines: [{ variantId: v, quantity: 1 }], previousOrderId: first.body.orderId })
     expect((await prisma.order.findUniqueOrThrow({ where: { id: first.body.orderId } })).status).toBe('paid')
-  })
-
-  // Plan decision 7: another tab may be charging this order right now.
-  it('leaves a previousOrderId alone while a payment attempt is in flight', async () => {
-    const { app } = makeApp()
-    const v = await variantIdBySku('BBS-STD')
-    const first = await postCheckout(app, { lines: [{ variantId: v, quantity: 1 }] })
-    await prisma.order.update({ where: { id: first.body.orderId }, data: { paymentAttemptAt: new Date() } })
-    await postCheckout(app, { lines: [{ variantId: v, quantity: 1 }], previousOrderId: first.body.orderId })
-    expect((await prisma.order.findUniqueOrThrow({ where: { id: first.body.orderId } })).status).toBe('pending')
-    expect((await inventoryOf('BBS-STD')).reserved).toBe(2)
-  })
-
-  // Final review C1: a recorded Square payment blocks the release however stale the attempt stamp is.
-  it('leaves a previousOrderId alone when it carries a Square payment id, even with a stale attempt stamp', async () => {
-    const { app } = makeApp()
-    const v = await variantIdBySku('BBS-STD')
-    const first = await postCheckout(app, { lines: [{ variantId: v, quantity: 1 }] })
-    await prisma.order.update({
-      where: { id: first.body.orderId },
-      data: { squarePaymentId: 'sq_processing', paymentAttemptAt: new Date(Date.now() - 60 * 60_000) },
-    })
-    await postCheckout(app, { lines: [{ variantId: v, quantity: 1 }], previousOrderId: first.body.orderId })
-    expect((await prisma.order.findUniqueOrThrow({ where: { id: first.body.orderId } })).status).toBe('pending')
-    expect((await inventoryOf('BBS-STD')).reserved).toBe(2)
+    expect(payments.expired).toEqual([])
   })
 
   it('lets exactly one of two concurrent checkouts take the last unit', async () => {
@@ -135,13 +137,16 @@ describe('POST /api/v1/checkout', () => {
     expect((await inventoryOf('CMP-LTD')).reserved).toBe(1)
   })
 
-  it('rate-limits per IP, counting quotes against the same budget', async () => {
+  it('rate-limits per IP', async () => {
     const { app } = makeApp({ checkoutRateLimit: createRateLimiter({ limit: 2, windowMs: 60_000 }) })
     await postCheckout(app, { lines: [] })
-    await postQuote(app, 'some-order', {})
+    await postCheckout(app, { lines: [] })
     expect((await postCheckout(app, { lines: [] })).status).toBe(429)
   })
 
+  // Ruling F-R4: body-parser's SyntaxError used to fall through to the
+  // generic 500 INTERNAL_ERROR. It is the client's fault, so it is a 400 in
+  // the public envelope -- readable cross-origin, and nothing reserved.
   it('400s malformed JSON as invalid_request, with CORS headers, and reserves nothing', async () => {
     const { app } = makeApp()
     const res = await request(app).post('/api/v1/checkout')
@@ -158,9 +163,9 @@ describe('POST /api/v1/checkout', () => {
     expect(res.body.code).not.toBe('invalid_request')
   })
 
-  it('answers the storefront preflight for the quote route without credentials', async () => {
+  it('answers the storefront preflight without credentials', async () => {
     const { app } = makeApp()
-    const res = await request(app).options('/api/v1/checkout/abc/quote')
+    const res = await request(app).options('/api/v1/checkout')
       .set('Origin', ORIGIN).set('Access-Control-Request-Method', 'POST').set('Access-Control-Request-Headers', 'content-type')
     expect(res.status).toBe(204)
     expect(res.headers['access-control-allow-origin']).toBe(ORIGIN)
@@ -169,61 +174,39 @@ describe('POST /api/v1/checkout', () => {
 })
 
 describe('GET /api/v1/checkout/status', () => {
-  it('reads by order id and returns non-sensitive fields only, even after the address is quoted', async () => {
+  it('returns non-sensitive fields only', async () => {
     const { app } = makeApp()
     const created = await postCheckout(app, { lines: [{ variantId: await variantIdBySku('BBS-STD'), quantity: 1 }] })
-    await postQuote(app, created.body.orderId)
-    const res = await request(app).get(`/api/v1/checkout/status?orderId=${created.body.orderId}`)
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: created.body.orderId } })
+    const res = await request(app).get(`/api/v1/checkout/status?session_id=${order.stripeCheckoutSessionId}`)
     expect(res.status).toBe(200)
     expect(res.headers['cache-control']).toBe('no-store')
     expect(res.body).toEqual({
       status: 'pending',
       orderNumber: expect.stringMatching(/^ABE-\d{6}$/),
       lines: [{ name: 'Brick Builder Set', sku: 'BBS-STD', quantity: 1, unitPriceCents: 4999, lineSubtotalCents: 4999 }],
-      totals: { subtotalCents: 4999, shippingCents: 995, taxCents: 300, totalCents: 6294 },
+      totals: { subtotalCents: 4999, shippingCents: 0, taxCents: 0, totalCents: 4999 },
     })
-    const text = JSON.stringify(res.body)
-    expect(text).not.toContain('@')
-    expect(text).not.toContain('Main St')
+    expect(JSON.stringify(res.body)).not.toContain('@')
   })
 
-  it('404s an unknown order and 400s a malformed or missing id', async () => {
+  it('404s an unknown session and 400s a malformed one', async () => {
     const { app } = makeApp()
-    expect((await request(app).get('/api/v1/checkout/status?orderId=nope')).status).toBe(404)
-    expect((await request(app).get('/api/v1/checkout/status?orderId=../../x')).status).toBe(400)
+    expect((await request(app).get('/api/v1/checkout/status?session_id=cs_test_nope')).status).toBe(404)
+    expect((await request(app).get('/api/v1/checkout/status?session_id=../../x')).status).toBe(400)
     expect((await request(app).get('/api/v1/checkout/status')).status).toBe(400)
-  })
-
-  // Final review minor 2: the status poll has its own, more generous, per-IP limiter.
-  it('rate-limits the status poll on its own limiter, separate from the checkout budget', async () => {
-    const { app } = makeApp({
-      checkoutRateLimit: createRateLimiter({ limit: 1, windowMs: 60_000 }),
-      statusRateLimit: createRateLimiter({ limit: 2, windowMs: 60_000 }),
-    })
-    const created = await postCheckout(app, { lines: [{ variantId: await variantIdBySku('BBS-STD'), quantity: 1 }] })
-    const url = `/api/v1/checkout/status?orderId=${created.body.orderId}`
-    expect((await request(app).get(url)).status).toBe(200)
-    expect((await request(app).get(url)).status).toBe(200)
-    const blocked = await request(app).get(url)
-    expect(blocked.status).toBe(429)
-    expect(blocked.body.code).toBe('rate_limited')
-  })
-
-  it('limits the status poll by default at 120 per minute per IP', async () => {
-    const { app } = makeApp({ statusRateLimit: undefined })
-    for (let i = 0; i < 120; i++) expect((await request(app).get('/api/v1/checkout/status?orderId=nope')).status).toBe(404)
-    expect((await request(app).get('/api/v1/checkout/status?orderId=nope')).status).toBe(429)
   })
 })
 
 describe('GET /api/v1/checkout/config', () => {
   it('exposes the shipping settings the cart needs', async () => {
     const { app } = makeApp()
-    expect((await request(app).get('/api/v1/checkout/config')).body).toEqual({ flatRateCents: 995, freeShippingThresholdCents: 15000 })
+    const res = await request(app).get('/api/v1/checkout/config')
+    expect(res.body).toEqual({ flatRateCents: 995, freeShippingThresholdCents: 15000 })
   })
 })
 
-describe('retired public order routes', () => {
+describe('retired public order routes (spec §2)', () => {
   it('404s POST and GET /api/v1/orders', async () => {
     const { app } = makeApp()
     const v = await variantIdBySku('BBS-STD')
