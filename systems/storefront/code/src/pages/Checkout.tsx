@@ -42,10 +42,9 @@ const FIELD_COPY: Record<AddressField, string> = {
 const GENERIC_PROBLEM = 'Something went wrong — start again from your cart.'
 
 /**
- * Pay outcomes that settle the attempt. Anything else (rate_limited, an
- * unexpected error) leaves an unknown outcome unknown, so the Try again lock
- * must stay. checkout_unavailable is handled separately in `pay`: it settles
- * only when core marks it a definite failure (err.outcome === 'failed').
+ * Pay outcomes that settle the attempt. Anything else (rate_limited,
+ * checkout_unavailable, an unexpected error) leaves an unknown outcome
+ * unknown, so the Try again lock must stay.
  */
 const SETTLES_ATTEMPT: ReadonlySet<string> = new Set([
   'payment_declined', 'quote_changed', 'order_expired', 'not_found', 'too_many_attempts', 'payment_pending',
@@ -273,11 +272,7 @@ export default function Checkout() {
           setNotice(`Your total changed to ${formatCents(q.totalCents)} — check it and pay again.`)
         }
       } else if (err instanceof CheckoutError && err.code === 'checkout_unavailable') {
-        // A DEFINITE failure (outcome 'failed'): no payment was created, so
-        // this token can never succeed -- settle the attempt instead of
-        // offering a Try again that would just fail again. An unknown
-        // outcome (outcome null) keeps the retry lock as before.
-        setRetryToken(err.outcome === 'failed' ? null : token)
+        setRetryToken(token)
         setError(UNAVAILABLE_MESSAGE)
       } else {
         await show(err)

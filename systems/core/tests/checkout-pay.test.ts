@@ -81,9 +81,6 @@ describe('POST /api/v1/checkout/:orderId/pay', () => {
     const failed = await postPay(app, r.orderId, { sourceToken: 'tok_a', quoteVersion: r.quoteVersion })
     expect(failed.status).toBe(503)
     expect(failed.body.code).toBe('checkout_unavailable')
-    // Carried item (storefront review S-F1 minor 1): a definite failure is
-    // marked so the storefront never offers a Try again that can't succeed.
-    expect(failed.body.details).toEqual({ outcome: 'failed' })
     expect(await order(r.orderId)).toMatchObject({ status: 'pending', paymentAttemptCount: 1, paymentAttemptAt: null })
     // Not in flight any more, so the shopper may re-quote.
     expect((await postQuote(app, r.orderId)).status).toBe(200)
@@ -132,8 +129,6 @@ describe('POST /api/v1/checkout/:orderId/pay', () => {
     const first = await postPay(app, r.orderId, { sourceToken: 'tok_a', quoteVersion: r.quoteVersion })
     expect(first.status).toBe(503)
     expect(first.body.code).toBe('checkout_unavailable')
-    // Unknown outcomes carry no marker -- unlike the definite-failure case above.
-    expect(first.body.details).toBeUndefined()
     const pending = await order(r.orderId)
     expect(pending).toMatchObject({ status: 'pending', paymentAttemptCount: 0 })
     expect(pending.paymentAttemptAt).toBeInstanceOf(Date) // still in flight

@@ -28,7 +28,7 @@ export class CheckoutError extends Error {
 
 /** One place for the public error copy (spec §5). */
 export const checkoutErrors = {
-  unavailable: (details?: Record<string, unknown>) => new CheckoutError('checkout_unavailable', 'Checkout is temporarily unavailable — please try again in a minute.', 503, details),
+  unavailable: () => new CheckoutError('checkout_unavailable', 'Checkout is temporarily unavailable — please try again in a minute.', 503),
   notFound: () => new CheckoutError('not_found', 'No checkout for that order.', 404),
   expired: () => new CheckoutError('order_expired', 'This checkout expired.', 409),
   quoteChanged: () => new CheckoutError('quote_changed', 'Your total has changed. Check it and pay again.', 409),

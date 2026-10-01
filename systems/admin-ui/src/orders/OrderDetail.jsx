@@ -39,7 +39,7 @@ export default function OrderDetail() {
   // whose reviewReason is 'disputed' -- and only with acknowledgeReview: true
   // on that second path (409 REVIEW_REQUIRED otherwise). Every other paid
   // order is refused, so no Cancel button is offered for it -- a refund goes
-  // through the payment dashboard instead.
+  // through the Stripe dashboard instead.
   const requiresAckToCancel = order.status === 'paid' && order.reviewReason === 'disputed'
   const canCancel = order.status === 'pending' || requiresAckToCancel
 
@@ -76,9 +76,9 @@ export default function OrderDetail() {
     }
   }
 
-  // Tax and total are unresolved until the shopper's address is quoted
-  // (taxJurisdiction 'quote_pending', or any '*_pending') -- showing $0.00
-  // would read as "this order owes no tax".
+  // Tax and total are unresolved while Stripe Tax hasn't run yet (spec:
+  // taxJurisdiction === 'stripe_tax_pending', or any future '*_pending'
+  // jurisdiction) -- showing $0.00 would read as "this order owes no tax".
   const taxPending = Boolean(order.taxJurisdiction) && order.taxJurisdiction.endsWith('_pending')
   // Every row is a pre-formatted display string, not a raw cent integer --
   // Tax/Total need to fall back to "pending"/"pending tax" instead of
@@ -119,13 +119,10 @@ export default function OrderDetail() {
             {money.map(([k, v]) => <div key={k} className="flex justify-between"><dt>{k}</dt><dd>{v}</dd></div>)}
             {order.refundedCents > 0 && <div className="flex justify-between text-accent"><dt>Refunded</dt><dd>{formatCents(order.refundedCents)}</dd></div>}
           </dl>
-          {order.payment?.url && (
-            <a href={order.payment.url} target="_blank" rel="noreferrer" className="mt-3 inline-block text-sm font-semibold">View payment</a>
+          {order.stripePaymentUrl && (
+            <a href={order.stripePaymentUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block text-sm font-semibold">View payment in Stripe</a>
           )}
-          {order.payment && !order.payment.url && (
-            <p className="mt-3 text-sm"><span className="text-gray-500">Payment ID</span>{' '}<span className="font-mono">{order.payment.id}</span></p>
-          )}
-          <p className="mt-2 text-xs text-gray-400">Refunds are issued in the payment dashboard.</p>
+          <p className="mt-2 text-xs text-gray-400">Refunds are issued in the Stripe dashboard.</p>
         </Card>
 
         <Card>
@@ -178,7 +175,7 @@ export default function OrderDetail() {
         onClose={() => setConfirmCancel(false)} onConfirm={cancel}>
         <p>{requiresAckToCancel
           ? 'This cancels the order and returns the items to stock. Any refund happens in the payment dashboard.'
-          : "This cancels the customer's checkout and returns the items to stock."}</p>
+          : "This closes the customer's Stripe checkout and returns the items to stock."}</p>
         {requiresAckToCancel && (
           <label className="mt-3 flex items-start gap-2 text-accent">
             <input type="checkbox" checked={cancelAck} onChange={(e) => setCancelAck(e.target.checked)} />
