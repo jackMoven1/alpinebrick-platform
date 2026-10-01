@@ -5,6 +5,26 @@
 Every step here is a dashboard action on an account Jack owns. Keys are pasted
 by Jack into Render; they never go into chat, the repo, or a ticket.
 
+## Rolling back from Square (2026-10-01)
+
+Square (PRs #43–#45) was rolled back to this Stripe flow. Do these before the
+rollback deploys anywhere Square was configured:
+
+1. **Settle Square money first.** Migration `20261001120000_revert_square_payments`
+   refuses to run while any order has a `square_payment_id` or a
+   `duplicate_payment` review flag. Refund or reconcile those in the Square
+   Dashboard first. On a **sandbox-only** database those ids are test data:
+   `UPDATE orders SET square_payment_id = NULL;` and clear any
+   `duplicate_payment` flags.
+2. If the pre-deploy migration already failed on the guard, run
+   `npx prisma migrate resolve --rolled-back 20261001120000_revert_square_payments`
+   against that database once it is clean, then redeploy.
+3. Render: remove `VITE_SQUARE_*` from `storefront` and `SQUARE_*` from
+   `core-env`. Delete the Square webhook subscription in the Square Developer
+   Console.
+4. Then follow sections 1–7 below to put the Stripe keys back. Storefront key
+   first, as before.
+
 ## 0. Open questions this depends on (spec §9)
 
 - **§9.2 Stripe account:** who owns it and under which email. Needs partner sign-off (external account).
