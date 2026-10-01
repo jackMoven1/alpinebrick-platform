@@ -50,8 +50,8 @@ export const router = createBrowserRouter([
       { path: 'legal/terms', Component: Terms },
       { path: 'legal/privacy', Component: Privacy },
 
-      // Square Web Payments on our own page (spec 2026-09-28 §2).
-      // /order/complete?order=<id> is for reloads and the processing state.
+      // Stripe Embedded Checkout (spec 2026-09-27 §6). Stripe's return_url
+      // lands on /order/complete?session_id=...
       { path: 'checkout', Component: Checkout },
       { path: 'order/complete', Component: OrderComplete },
 
