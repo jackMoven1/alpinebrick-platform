@@ -1,45 +1,28 @@
 import { PaymentsUnavailableError, WebhookSignatureError, type PaymentsPort } from './payments.port.js'
-import { createSquarePaymentsPort } from './square.adapter.js'
+import { createStripePaymentsPort } from './stripe.adapter.js'
 
-export const SQUARE_KEYS = [
-  'SQUARE_ENVIRONMENT', 'SQUARE_ACCESS_TOKEN', 'SQUARE_LOCATION_ID',
-  'SQUARE_WEBHOOK_SIGNATURE_KEY', 'SQUARE_WEBHOOK_NOTIFICATION_URL',
-] as const
+const STRIPE_KEYS = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'] as const
 
-/** No Square keys: checkout and the webhook answer 503; nothing else is affected. */
+/** No Stripe keys: checkout and the webhook answer 503, nothing else is affected. */
 export const unconfiguredPaymentsPort: PaymentsPort = {
   configured: false,
-  locationId: null,
-  async charge() { throw new PaymentsUnavailableError() },
-  async getPayment() { throw new PaymentsUnavailableError() },
-  async listPaymentRefunds() { throw new PaymentsUnavailableError() },
-  verifyWebhook() { throw new WebhookSignatureError('payments are not configured') },
+  livemode: false,
+  async createCheckoutSession() { throw new PaymentsUnavailableError() },
+  async expireCheckoutSession() { throw new PaymentsUnavailableError() },
+  async retrieveCheckoutSession() { throw new PaymentsUnavailableError() },
+  constructWebhookEvent() { throw new WebhookSignatureError('payments are not configured') },
 }
 
 /**
- * Picks the payments adapter at startup (spec §4). Partial config refuses to
- * start, naming each missing key: a deploy that can charge but cannot verify
- * webhooks would take money it can never reconcile.
+ * Picks the payments adapter at startup (spec §8). Half-configured refuses to
+ * start, naming each missing key: a deploy with the secret key but no webhook
+ * secret would take money and never mark an order paid.
  */
 export function createPaymentsPort(env: NodeJS.ProcessEnv = process.env): PaymentsPort {
-  if (Object.keys(env).some((k) => k.startsWith('STRIPE_'))) {
-    console.warn('payments: STRIPE_* keys are set but no longer used -- remove them from this environment')
-  }
-  const present = SQUARE_KEYS.filter((k) => env[k])
+  const present = STRIPE_KEYS.filter((k) => env[k])
   if (present.length === 0) return unconfiguredPaymentsPort
-  const missing = SQUARE_KEYS.filter((k) => !env[k])
-  if (missing.length > 0) throw new Error(`Square is half-configured; missing: ${missing.join(', ')}`)
-  const environment = env.SQUARE_ENVIRONMENT
-  if (environment !== 'sandbox' && environment !== 'production') {
-    throw new Error(`SQUARE_ENVIRONMENT must be sandbox or production, not "${environment}"`)
-  }
-  const notificationUrl = env.SQUARE_WEBHOOK_NOTIFICATION_URL!
-  if (!notificationUrl.startsWith('https://')) throw new Error('SQUARE_WEBHOOK_NOTIFICATION_URL must be an https URL')
-  return createSquarePaymentsPort({
-    environment,
-    accessToken: env.SQUARE_ACCESS_TOKEN!,
-    locationId: env.SQUARE_LOCATION_ID!,
-    webhookSignatureKey: env.SQUARE_WEBHOOK_SIGNATURE_KEY!,
-    webhookNotificationUrl: notificationUrl,
-  })
+  const missing: string[] = STRIPE_KEYS.filter((k) => !env[k])
+  if (!env.STOREFRONT_PUBLIC_URL) missing.push('STOREFRONT_PUBLIC_URL')
+  if (missing.length > 0) throw new Error(`Stripe is half-configured; missing: ${missing.join(', ')}`)
+  return createStripePaymentsPort({ secretKey: env.STRIPE_SECRET_KEY!, webhookSecret: env.STRIPE_WEBHOOK_SECRET! })
 }

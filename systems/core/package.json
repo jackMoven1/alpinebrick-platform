@@ -26,7 +26,7 @@
     "google-auth-library": "^11.1.0",
     "image-size": "^2.0.2",
     "prisma": "^5.18.0",
-    "square": "46.0.0"
+    "stripe": "22.6.2"
   },
   "devDependencies": {
     "@smithy/util-stream": "^4.8.2",

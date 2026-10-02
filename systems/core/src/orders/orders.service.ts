@@ -13,7 +13,7 @@ export class OrderError extends Error {
   }
 }
 
-/** A pending checkout order's email until the quote writes the real one (spec 2026-09-28 §2 step 3). */
+/** A pending checkout order's email until Stripe's webhook writes the real one (spec §3). */
 export const PENDING_CHECKOUT_EMAIL = 'pending@checkout.invalid'
 
 export type OrderWithLines = Prisma.OrderGetPayload<{ include: { lines: true } }>
@@ -75,8 +75,8 @@ export interface TransitionOptions {
    * Cancel only if the locked order is still `pending` (fix round 1, ruling
    * T8-R1). Every storefront-initiated cancel races a possible
    * pending->paid webhook write: without this, cancelOrderTx's guard (which
-   * also accepts `paid`) would happily cancel an order a Square charge just
-   * took money for. When set and the order is not `pending`, the transition is a
+   * also accepts `paid`) would happily cancel an order Stripe just took
+   * money for. When set and the order is not `pending`, the transition is a
    * pure no-op -- no update, no stock release, no audit row -- and the Tx
    * variant returns `null` so the caller can tell a real cancel from a
    * skip. Walmart's cancel (channels/walmart/shipping.ts) legitimately
@@ -244,7 +244,7 @@ export async function getOrder(id: string): Promise<OrderDto | null> {
 
 /**
  * Row-locks the order for the rest of the transaction. Every transition
- * goes through here: without the lock, two transitions (a Square charge's
+ * goes through here: without the lock, two transitions (the Stripe webhook's
  * paid and the sweep's cancel, say) can both read `pending` and both write,
  * leaving a paid order whose reservation was released. With it, the second
  * waits, then re-reads the committed status (READ COMMITTED takes a fresh
@@ -368,9 +368,7 @@ export async function cancelOrder(orderId: string, actorId = 'system', opts: Tra
 }
 
 /**
- * A Square refund (refund.created / refund.updated, spec 2026-09-28 §3).
- * `refundedCents` is the payment's total of COMPLETED refunds. Partial:
- * amount only. Full:
+ * A Stripe refund (charge.refunded, spec §5). Partial: amount only. Full:
  * status `refunded`. A `paid` order (not yet shipped) also releases its
  * reservation; `fulfilled` and `cancelled` have no hold left to release.
  * Storefront only -- Walmart refunds go through returns.service.ts.
@@ -393,9 +391,9 @@ export async function refundOrderTx(
   }
   const target = `order:${orderId}`
   const before = { status: order.status, refundedCents: order.refundedCents }
-  // The refunded figure is cumulative, but refund webhooks are distinct and
-  // can arrive out of order: an older, smaller figure must never lower the
-  // amount (and, below, never downgrade a `refunded` status).
+  // Stripe's amount_refunded is cumulative, but distinct charge.refunded
+  // events can arrive out of order: an older, smaller figure must never lower
+  // the amount (and, below, never downgrade a `refunded` status).
   const refundedCents = Math.max(order.refundedCents, amount)
 
   // Already fully refunded: nothing a later event says can change that, and

@@ -1,48 +1,41 @@
-import { Router, type Request, type RequestHandler, type Response } from 'express'
+import { Router, type RequestHandler, type Response } from 'express'
 import { asyncHandler } from '../lib/async-handler.js'
-import { CheckoutError, ORDER_ID_RE, checkoutErrors, parseCheckoutRequest, parsePayRequest, parseQuoteRequest } from './checkout-input.js'
-import { startCheckout, quoteCheckout, getCheckoutStatus, getCheckoutConfig, type CheckoutDeps } from './checkout.service.js'
-import { payForOrder } from './pay.service.js'
+import { CheckoutError, parseCheckoutRequest } from './checkout-input.js'
+import {
+  startCheckout, getCheckoutStatus, getCheckoutConfig, SESSION_ID_RE, type CheckoutDeps,
+} from './checkout.service.js'
 
 function send(res: Response, err: CheckoutError) {
   return res.status(err.status).json({ code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}) })
 }
 
-export function orderIdOf(raw: unknown): string {
-  if (typeof raw !== 'string' || !ORDER_ID_RE.test(raw)) throw new CheckoutError('invalid_request', 'an order id', 400, { field: 'orderId' })
-  return raw
-}
+/** Public, storefront-CORS, no credentials (spec §8). Mounted in app.ts. */
+export function createCheckoutRouter(deps: CheckoutDeps & { rateLimit: RequestHandler }): Router {
+  const router = Router()
 
-/** Every public checkout answer is per shopper: never cached, and errors use the public envelope. */
-export function json(status: number, fn: (req: Request) => Promise<unknown>): RequestHandler {
-  return asyncHandler(async (req, res) => {
-    res.setHeader('Cache-Control', 'no-store')
+  router.post('/', deps.rateLimit, asyncHandler(async (req, res) => {
     try {
-      res.status(status).json(await fn(req))
+      res.status(201).json(await startCheckout(parseCheckoutRequest(req.body), deps))
     } catch (err) {
       if (err instanceof CheckoutError) return send(res, err)
       throw err
     }
-  })
-}
-
-/**
- * Public, storefront CORS, no credentials. Mounted in app.ts. Start, quote
- * and pay share one per-IP limiter (plan decision 6); the status poll has its
- * own, more generous one (final review minor 2).
- */
-export function createCheckoutRouter(deps: CheckoutDeps & { rateLimit: RequestHandler; statusRateLimit: RequestHandler }): Router {
-  const router = Router()
-  router.post('/', deps.rateLimit, json(201, (req) => startCheckout(parseCheckoutRequest(req.body), deps)))
-  router.post('/:orderId/quote', deps.rateLimit, json(200, (req) =>
-    quoteCheckout(orderIdOf(req.params.orderId), parseQuoteRequest(req.body), deps)))
-  router.post('/:orderId/pay', deps.rateLimit, json(200, (req) =>
-    payForOrder(orderIdOf(req.params.orderId), parsePayRequest(req.body), deps)))
-  router.get('/status', deps.statusRateLimit, json(200, async (req) => {
-    const status = await getCheckoutStatus(orderIdOf(req.query.orderId))
-    if (!status) throw checkoutErrors.notFound()
-    return status
   }))
-  router.get('/config', json(200, () => getCheckoutConfig()))
+
+  router.get('/status', asyncHandler(async (req, res) => {
+    const id = req.query.session_id
+    if (typeof id !== 'string' || !SESSION_ID_RE.test(id)) {
+      return res.status(400).json({ code: 'invalid_request', message: 'session_id is required' })
+    }
+    const status = await getCheckoutStatus(id)
+    if (!status) return res.status(404).json({ code: 'not_found', message: 'no checkout for that session' })
+    res.setHeader('Cache-Control', 'no-store')
+    res.json(status)
+  }))
+
+  router.get('/config', asyncHandler(async (_req, res) => {
+    res.json(await getCheckoutConfig())
+  }))
+
   return router
 }

@@ -24,8 +24,6 @@ describe('OrderQueue', () => {
     expect(within(row).getByText('MI')).toBeInTheDocument()
     expect(api.listOrders).toHaveBeenCalledWith({ tab: 'to_ship', page: 1, pageSize: 25 })
     expect(screen.getByRole('tab', { name: 'To ship' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByText('Storefront orders. Refunds are issued in the payment dashboard.')).toBeInTheDocument()
-    expect(document.body.textContent.toLowerCase()).not.toContain('stripe')
   })
 
   it('switches tabs', async () => {

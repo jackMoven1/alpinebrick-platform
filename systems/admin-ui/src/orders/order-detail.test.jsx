@@ -24,30 +24,15 @@ function renderDetail(order = detail) {
 }
 
 describe('OrderDetail', () => {
-  it('shows lines, address, money, referral and the payment reference, naming no provider', async () => {
+  it('shows lines, address, money, referral and the Stripe link', async () => {
     renderDetail()
     expect(await screen.findByRole('heading', { name: new RegExp(detail.orderNumber) })).toBeInTheDocument()
     expect(screen.getByText(detail.lines[0].name)).toBeInTheDocument()
     expect(screen.getByText(detail.shipTo.line1)).toBeInTheDocument()
     expect(screen.getByText('unmatched')).toBeInTheDocument()
-    expect(screen.getByText('Payment ID')).toBeInTheDocument()
-    expect(screen.getByText(detail.payment.id)).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'View payment' })).not.toBeInTheDocument() // url is null until §9.3
-    expect(screen.getByText('Refunds are issued in the payment dashboard.')).toBeInTheDocument()
-    expect(document.body.textContent.toLowerCase()).not.toMatch(/stripe|square/)
+    expect(screen.getByRole('link', { name: /view payment in stripe/i })).toHaveAttribute('href', detail.stripePaymentUrl)
     expect(screen.getByText('order.paid')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /cancel order/i })).not.toBeInTheDocument() // paid: refund in the payment dashboard
-  })
-
-  it('links to the payment when core supplies a URL', async () => {
-    renderDetail({ ...detail, payment: { ...detail.payment, url: 'https://example.test/payments/sqpay_fixture' } })
-    expect(await screen.findByRole('link', { name: 'View payment' })).toHaveAttribute('href', 'https://example.test/payments/sqpay_fixture')
-  })
-
-  it('shows no payment reference for an unpaid order', async () => {
-    renderDetail({ ...detail, status: 'pending', payment: null })
-    await screen.findByRole('heading', { name: new RegExp(detail.orderNumber) })
-    expect(screen.queryByText('Payment ID')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /cancel order/i })).not.toBeInTheDocument() // paid: refund in Stripe
   })
 
   it('formats every money row as currency, not raw cents (regression: C-R2)', async () => {
@@ -125,22 +110,6 @@ describe('OrderDetail', () => {
     expect(await screen.findByText('Cancelled')).toBeInTheDocument()
   })
 
-  it('describes a pending cancel without naming a payment provider', async () => {
-    renderDetail({ ...detail, status: 'pending', payment: null })
-    await userEvent.click(await screen.findByRole('button', { name: /cancel order/i }))
-    const dialog = screen.getByRole('dialog')
-    expect(within(dialog).getByText("This cancels the customer's checkout and returns the items to stock.")).toBeInTheDocument()
-  })
-
-  it('explains a cancel refused because the customer is paying right now', async () => {
-    vi.mocked(api.cancelOrder).mockRejectedValue(new AdminApiError('The customer is paying for this order right now. Wait ten minutes, then refresh.', 'PAYMENT_IN_PROGRESS'))
-    renderDetail({ ...detail, status: 'pending', payment: null })
-    await userEvent.click(await screen.findByRole('button', { name: /cancel order/i }))
-    const dialog = screen.getByRole('dialog')
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel order' }))
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/paying for this order right now/)
-  })
-
   it('explains when the customer paid before the cancel landed, inside the modal, and refreshes the order', async () => {
     vi.mocked(api.cancelOrder).mockRejectedValue(new AdminApiError('The customer has just paid for this order.', 'ORDER_PAID'))
     vi.mocked(api.getOrder)
@@ -205,7 +174,7 @@ describe('OrderDetail', () => {
     await userEvent.click(await screen.findByRole('button', { name: /cancel order/i }))
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getByText(/cancels the order and returns the items to stock/i)).toBeInTheDocument()
-    expect(within(dialog).queryByText(/stripe|square/i)).not.toBeInTheDocument()
+    expect(within(dialog).queryByText(/closes the customer's stripe checkout/i)).not.toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: 'Keep order' })).toBeInTheDocument()
   })
 
@@ -214,8 +183,8 @@ describe('OrderDetail', () => {
     expect(await screen.findByText('club · resolves when paid')).toBeInTheDocument()
   })
 
-  it('shows tax and total as pending until the address is quoted', async () => {
-    renderDetail({ ...detail, taxJurisdiction: 'quote_pending' })
+  it('shows tax and total as pending while Stripe Tax has not run yet', async () => {
+    renderDetail({ ...detail, taxJurisdiction: 'stripe_tax_pending' })
     await screen.findByRole('heading', { name: new RegExp(detail.orderNumber) })
     expect(screen.getByText('pending')).toBeInTheDocument()
     expect(screen.getByText('pending tax')).toBeInTheDocument()

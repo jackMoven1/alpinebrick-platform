@@ -3,11 +3,10 @@ import { Link, useSearchParams } from 'react-router'
 import { getCheckoutStatus, CheckoutError, type CheckoutStatus } from '../lib/api/checkout'
 import { useCart } from '../lib/cart/CartContext'
 import { clearPreviousOrderId } from '../lib/checkout/previousOrder'
-import OrderConfirmation from '../components/checkout/OrderConfirmation'
+import { formatCents } from '../lib/money'
 
 export const POLL_INTERVAL_MS = 1500
 export const POLL_LIMIT_MS = 20_000
-export const SLOW_MESSAGE = "We're confirming your payment. Please don't pay again — refresh this page in a few minutes."
 
 type View =
   | { kind: 'loading' }
@@ -20,21 +19,22 @@ type View =
 const heading = 'text-3xl font-black uppercase tracking-[0.05em]'
 
 /**
- * Spec §2 step 6: reloads and the processing state. Polls core by order id
- * every 1.5 s for up to 20 s. The pay response itself confirms most orders
- * on /checkout; this page is reached after a `processing` or
- * `payment_pending` answer, when money is probably in flight -- so, as
- * before (Jack, 2026-09-27), the slow state clears the cart too. It is not
- * cleared on `cancelled` or `not_found`: nothing was bought.
+ * Spec §6: poll core every 1.5 s for up to 20 s after Stripe's redirect.
+ *
+ * When the cart (and the previous-order handle) is cleared: on `paid`, and on
+ * the `slow` state (Jack, 2026-09-27). Stripe only redirects here after the
+ * customer has paid, so a cart left full after "Payment received" invites a
+ * second purchase. It is NOT cleared on `cancelled` (expired) or `not_found`:
+ * nothing was bought, and the cart is how the customer tries again.
  */
 export default function OrderComplete() {
   const [params] = useSearchParams()
-  const orderId = params.get('order')
+  const sessionId = params.get('session_id')
   const { clear } = useCart()
-  const [view, setView] = useState<View>(orderId ? { kind: 'loading' } : { kind: 'missing' })
+  const [view, setView] = useState<View>(sessionId ? { kind: 'loading' } : { kind: 'missing' })
 
   useEffect(() => {
-    if (!orderId) return
+    if (!sessionId) return
     let stopped = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const started = Date.now()
@@ -44,7 +44,7 @@ export default function OrderComplete() {
     }
     const tick = async () => {
       try {
-        const s = await getCheckoutStatus(orderId)
+        const s = await getCheckoutStatus(sessionId)
         if (stopped) return
         if (s.status === 'paid') {
           forgetCart()
@@ -78,7 +78,7 @@ export default function OrderComplete() {
       stopped = true
       if (timer) clearTimeout(timer)
     }
-  }, [orderId, clear])
+  }, [sessionId, clear])
 
   const wrap = (children: ReactNode) => (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-24 space-y-6" style={{ fontFamily: 'var(--font-sans)' }}>{children}</div>
@@ -88,14 +88,42 @@ export default function OrderComplete() {
     case 'loading':
       return wrap(<p className="text-sm text-muted-foreground">Confirming your order…</p>)
     case 'missing':
-      return wrap(<><h1 className={heading}>We couldn't find that checkout</h1><Link to="/cart" className="underline text-sm">Back to cart</Link></>)
+      return wrap(<>
+        <h1 className={heading}>We couldn't find that checkout</h1>
+        <Link to="/cart" className="underline text-sm">Back to cart</Link>
+      </>)
     case 'order_not_found':
-      return wrap(<><h1 className={heading}>We couldn't find that order</h1><Link to="/cart" className="underline text-sm">Back to cart</Link></>)
+      return wrap(<>
+        <h1 className={heading}>We couldn't find that order</h1>
+        <Link to="/cart" className="underline text-sm">Back to cart</Link>
+      </>)
     case 'expired':
-      return wrap(<><h1 className={heading}>This checkout expired</h1><Link to="/cart" className="underline text-sm">Back to cart</Link></>)
+      return wrap(<>
+        <h1 className={heading}>This checkout expired</h1>
+        <Link to="/cart" className="underline text-sm">Back to cart</Link>
+      </>)
     case 'slow':
-      return wrap(<p className="text-sm">{SLOW_MESSAGE}</p>)
-    case 'paid':
-      return <OrderConfirmation status={view.status} />
+      return wrap(<p className="text-sm">Payment received — we're confirming your order. Your Stripe receipt is your confirmation.</p>)
+    case 'paid': {
+      const { orderNumber, lines, totals } = view.status
+      return wrap(<>
+        <h1 className={heading}>{`Order ${orderNumber} confirmed`}</h1>
+        <ul className="divide-y divide-border text-sm">
+          {lines.map((l) => (
+            <li key={l.sku} className="py-3 flex justify-between">
+              <span>{l.name} × {l.quantity}</span><span>{formatCents(l.lineSubtotalCents)}</span>
+            </li>
+          ))}
+        </ul>
+        <dl className="text-sm space-y-1">
+          <div className="flex justify-between"><dt>Subtotal</dt><dd>{formatCents(totals.subtotalCents)}</dd></div>
+          <div className="flex justify-between"><dt>Shipping</dt><dd>{formatCents(totals.shippingCents)}</dd></div>
+          <div className="flex justify-between"><dt>Tax</dt><dd>{formatCents(totals.taxCents)}</dd></div>
+          <div className="flex justify-between font-semibold"><dt>Total</dt><dd>{formatCents(totals.totalCents)}</dd></div>
+        </dl>
+        <p className="text-sm text-muted-foreground">Your receipt is on its way from Stripe</p>
+        <Link to="/collections" className="underline text-sm">Keep browsing</Link>
+      </>)
+    }
   }
 }

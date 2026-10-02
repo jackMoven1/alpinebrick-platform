@@ -1,71 +1,76 @@
 import { prisma } from '../prisma.js'
-import { cancelOrderTx, lockOrderRow, enqueueInventoryPushesAfterCommit } from '../orders/orders.service.js'
+import { cancelOrder, OrderError } from '../orders/orders.service.js'
 import { getShopSettings } from '../settings/shop-settings.service.js'
 import type { PaymentsPort } from '../ports/payments/payments.port.js'
 import { scrubError } from '../auth/scrub.js'
-import { PAYMENT_ATTEMPT_GRACE_MS, paymentBlocksRelease } from './payment-attempt.js'
 
 export const SWEEP_INTERVAL_MS = 5 * 60_000
+export const SWEEP_GRACE_MINUTES = 10
 const BATCH = 100
 
 /**
- * Spec §2 step 7. Cancels (onlyIfPending) pending STOREFRONT orders older
- * than checkout.session_minutes whose paymentAttemptAt is null or older than
- * 10 minutes, AND that carry no squarePaymentId. It makes no provider call:
- * an unpaid order is simply our pending row. Ruling Q-P7: an order with a
- * squarePaymentId is a known payment -- final or not -- and is never
- * cancelled by the sweep, no matter how stale paymentAttemptAt is. Both the
- * attempt check and the squarePaymentId check are repeated under the row
- * lock, because pay may stamp the order (and later record the payment id)
- * between the read below and the lock (race rule).
+ * Backstop for a missed checkout.session.expired webhook (spec §5). Cancels
+ * pending STOREFRONT orders older than session lifetime + grace when Stripe
+ * reports the session expired, or complete-but-unpaid. An order that never
+ * got a session (the process died between placeOrder and saving the id) is
+ * cancelled too (plan decision 5). A paid session with a pending order means
+ * the webhook was missed: it is logged, never cancelled -- money was taken.
  */
-export async function sweepAbandonedCheckouts(now = new Date()): Promise<{ cancelled: string[]; skipped: string[] }> {
+export async function sweepAbandonedCheckouts(
+  payments: PaymentsPort,
+  now = new Date(),
+): Promise<{ cancelled: string[]; skipped: string[] }> {
   const { sessionMinutes } = await getShopSettings()
-  const createdBefore = new Date(now.getTime() - sessionMinutes * 60_000)
-  const attemptBefore = new Date(now.getTime() - PAYMENT_ATTEMPT_GRACE_MS)
+  const cutoff = new Date(now.getTime() - (sessionMinutes + SWEEP_GRACE_MINUTES) * 60_000)
   const stale = await prisma.order.findMany({
-    where: {
-      status: 'pending', channel: 'storefront', createdAt: { lt: createdBefore }, squarePaymentId: null,
-      OR: [{ paymentAttemptAt: null }, { paymentAttemptAt: { lt: attemptBefore } }],
-    },
-    select: { id: true },
+    where: { status: 'pending', channel: 'storefront', createdAt: { lt: cutoff } },
+    select: { id: true, stripeCheckoutSessionId: true },
     orderBy: { createdAt: 'asc' },
     take: BATCH,
   })
   const cancelled: string[] = []
   const skipped: string[] = []
-  for (const { id } of stale) {
+  for (const order of stale) {
     try {
-      const released = await prisma.$transaction(async (tx) => {
-        const o = await lockOrderRow(tx, id)
-        if (!o || o.status !== 'pending' || paymentBlocksRelease(o, now)) return null
-        return cancelOrderTx(tx, id, 'system', { onlyIfPending: true })
-      })
-      if (!released) {
-        skipped.push(id)
-        continue
+      if (order.stripeCheckoutSessionId) {
+        const s = await payments.retrieveCheckoutSession(order.stripeCheckoutSessionId)
+        const abandoned = s.status === 'expired' || (s.status === 'complete' && s.paymentStatus !== 'paid')
+        if (!abandoned) {
+          if (s.status === 'complete') {
+            console.error(`[checkout-sweep] order ${order.id} is PAID in Stripe but still pending here -- the completed webhook was missed; resend it from the Stripe dashboard`)
+          }
+          skipped.push(order.id)
+          continue
+        }
       }
-      cancelled.push(id)
-      await enqueueInventoryPushesAfterCommit(released.lines.map((l) => l.variantId), `checkout.sweep order:${id}`)
+      // onlyIfPending (fix round 1, ruling T8-R1): the webhook may have
+      // marked this order paid between the Stripe read above and this call
+      // taking the row lock; a skip there must not release stock Stripe was
+      // just paid for, and must not count as cancelled.
+      const result = await cancelOrder(order.id, 'system', { onlyIfPending: true })
+      if (result) cancelled.push(order.id)
+      else skipped.push(order.id)
     } catch (err) {
-      console.error('[checkout-sweep] failed for order', id, scrubError(err))
-      skipped.push(id)
+      if (!(err instanceof OrderError && err.code === 'invalid_transition')) {
+        console.error('[checkout-sweep] failed for order', order.id, scrubError(err))
+      }
+      skipped.push(order.id)
     }
   }
   return { cancelled, skipped }
 }
 
-/** Runs in the web process; core-worker is Walmart-only and unprovisioned. */
-export function startCheckoutSweep(payments: Pick<PaymentsPort, 'configured'>, intervalMs = SWEEP_INTERVAL_MS): () => void {
+/** Runs in the web process (spec §5); core-worker is Walmart-only and unprovisioned. */
+export function startCheckoutSweep(payments: PaymentsPort, intervalMs = SWEEP_INTERVAL_MS): () => void {
   if (!payments.configured) {
-    console.log('checkout sweep: payments are not configured -- not started')
+    console.log('checkout sweep: Stripe is not configured -- not started')
     return () => {}
   }
   let running = false
   const timer = setInterval(() => {
     if (running) return
     running = true
-    sweepAbandonedCheckouts()
+    sweepAbandonedCheckouts(payments)
       .then((r) => { if (r.cancelled.length) console.log(`checkout sweep: cancelled ${r.cancelled.length} abandoned order(s)`) })
       .catch((err) => console.error('[checkout-sweep] run failed', scrubError(err)))
       .finally(() => { running = false })
