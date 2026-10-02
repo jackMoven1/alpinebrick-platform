@@ -15,7 +15,7 @@ Cross-cutting:
 - **AlpineBrick MCP connector** — exposes orders/inventory/customers/affiliates/referrals as MCP tools so the back-office agents in the parent folder can read this platform's data.
 
 ## Locked decisions to respect
-- Custom web app (not Shopify). **Stripe** for online checkout (Square was adopted 2026-09-28 and rolled back to Stripe 2026-10-01).
+- Custom web app (not Shopify). **Stripe** for online checkout (Square was adopted 2026-09-28 and rolled back to Stripe 2026-10-01). In-person payments at events stay on **Square** readers, outside this platform.
 - **Affiliates and designers are paid directly** by the business. No Stripe Connect and no marketplace payouts in the platform. Commission and royalty *accrual* stays in scope; *payout* is manual.
 - **Flat-%** affiliate commission model.
 - **Affiliate attribution captured at the order level from day one.**
