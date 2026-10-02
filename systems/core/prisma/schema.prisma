@@ -512,6 +512,10 @@ model OrderLine {
   unitPriceCents    Int     @map("unit_price_cents")
   lineSubtotalCents Int     @map("line_subtotal_cents")
   discountCents     Int     @default(0) @map("discount_cents")
+  // Walmart's own orderLine.lineNumber, sent back verbatim on ship/cancel.
+  // NULL for storefront lines and for Walmart lines ingested before it existed
+  // (those fall back to position -- see shipping.ts).
+  externalLineNumber String? @map("external_line_number")
   @@index([orderId])
   @@index([variantId])
   @@map("order_lines")

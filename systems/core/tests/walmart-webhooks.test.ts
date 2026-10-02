@@ -4,7 +4,7 @@ import { prisma } from '../src/prisma.js'
 import { resetDb } from './helpers/db.js'
 import { walmartOrderFixture } from './helpers/walmart-fixtures.js'
 import { buildApp } from '../src/app.js'
-import { pollWalmartOrders } from '../src/channels/walmart/pollers.js'
+import { pollWalmartOrders, MAX_ORDER_POLL_PAGES } from '../src/channels/walmart/pollers.js'
 import type { WalmartClient } from '../src/channels/walmart/client.js'
 
 // See tests/walmart-orders-ingest.test.ts for why this has to be recreated
@@ -136,9 +136,9 @@ describe('pollWalmartOrders', () => {
       request: async () => ({ list: { elements: { order: [walmartOrderFixture] } } }),
     }
     const first = await pollWalmartOrders(stub)
-    expect(first).toEqual({ found: 1, created: 1, failed: 0 })
+    expect(first).toEqual({ found: 1, created: 1, skipped: 0, failed: 0 })
     const second = await pollWalmartOrders(stub)
-    expect(second).toEqual({ found: 1, created: 0, failed: 0 })
+    expect(second).toEqual({ found: 1, created: 0, skipped: 0, failed: 0 })
     expect(await prisma.order.count()).toBe(1)
   })
 
@@ -168,7 +168,7 @@ describe('pollWalmartOrders', () => {
       request: async () => ({ list: { elements: { order: [badOrder, walmartOrderFixture] } } }),
     }
     const result = await pollWalmartOrders(stub)
-    expect(result).toEqual({ found: 2, created: 1, failed: 1 })
+    expect(result).toEqual({ found: 2, created: 1, skipped: 0, failed: 1 })
     expect(await prisma.order.count()).toBe(1)
   })
 
@@ -176,6 +176,69 @@ describe('pollWalmartOrders', () => {
     const stub: WalmartClient = {
       request: async () => ({ list: { elements: { order: [] } } }),
     }
-    expect(await pollWalmartOrders(stub)).toEqual({ found: 0, created: 0, failed: 0 })
+    expect(await pollWalmartOrders(stub)).toEqual({ found: 0, created: 0, skipped: 0, failed: 0 })
+  })
+
+  it('counts a fully cancelled order as skipped, creating nothing', async () => {
+    const cancelled = {
+      ...walmartOrderFixture,
+      purchaseOrderId: 'PO-CXL',
+      orderLines: {
+        orderLine: [{
+          ...walmartOrderFixture.orderLines.orderLine[0],
+          orderLineStatuses: { orderLineStatus: [{ status: 'Cancelled', statusQuantity: { unitOfMeasurement: 'EACH', amount: '2' } }] },
+        }],
+      },
+    }
+    const stub: WalmartClient = {
+      request: async () => ({ list: { elements: { order: [cancelled, walmartOrderFixture] } } }),
+    }
+    expect(await pollWalmartOrders(stub)).toEqual({ found: 2, created: 1, skipped: 1, failed: 0 })
+    expect(await prisma.order.count()).toBe(1)
+  })
+
+  // UNVERIFIED shape (launch checklist §1): Walmart's Orders API v3 returns
+  // `list.meta.nextCursor` as a ready-made query string, e.g.
+  // '?limit=100&hasMoreElements=true&soIndex=…&poIndex=…', which the next
+  // GET /v3/orders sends back as-is, and omits it on the last page.
+  it('follows list.meta.nextCursor until a page has none', async () => {
+    const second = { ...walmartOrderFixture, purchaseOrderId: 'PO-1002' }
+    const queries: (Record<string, string> | undefined)[] = []
+    const stub: WalmartClient = {
+      request: async (_m, path, opts) => {
+        expect(path).toBe('/v3/orders')
+        queries.push(opts?.query)
+        return queries.length === 1
+          ? { list: { meta: { nextCursor: '?limit=100&hasMoreElements=true&soIndex=2&poIndex=PO-1001' }, elements: { order: [walmartOrderFixture] } } }
+          : { list: { meta: {}, elements: { order: [second] } } }
+      },
+    }
+    expect(await pollWalmartOrders(stub)).toEqual({ found: 2, created: 2, skipped: 0, failed: 0 })
+    expect(queries).toHaveLength(2)
+    expect(queries[1]).toEqual({ limit: '100', hasMoreElements: 'true', soIndex: '2', poIndex: 'PO-1001' })
+  })
+
+  it('stops at MAX_ORDER_POLL_PAGES rather than paging forever', async () => {
+    let calls = 0
+    const stub: WalmartClient = {
+      request: async () => {
+        calls++
+        return { list: { meta: { nextCursor: `?limit=100&hasMoreElements=true&soIndex=${calls}` }, elements: { order: [] } } }
+      },
+    }
+    await pollWalmartOrders(stub)
+    expect(calls).toBe(MAX_ORDER_POLL_PAGES)
+  })
+
+  it('stops if Walmart hands back the cursor it was just given', async () => {
+    let calls = 0
+    const stub: WalmartClient = {
+      request: async () => {
+        calls++
+        return { list: { meta: { nextCursor: '?limit=100&hasMoreElements=true&soIndex=1' }, elements: { order: [] } } }
+      },
+    }
+    await pollWalmartOrders(stub)
+    expect(calls).toBe(2)
   })
 })

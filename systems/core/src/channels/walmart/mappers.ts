@@ -36,7 +36,29 @@ export interface CanonicalChannelOrder {
   externalOrderId: string
   email: string
   shipToState: string
-  lines: { walmartSku: string; quantity: number; unitPriceCents: number; lineTaxCents: number }[]
+  // `lineNumber` is Walmart's own, stored on OrderLine so ship/cancel send it
+  // back verbatim -- dropping a cancelled line would otherwise shift every
+  // later line's position-derived number onto the wrong Walmart line.
+  // `lines` is empty when every unit of every line is Cancelled.
+  lines: { walmartSku: string; lineNumber: string; quantity: number; unitPriceCents: number; lineTaxCents: number }[]
+}
+
+/**
+ * Units of a line Walmart reports as Cancelled: the sum of `statusQuantity`
+ * over its `Cancelled` entries in `orderLineStatuses`. A line with no status
+ * block is treated as wholly uncancelled, which is what ingest assumed before
+ * statuses were read at all.
+ *
+ * UNVERIFIED against a real sandbox response (launch checklist §1): the
+ * `orderLineStatuses.orderLineStatus[].{status, statusQuantity.amount}` shape
+ * and the `'Cancelled'` spelling are from the Orders API v3 docs as
+ * recalled, matching what toShipPayload and the cancel handler already send.
+ */
+function cancelledUnits(line: any): number {
+  const statuses = (line?.orderLineStatuses?.orderLineStatus as any[] | undefined) ?? []
+  return statuses
+    .filter((s) => s?.status === 'Cancelled')
+    .reduce((sum, s) => sum + Number(s?.statusQuantity?.amount ?? 0), 0)
 }
 
 export function toCanonicalOrder(payload: unknown): CanonicalChannelOrder {
@@ -46,19 +68,24 @@ export function toCanonicalOrder(payload: unknown): CanonicalChannelOrder {
   }
   const state = p.shippingInfo?.postalAddress?.state
   if (!state) throw new Error('unmappable_order: missing ship-to state')
-  const lines = (p.orderLines.orderLine as any[]).map((l) => {
-    const qty = Number(l?.orderLineQuantity?.amount)
+  const lines = (p.orderLines.orderLine as any[]).flatMap((l, i) => {
+    const ordered = Number(l?.orderLineQuantity?.amount)
     const product = (l?.charges?.charge as any[] | undefined)?.find((c) => c.chargeType === 'PRODUCT')
-    if (!l?.item?.sku || !Number.isInteger(qty) || qty <= 0 || !product?.chargeAmount) {
+    const cancelled = cancelledUnits(l)
+    if (!l?.item?.sku || !Number.isInteger(ordered) || ordered <= 0 || !product?.chargeAmount
+      || !Number.isInteger(cancelled) || cancelled < 0 || cancelled > ordered) {
       throw new Error(`unmappable_order: bad line ${l?.lineNumber}`)
     }
+    const qty = ordered - cancelled
+    if (qty === 0) return []
     const taxDollars = product.tax?.taxAmount?.amount ?? 0
-    return {
+    return [{
       walmartSku: l.item.sku as string,
+      lineNumber: String(l.lineNumber ?? i + 1),
       quantity: qty,
       unitPriceCents: toCents(product.chargeAmount.amount),
       lineTaxCents: toCents(taxDollars) * qty, // Walmart charges/tax are per unit
-    }
+    }]
   })
   return {
     externalOrderId: p.purchaseOrderId,

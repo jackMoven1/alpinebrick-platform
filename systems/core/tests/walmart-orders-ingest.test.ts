@@ -178,6 +178,52 @@ describe('ingestWalmartOrder', () => {
     expect(inv.reserved).toBe(0)
   })
 
+  it('skips a fully cancelled order: no order, no reservation, no event, no ack job', async () => {
+    const v = await seedListing(10)
+    const cancelled = {
+      ...walmartOrderFixture,
+      orderLines: {
+        orderLine: [{
+          ...walmartOrderFixture.orderLines.orderLine[0],
+          orderLineStatuses: { orderLineStatus: [{ status: 'Cancelled', statusQuantity: { unitOfMeasurement: 'EACH', amount: '2' } }] },
+        }],
+      },
+    }
+    const r = await ingestWalmartOrder(cancelled, 'poll')
+    expect(r).toEqual({ orderId: null, created: false, skipped: 'cancelled' })
+    expect(await prisma.order.count()).toBe(0)
+    expect(await prisma.channelEvent.count()).toBe(0)
+    expect(await prisma.channelJob.count()).toBe(0)
+    const inv = await prisma.inventory.findUniqueOrThrow({ where: { variantId: v.id } })
+    expect(inv.reserved).toBe(0)
+  })
+
+  it('ingests only the uncancelled units of a partially cancelled order, keeping Walmart line numbers', async () => {
+    const v = await seedListing(10)
+    const partial = {
+      ...walmartOrderFixture,
+      orderLines: {
+        orderLine: [{
+          ...walmartOrderFixture.orderLines.orderLine[0],
+          lineNumber: '3',
+          orderLineStatuses: {
+            orderLineStatus: [
+              { status: 'Created', statusQuantity: { unitOfMeasurement: 'EACH', amount: '1' } },
+              { status: 'Cancelled', statusQuantity: { unitOfMeasurement: 'EACH', amount: '1' } },
+            ],
+          },
+        }],
+      },
+    }
+    const r = await ingestWalmartOrder(partial, 'poll')
+    expect(r.created).toBe(true)
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: r.orderId! }, include: { lines: true } })
+    expect(order).toMatchObject({ subtotalCents: 4999, taxCents: 300, totalCents: 5299 })
+    expect(order.lines).toMatchObject([{ quantity: 1, externalLineNumber: '3' }])
+    const inv = await prisma.inventory.findUniqueOrThrow({ where: { variantId: v.id } })
+    expect(inv.reserved).toBe(1)
+  })
+
   it('throws ChannelError on unmappable payloads', async () => {
     await expect(ingestWalmartOrder({}, 'webhook')).rejects.toBeInstanceOf(ChannelError)
   })
