@@ -117,11 +117,22 @@ export async function cancelChannelOrder(orderId: string): Promise<void> {
  * a wrap in the same millisecond would sort out of order; negligible, but it
  * is why this is ordering by proxy.
  *
- * The real fix is to store Walmart's own `lineNumber` on OrderLine at ingest
- * and send that back -- on the launch checklist
- * (docs/status/2026-09-22-walmart-launch-checklist.md).
+ * Since checklist 1.8, ingest stores Walmart's own `lineNumber` on
+ * OrderLine.externalLineNumber and `walmartLineNumber` sends that back. The
+ * positional rule survives only as the fallback for lines ingested before the
+ * column existed, which is what this ordering still protects.
  */
 const LINES_IN_INGEST_ORDER = { lines: { orderBy: { id: 'asc' as const } } }
+
+/**
+ * Walmart's line number for the i-th stored line. Position stopped being safe
+ * once ingest could drop a line cancelled before we saw the order: lines 1
+ * and 3 stored after line 2 was cancelled would otherwise go back as 1 and 2,
+ * shipping or cancelling the wrong Walmart line.
+ */
+function walmartLineNumber(line: { externalLineNumber: string | null }, i: number): string {
+  return line.externalLineNumber ?? String(i + 1)
+}
 
 export function registerShippingHandlers(client: WalmartClient = getWalmartClient()): void {
   registerHandler('walmart_ack_order', async (p) => {
@@ -130,13 +141,8 @@ export function registerShippingHandlers(client: WalmartClient = getWalmartClien
 
   registerHandler('walmart_ship_order', async (p) => {
     const order = await prisma.order.findUniqueOrThrow({ where: { id: p.orderId }, include: LINES_IN_INGEST_ORDER })
-    // Walmart line numbers are 1-based strings in original order; we store
-    // nothing extra to remember them, so the i-th order line maps to
-    // lineNumber String(i+1) by position, both here and in the cancel
-    // handler below. That only holds if the lines come back in the order
-    // ingest created them -- see LINES_IN_INGEST_ORDER.
-    const lineNumbers = order.lines.map((_, i) => String(i + 1))
-    const quantityByLine = Object.fromEntries(order.lines.map((l, i) => [String(i + 1), l.quantity]))
+    const lineNumbers = order.lines.map(walmartLineNumber)
+    const quantityByLine = Object.fromEntries(order.lines.map((l, i) => [walmartLineNumber(l, i), l.quantity]))
     await client.request('POST', `/v3/orders/${order.externalOrderId}/shipping`, {
       body: toShipPayload({
         lineNumbers,
@@ -156,7 +162,7 @@ export function registerShippingHandlers(client: WalmartClient = getWalmartClien
         orderCancellation: {
           orderLines: {
             orderLine: order.lines.map((l, i) => ({
-              lineNumber: String(i + 1),
+              lineNumber: walmartLineNumber(l, i),
               orderLineStatuses: {
                 orderLineStatus: [{
                   status: 'Cancelled',

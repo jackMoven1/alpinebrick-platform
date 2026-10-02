@@ -15,8 +15,55 @@ describe('walmart mappers', () => {
       externalOrderId: 'PO-1001',
       email: 'mgr@relay.walmart.com',
       shipToState: 'MI',
-      lines: [{ walmartSku: 'ABE-SET-001-W', quantity: 2, unitPriceCents: 4999, lineTaxCents: 600 }],
+      lines: [{ walmartSku: 'ABE-SET-001-W', lineNumber: '1', quantity: 2, unitPriceCents: 4999, lineTaxCents: 600 }],
     })
+  })
+
+  it('drops a line whose whole quantity is Cancelled, keeping the others with their own lineNumbers', () => {
+    const second = {
+      ...walmartOrderFixture.orderLines.orderLine[0],
+      lineNumber: '2',
+      item: { sku: 'ABE-SET-002-W', productName: 'Ship' },
+    }
+    const payload = {
+      ...walmartOrderFixture,
+      orderLines: {
+        orderLine: [
+          { ...walmartOrderFixture.orderLines.orderLine[0], orderLineStatuses: { orderLineStatus: [{ status: 'Cancelled', statusQuantity: { unitOfMeasurement: 'EACH', amount: '2' } }] } },
+          { ...second, orderLineStatuses: { orderLineStatus: [{ status: 'Created', statusQuantity: { unitOfMeasurement: 'EACH', amount: '2' } }] } },
+        ],
+      },
+    }
+    const o = toCanonicalOrder(payload)
+    expect(o.lines).toEqual([{ walmartSku: 'ABE-SET-002-W', lineNumber: '2', quantity: 2, unitPriceCents: 4999, lineTaxCents: 600 }])
+  })
+
+  it('reduces a partially cancelled line to its uncancelled quantity, tax included', () => {
+    const payload = {
+      ...walmartOrderFixture,
+      orderLines: {
+        orderLine: [{
+          ...walmartOrderFixture.orderLines.orderLine[0],
+          orderLineStatuses: {
+            orderLineStatus: [
+              { status: 'Created', statusQuantity: { unitOfMeasurement: 'EACH', amount: '1' } },
+              { status: 'Cancelled', statusQuantity: { unitOfMeasurement: 'EACH', amount: '1' } },
+            ],
+          },
+        }],
+      },
+    }
+    expect(toCanonicalOrder(payload).lines).toEqual([{ walmartSku: 'ABE-SET-001-W', lineNumber: '1', quantity: 1, unitPriceCents: 4999, lineTaxCents: 300 }])
+  })
+
+  it('maps a fully cancelled order to zero lines rather than throwing', () => {
+    const payload = {
+      ...walmartOrderFixture,
+      orderLines: {
+        orderLine: [{ ...walmartOrderFixture.orderLines.orderLine[0], orderLineStatuses: { orderLineStatus: [{ status: 'Cancelled', statusQuantity: { unitOfMeasurement: 'EACH', amount: '2' } }] } }],
+      },
+    }
+    expect(toCanonicalOrder(payload).lines).toEqual([])
   })
 
   it('falls back to placeholder email and rejects unmappable payloads', () => {

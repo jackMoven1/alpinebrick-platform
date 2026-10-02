@@ -20,32 +20,62 @@ import { OrderError } from '../../orders/orders.service.js'
  *
  * A ChannelError from one order (unmappable_order, unknown_sku,
  * insufficient_stock) is logged and counted as a failure, never thrown --
- * one bad order in the batch must not abort the sweep for the rest.
+ * one bad order in the batch must not abort the sweep for the rest. An order
+ * cancelled in full before we saw it is counted as `skipped` (see
+ * ingestWalmartOrder) -- not a failure, and nothing is written for it.
+ *
+ * Pages via `list.meta.nextCursor`, which Walmart returns as a ready-made
+ * query string and omits on the last page. UNVERIFIED against a real sandbox
+ * response (launch checklist §1). Two guards keep a misbehaving cursor from
+ * turning the 15-minute sweep into an endless loop: a hard page cap, and
+ * stopping if the cursor comes back unchanged. Hitting the cap is logged --
+ * at 100 a page it means more than 5,000 orders in the 7-day window, far past
+ * anything expected, so it is a signal that something is wrong, not load.
  */
+export const MAX_ORDER_POLL_PAGES = 50
+
 export async function pollWalmartOrders(
   client: WalmartClient = getWalmartClient(),
-): Promise<{ found: number; created: number; failed: number }> {
+): Promise<{ found: number; created: number; skipped: number; failed: number }> {
   const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().slice(0, 10)
-  const res = (await client.request('GET', '/v3/orders', { query: { createdStartDate: since, limit: '100' } })) as any
-  const orders: unknown[] = res?.list?.elements?.order ?? []
+  let query: Record<string, string> = { createdStartDate: since, limit: '100' }
+  let lastCursor: string | undefined
 
+  let found = 0
   let created = 0
+  let skipped = 0
   let failed = 0
-  for (const order of orders) {
-    try {
-      const result = await ingestWalmartOrder(order, 'poll')
-      if (result.created) created++
-    } catch (e) {
-      failed++
-      if (e instanceof ChannelError) {
-        console.error(`walmart poll: ${e.code} -- ${e.message}`)
-      } else {
-        throw e
+  for (let page = 1; ; page++) {
+    const res = (await client.request('GET', '/v3/orders', { query })) as any
+    const orders: unknown[] = res?.list?.elements?.order ?? []
+    found += orders.length
+
+    for (const order of orders) {
+      try {
+        const result = await ingestWalmartOrder(order, 'poll')
+        if (result.created) created++
+        else if (result.skipped) skipped++
+      } catch (e) {
+        failed++
+        if (e instanceof ChannelError) {
+          console.error(`walmart poll: ${e.code} -- ${e.message}`)
+        } else {
+          throw e
+        }
       }
     }
+
+    const cursor: string | undefined = res?.list?.meta?.nextCursor || undefined
+    if (!cursor || cursor === lastCursor) break
+    if (page >= MAX_ORDER_POLL_PAGES) {
+      console.error(`walmart poll: stopped at ${MAX_ORDER_POLL_PAGES} pages with more orders reported -- check the cursor`)
+      break
+    }
+    lastCursor = cursor
+    query = Object.fromEntries(new URLSearchParams(cursor.replace(/^\?/, '')))
   }
 
-  return { found: orders.length, created, failed }
+  return { found, created, skipped, failed }
 }
 
 /**
