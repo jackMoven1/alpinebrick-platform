@@ -22,6 +22,9 @@ Cross-cutting:
 - Design schemas/APIs to be exposable later via the MCP bridge.
 - Approvals: branch + review for code; **Jack approves** architecture, stack, infra, deploys, external spend, and connecting live services.
 
+Current state, not locked: sales tax is Michigan only (6% on goods, not
+shipping), **pending partner sign-off** on anything else.
+
 ## How this workspace is organized (initial)
 - `.claude/agents/` — engineer subagents. **Engineering Lead** is hired and ready (`engineering-lead.md`). Other roles are planned and will be hired here as work demands.
 - `CLAUDE.md` — this file; shared engineering context.
