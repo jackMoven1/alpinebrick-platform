@@ -7,7 +7,9 @@ import { UNAVAILABLE_MESSAGE } from '../lib/api/checkout'
 import { CONTIGUOUS_NOTICE } from '../components/cart/CartPanel'
 import { PageHeader } from '../components/PageHeader'
 
-interface CheckoutState { clientSecret?: string; orderId?: string }
+interface CheckoutState { clientSecret?: string; orderId?: string; expiresAt?: number }
+
+const isPast = (deadline: number | undefined) => deadline !== undefined && Date.now() >= deadline
 
 function Problem({ title, body }: { title: string; body: string }) {
   return (
@@ -24,6 +26,7 @@ export default function Checkout() {
   const state = (useLocation().state ?? null) as CheckoutState | null
   const clientSecret = state?.clientSecret
   const orderId = state?.orderId
+  const expiresAt = state?.expiresAt
   // Once per mount: a failed load resets getStripe's memo, and calling it on
   // every render would re-attempt the load on each one.
   const [stripe] = useState(getStripe)
@@ -42,9 +45,32 @@ export default function Checkout() {
     return () => { live = false }
   }, [stripe])
 
+  // The checkout state lives in the history entry, so a reload or a return
+  // to a backgrounded tab redraws the form long after Stripe expired the
+  // session -- and a payment there fails. Swap the form out at the deadline.
+  // The timer alone is not enough: browsers throttle or freeze timers in
+  // background tabs and across sleep, so re-check whenever the tab is shown.
+  const [expired, setExpired] = useState(() => isPast(expiresAt))
+  useEffect(() => {
+    if (expiresAt === undefined) return
+    const check = () => { if (isPast(expiresAt)) setExpired(true) }
+    check()
+    const timer = window.setTimeout(check, Math.max(0, expiresAt - Date.now()))
+    document.addEventListener('visibilitychange', check)
+    window.addEventListener('focus', check)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', check)
+      window.removeEventListener('focus', check)
+    }
+  }, [expiresAt])
+
   const fetchClientSecret = useCallback(() => Promise.resolve(clientSecret ?? ''), [clientSecret])
 
   if (!clientSecret) return <Problem title="Your checkout has ended" body="Start again from your cart." />
+  if (expired) {
+    return <Problem title="Your checkout timed out" body="We held your items while you paid, and that hold has ended. Start again from your cart." />
+  }
   if (!stripe || loadFailed) return <Problem title="We couldn't load the payment form" body={UNAVAILABLE_MESSAGE} />
 
   return (

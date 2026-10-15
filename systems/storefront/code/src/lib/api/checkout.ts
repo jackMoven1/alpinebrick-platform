@@ -84,8 +84,19 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
 }
 
+export interface StartedCheckout {
+  orderId: string
+  clientSecret: string
+  /**
+   * How long the payment form stays usable, relative to the response. Turned
+   * into a deadline on this browser's clock by the caller. Optional only so a
+   * storefront deployed ahead of core still works (no deadline, as before).
+   */
+  expiresInSeconds?: number
+}
+
 /** No cookies: checkout is public and core's CORS has credentials off. */
-export function startCheckout(req: StartCheckoutRequest): Promise<{ orderId: string; clientSecret: string }> {
+export function startCheckout(req: StartCheckoutRequest): Promise<StartedCheckout> {
   return request(BASE, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) })
 }
 

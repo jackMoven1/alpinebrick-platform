@@ -88,7 +88,7 @@ async function preflight(lines: CheckoutRequest['lines']): Promise<Map<string, s
   return new Map(variants.map((v) => [v.id, lineName(v.product.name, v.attributes)]))
 }
 
-export async function startCheckout(req: CheckoutRequest, deps: CheckoutDeps): Promise<{ orderId: string; clientSecret: string }> {
+export async function startCheckout(req: CheckoutRequest, deps: CheckoutDeps): Promise<{ orderId: string; clientSecret: string; expiresInSeconds: number }> {
   if (!deps.payments.configured || !deps.storefrontUrl) throw unavailable()
   const now = deps.now?.() ?? new Date()
 
@@ -114,8 +114,10 @@ export async function startCheckout(req: CheckoutRequest, deps: CheckoutDeps): P
 
   // Outside the DB transaction (spec §4 step 4). If Stripe fails, release.
   let session: CheckoutSessionRef
+  let sessionMinutes: number
   try {
     const settings = await getShopSettings()
+    sessionMinutes = settings.sessionMinutes
     const shippingOptions = await deps.shipping.quote({ subtotalCents: order.subtotalCents, lines: req.lines })
     session = await deps.payments.createCheckoutSession({
       orderId: order.id,
@@ -139,7 +141,12 @@ export async function startCheckout(req: CheckoutRequest, deps: CheckoutDeps): P
   }
 
   await prisma.order.update({ where: { id: order.id }, data: { stripeCheckoutSessionId: session.sessionId } })
-  return { orderId: order.id, clientSecret: session.clientSecret }
+  // A relative lifetime, not Stripe's expires_at: the storefront turns it
+  // into a deadline on its own clock, so a skewed customer clock cannot show
+  // the form as expired early or late. It is the configured lifetime, one
+  // minute short of the real expiry (the skew allowance above), so the page
+  // gives up before Stripe does, never after.
+  return { orderId: order.id, clientSecret: session.clientSecret, expiresInSeconds: sessionMinutes * 60 }
 }
 
 export interface CheckoutStatusDto {

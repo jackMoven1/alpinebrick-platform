@@ -64,7 +64,7 @@ export default function CartPanel({ onNavigate }: { onNavigate?: () => void }) {
     setBusy(true)
     try {
       const previousOrderId = getPreviousOrderId()
-      const { orderId, clientSecret } = await startCheckout({
+      const { orderId, clientSecret, expiresInSeconds } = await startCheckout({
         lines: items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
         marketingOptIn: optIn,
         referral: readReferral(safeLocalStorage()),
@@ -72,7 +72,10 @@ export default function CartPanel({ onNavigate }: { onNavigate?: () => void }) {
       })
       setPreviousOrderId(orderId)
       onNavigate?.()
-      navigate('/checkout', { state: { clientSecret, orderId } })
+      // An absolute deadline on this clock, stored in the history entry so a
+      // reload or a return to the tab still knows when the form went stale.
+      const expiresAt = typeof expiresInSeconds === 'number' ? Date.now() + expiresInSeconds * 1000 : undefined
+      navigate('/checkout', { state: { clientSecret, orderId, expiresAt } })
     } catch (err) {
       if (err instanceof CheckoutError && err.lines.length > 0) {
         setProblems(Object.fromEntries(err.lines.map((l) => [l.variantId, l])))

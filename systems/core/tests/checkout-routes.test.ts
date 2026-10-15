@@ -24,7 +24,8 @@ describe('POST /api/v1/checkout', () => {
       referral: { code: 'Brick-Club', firstSeenAt: new Date(Date.now() - 86_400_000).toISOString() },
     })
     expect(res.status).toBe(201)
-    expect(res.body).toEqual({ orderId: expect.any(String), clientSecret: expect.stringMatching(/_secret_/) })
+    // 30-minute default lifetime, relative (the storefront makes it a deadline on its own clock).
+    expect(res.body).toEqual({ orderId: expect.any(String), clientSecret: expect.stringMatching(/_secret_/), expiresInSeconds: 1800 })
 
     const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } })
     expect(order).toMatchObject({
