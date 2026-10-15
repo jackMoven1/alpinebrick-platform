@@ -51,7 +51,7 @@ import { prisma } from '../../prisma.js'
 import { recordAudit } from '../../audit.js'
 import { createHash } from 'node:crypto'
 import { type WalmartClient, getWalmartClient } from './client.js'
-import { toCents } from './mappers.js'
+import { toCents, cancelledUnits } from './mappers.js'
 
 type Db = Prisma.TransactionClient
 
@@ -194,9 +194,16 @@ export function reconstructOrderGrossCents(raw: unknown): number | null {
   if (!Array.isArray(lines) || lines.length === 0) return null
   let totalCents = 0
   for (const line of lines) {
-    const qty = Number(line?.orderLineQuantity?.amount)
+    const ordered = Number(line?.orderLineQuantity?.amount)
     const charges = line?.charges?.charge
-    if (!Number.isInteger(qty) || qty <= 0 || !Array.isArray(charges) || charges.length === 0) return null
+    if (!Number.isInteger(ordered) || ordered <= 0 || !Array.isArray(charges) || charges.length === 0) return null
+    // Units Walmart cancelled before ingest were never ingested, charged or
+    // remitted -- the same `cancelledUnits` toCanonicalOrder subtracts, so a
+    // partially cancelled PO is compared against what was actually sold.
+    const cancelled = cancelledUnits(line)
+    if (!Number.isInteger(cancelled) || cancelled < 0 || cancelled > ordered) return null
+    const qty = ordered - cancelled
+    if (qty === 0) continue
     for (const charge of charges) {
       const amount = charge?.chargeAmount?.amount
       if (typeof amount !== 'number') return null

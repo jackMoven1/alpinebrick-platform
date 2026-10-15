@@ -161,6 +161,33 @@ describe('walmart settlement', () => {
     it('returns null (not 0, not a guess) for a payload missing orderLines', () => {
       expect(reconstructOrderGrossCents({ purchaseOrderId: 'PO-1' })).toBeNull()
     })
+
+    it('excludes units Walmart cancelled before ingest, matching the ingested Order', () => {
+      const partial = structuredClone(walmartOrderFixture) as any
+      partial.orderLines.orderLine[0].orderLineStatuses = {
+        orderLineStatus: [
+          { status: 'Created', statusQuantity: { unitOfMeasurement: 'EACH', amount: '1' } },
+          { status: 'Cancelled', statusQuantity: { unitOfMeasurement: 'EACH', amount: '1' } },
+        ],
+      }
+      // 1 of 2 units remains: 49.99 + 3.00 = 52.99
+      expect(reconstructOrderGrossCents(partial)).toBe(5299)
+    })
+
+    it('contributes nothing for a wholly cancelled line in a mixed order', () => {
+      const mixed = structuredClone(walmartOrderFixture) as any
+      const cancelledLine = structuredClone(mixed.orderLines.orderLine[0])
+      cancelledLine.lineNumber = '2'
+      cancelledLine.orderLineStatuses = { orderLineStatus: [{ status: 'Cancelled', statusQuantity: { unitOfMeasurement: 'EACH', amount: '2' } }] }
+      mixed.orderLines.orderLine.push(cancelledLine)
+      expect(reconstructOrderGrossCents(mixed)).toBe(10598)
+    })
+
+    it('returns null when a Cancelled status has no numeric quantity', () => {
+      const bad = structuredClone(walmartOrderFixture) as any
+      bad.orderLines.orderLine[0].orderLineStatuses = { orderLineStatus: [{ status: 'Cancelled' }] }
+      expect(reconstructOrderGrossCents(bad)).toBeNull()
+    })
   })
 
   // --- importSettlementRows: discrepancyCents / status -------------------

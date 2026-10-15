@@ -243,4 +243,66 @@ describe('walmart shipping', () => {
     const cancel = calls.find((c) => c.path.endsWith('/cancel'))
     expect(lineQuantities(cancel.opts.body.orderCancellation.orderLines.orderLine)).toEqual({ 1: '1', 2: '2', 3: '3' })
   })
+
+  // Checklist 1.8: once ingest drops a cancelled line, position no longer
+  // matches Walmart's numbering. Line 2 of 3 is Cancelled before ingest, so
+  // only L1 and L3 are stored; the pushes must still say '1' and '3', not '1'
+  // and '2' -- '2' would ship or cancel the line the customer cancelled.
+  async function seedAndIngestWithMiddleLineCancelled() {
+    const skus = ['ABE-L1', 'ABE-L2', 'ABE-L3']
+    for (const sku of skus) {
+      const p = await prisma.product.create({ data: { slug: sku.toLowerCase(), name: sku, productType: 'own_designed', status: 'published' } })
+      const v = await prisma.variant.create({ data: { productId: p.id, sku, priceCents: 1000 } })
+      await prisma.inventory.create({ data: { variantId: v.id, onHand: 10 } })
+      await prisma.channelListing.create({ data: { variantId: v.id, walmartSku: `${sku}-W`, status: 'live' } })
+    }
+    const payload = {
+      ...walmartOrderFixture,
+      purchaseOrderId: 'PO-GAP',
+      orderLines: {
+        orderLine: skus.map((sku, i) => ({
+          lineNumber: String(i + 1),
+          item: { sku: `${sku}-W`, productName: sku },
+          orderLineQuantity: { unitOfMeasurement: 'EACH', amount: String(i + 1) },
+          charges: { charge: [{ chargeType: 'PRODUCT', chargeAmount: { currency: 'USD', amount: 10 } }] },
+          ...(i === 1
+            ? { orderLineStatuses: { orderLineStatus: [{ status: 'Cancelled', statusQuantity: { unitOfMeasurement: 'EACH', amount: '2' } }] } }
+            : {}),
+        })),
+      },
+    }
+    const { orderId } = await ingestWalmartOrder(payload, 'poll')
+    return orderId!
+  }
+
+  it('1.8: ship push sends Walmart line numbers, skipping a line cancelled before ingest', async () => {
+    const orderId = await seedAndIngestWithMiddleLineCancelled()
+    const calls: any[] = []
+    registerShippingHandlers({ request: async (m, path, opts) => { calls.push({ m, path, opts }); return {} } })
+    await recordChannelShipment(orderId, { carrier: 'USPS', trackingNumber: 'T-G' })
+    await processDueJobs()
+    const ship = calls.find((c) => c.path.endsWith('/shipping'))
+    expect(lineQuantities(ship.opts.body.orderShipment.orderLines.orderLine)).toEqual({ 1: '1', 3: '3' })
+  })
+
+  it('1.8: cancel push sends Walmart line numbers, skipping a line cancelled before ingest', async () => {
+    const orderId = await seedAndIngestWithMiddleLineCancelled()
+    const calls: any[] = []
+    registerShippingHandlers({ request: async (m, path, opts) => { calls.push({ m, path, opts }); return {} } })
+    await cancelChannelOrder(orderId)
+    await processDueJobs()
+    const cancel = calls.find((c) => c.path.endsWith('/cancel'))
+    expect(lineQuantities(cancel.opts.body.orderCancellation.orderLines.orderLine)).toEqual({ 1: '1', 3: '3' })
+  })
+
+  it('1.8: falls back to position for a Walmart line ingested before line numbers were stored', async () => {
+    const orderId = await seedAndIngestThreeLines()
+    await prisma.orderLine.updateMany({ where: { orderId }, data: { externalLineNumber: null } })
+    const calls: any[] = []
+    registerShippingHandlers({ request: async (m, path, opts) => { calls.push({ m, path, opts }); return {} } })
+    await recordChannelShipment(orderId, { carrier: 'USPS', trackingNumber: 'T-L' })
+    await processDueJobs()
+    const ship = calls.find((c) => c.path.endsWith('/shipping'))
+    expect(lineQuantities(ship.opts.body.orderShipment.orderLines.orderLine)).toEqual({ 1: '1', 2: '2', 3: '3' })
+  })
 })

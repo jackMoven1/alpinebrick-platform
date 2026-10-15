@@ -62,11 +62,20 @@ function isConcurrentDeliveryRace(err: unknown): boolean {
  * write a ChannelEvent: that is what lets a later retry succeed once the SKU
  * is listed or stock is replenished, and it is the surface an operator alert
  * watches.
+ *
+ * A fully cancelled order (every unit of every line Cancelled before we saw
+ * it) is skipped, not ingested: no reservation, no Order, no ChannelEvent and
+ * no ack job, returned as `skipped: 'cancelled'`. Writing nothing keeps the
+ * re-scan harmless -- the poller sees the PO again next sweep and skips it
+ * again. A partially cancelled order ingests only its uncancelled units
+ * (toCanonicalOrder does the arithmetic). An order cancelled AFTER it was
+ * ingested is a different problem -- it hits the idempotency check below
+ * and stays paid; that is still open on the launch checklist.
  */
 export async function ingestWalmartOrder(
   payload: unknown,
   source: 'webhook' | 'poll',
-): Promise<{ orderId: string | null; created: boolean }> {
+): Promise<{ orderId: string | null; created: boolean; skipped?: 'cancelled' }> {
   // mappers.ts's toCanonicalOrder only maps
   // `charges.charge[chargeType === 'PRODUCT']`, so Walmart's SHIPPING charges
   // (and their tax) never reach `canonical` or `Order.totalCents`. `payload`
@@ -88,6 +97,10 @@ export async function ingestWalmartOrder(
   if (existing) {
     const order = await prisma.order.findUnique({ where: { externalOrderId: canonical.externalOrderId }, select: { id: true } })
     return { orderId: order?.id ?? null, created: false }
+  }
+
+  if (canonical.lines.length === 0) {
+    return { orderId: null, created: false, skipped: 'cancelled' }
   }
 
   // `ChannelListing.status` is deliberately not filtered here (e.g. to
@@ -160,6 +173,7 @@ export async function ingestWalmartOrder(
               return {
                 variantId: listing.variantId,
                 sku: listing.variant.sku,
+                externalLineNumber: l.lineNumber,
                 quantity: l.quantity,
                 unitPriceCents: l.unitPriceCents,
                 lineSubtotalCents: l.quantity * l.unitPriceCents,
