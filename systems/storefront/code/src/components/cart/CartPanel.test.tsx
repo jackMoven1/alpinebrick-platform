@@ -20,8 +20,8 @@ const LINE = (variantId: string, name: string, priceCents: number, quantity: num
 })
 
 function StateProbe() {
-  const state = useLocation().state as { clientSecret: string; orderId: string }
-  return <p>checkout page {state.clientSecret} {state.orderId}</p>
+  const state = useLocation().state as { clientSecret: string; orderId: string; expiresAt?: number }
+  return <p>checkout page {state.clientSecret} {state.orderId} {state.expiresAt === undefined ? 'no-deadline' : `deadline ${state.expiresAt}`}</p>
 }
 
 /**
@@ -88,8 +88,17 @@ describe('CartPanel', () => {
       lines: [{ variantId: 'v1', quantity: 2 }], marketingOptIn: true,
       referral: { code: 'club', firstSeenAt: '2026-10-01T00:00:00.000Z' }, previousOrderId: 'old-order',
     })
-    expect(await screen.findByText('checkout page cs_secret_1 new-order')).toBeInTheDocument()
+    expect(await screen.findByText('checkout page cs_secret_1 new-order no-deadline')).toBeInTheDocument()
     expect(window.sessionStorage.getItem('ab.previousOrderId')).toBe('new-order')
+  })
+
+  it('turns the session lifetime into a deadline on this clock for /checkout', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+    vi.mocked(startCheckout).mockResolvedValue({ orderId: 'new-order', clientSecret: 'cs_secret_1', expiresInSeconds: 1800 })
+    renderCart([LINE('v1', 'Dragon Fortress', 4999, 1)])
+    await userEvent.click(screen.getByRole('button', { name: 'Checkout' }))
+    expect(await screen.findByText(`checkout page cs_secret_1 new-order deadline ${1_000_000 + 1_800_000}`)).toBeInTheDocument()
+    now.mockRestore()
   })
 
   it('marks short and missing lines and keeps the rest', async () => {

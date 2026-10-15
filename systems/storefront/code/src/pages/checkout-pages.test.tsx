@@ -24,7 +24,7 @@ import OrderComplete, { POLL_LIMIT_MS } from './OrderComplete'
 
 afterEach(() => { vi.clearAllMocks(); vi.useRealTimers() })
 
-function renderCheckout(state?: { clientSecret: string; orderId: string }) {
+function renderCheckout(state?: { clientSecret: string; orderId: string; expiresAt?: number }) {
   const router = createMemoryRouter(
     [{ path: '/checkout', element: <Checkout /> }, { path: '/cart', element: <p>cart page</p> }],
     { initialEntries: [{ pathname: '/checkout', state }] },
@@ -50,6 +50,44 @@ describe('/checkout', () => {
     renderCheckout()
     expect(screen.getByText('Your checkout has ended')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Back to cart' })).toHaveAttribute('href', '/cart')
+  })
+
+  it('shows the timed-out page instead of the form when the deadline has already passed', () => {
+    vi.mocked(getStripe).mockReturnValue(Promise.resolve({} as never))
+    renderCheckout({ clientSecret: 'cs_1_secret', orderId: 'o', expiresAt: Date.now() - 1 })
+    expect(screen.getByText('Your checkout timed out')).toBeInTheDocument()
+    expect(screen.queryByTestId('embedded-checkout')).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Back to cart' })).toHaveAttribute('href', '/cart')
+  })
+
+  it('swaps the form out when the deadline arrives', () => {
+    vi.useFakeTimers()
+    vi.mocked(getStripe).mockReturnValue(Promise.resolve({} as never))
+    renderCheckout({ clientSecret: 'cs_1_secret', orderId: 'o', expiresAt: Date.now() + 60_000 })
+    expect(screen.getByTestId('embedded-checkout')).toBeInTheDocument()
+    act(() => { vi.advanceTimersByTime(59_000) })
+    expect(screen.getByTestId('embedded-checkout')).toBeInTheDocument()
+    act(() => { vi.advanceTimersByTime(1_000) })
+    expect(screen.getByText('Your checkout timed out')).toBeInTheDocument()
+    expect(screen.queryByTestId('embedded-checkout')).not.toBeInTheDocument()
+  })
+
+  it('re-checks the deadline when a backgrounded tab is shown again', () => {
+    vi.mocked(getStripe).mockReturnValue(Promise.resolve({} as never))
+    const deadline = Date.now() + 60_000
+    renderCheckout({ clientSecret: 'cs_1_secret', orderId: 'o', expiresAt: deadline })
+    expect(screen.getByTestId('embedded-checkout')).toBeInTheDocument()
+    // A frozen timer never fired, but the clock moved on (sleep, background tab).
+    const now = vi.spyOn(Date, 'now').mockReturnValue(deadline + 5_000)
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(screen.getByText('Your checkout timed out')).toBeInTheDocument()
+    now.mockRestore()
+  })
+
+  it('keeps the form with no deadline (a core that does not send one)', () => {
+    vi.mocked(getStripe).mockReturnValue(Promise.resolve({} as never))
+    renderCheckout({ clientSecret: 'cs_1_secret', orderId: 'o' })
+    expect(screen.getByTestId('embedded-checkout')).toBeInTheDocument()
   })
 
   it('explains when there is no publishable key', () => {
