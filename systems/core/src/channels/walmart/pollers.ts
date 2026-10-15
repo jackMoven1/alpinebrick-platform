@@ -38,7 +38,8 @@ export async function pollWalmartOrders(
   client: WalmartClient = getWalmartClient(),
 ): Promise<{ found: number; created: number; skipped: number; failed: number }> {
   const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().slice(0, 10)
-  let query: Record<string, string> = { createdStartDate: since, limit: '100' }
+  const initialQuery: Record<string, string> = { createdStartDate: since, limit: '100' }
+  let query = initialQuery
   let lastCursor: string | undefined
 
   let found = 0
@@ -72,7 +73,10 @@ export async function pollWalmartOrders(
       break
     }
     lastCursor = cursor
-    query = Object.fromEntries(new URLSearchParams(cursor.replace(/^\?/, '')))
+    // Cursor params over the original query, not instead of it: if the
+    // cursor omits createdStartDate or limit, later pages keep the 7-day
+    // window rather than becoming an unbounded scan.
+    query = { ...initialQuery, ...Object.fromEntries(new URLSearchParams(cursor.replace(/^\?/, ''))) }
   }
 
   return { found, created, skipped, failed }

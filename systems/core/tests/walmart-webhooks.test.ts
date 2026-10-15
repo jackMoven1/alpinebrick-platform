@@ -215,7 +215,22 @@ describe('pollWalmartOrders', () => {
     }
     expect(await pollWalmartOrders(stub)).toEqual({ found: 2, created: 2, skipped: 0, failed: 0 })
     expect(queries).toHaveLength(2)
-    expect(queries[1]).toEqual({ limit: '100', hasMoreElements: 'true', soIndex: '2', poIndex: 'PO-1001' })
+    expect(queries[1]).toEqual({ createdStartDate: queries[0]?.createdStartDate, limit: '100', hasMoreElements: 'true', soIndex: '2', poIndex: 'PO-1001' })
+  })
+
+  it('keeps the original 7-day window when the cursor omits createdStartDate', async () => {
+    const queries: (Record<string, string> | undefined)[] = []
+    const stub: WalmartClient = {
+      request: async (_m, _path, opts) => {
+        queries.push(opts?.query)
+        return queries.length === 1
+          ? { list: { meta: { nextCursor: '?hasMoreElements=true&soIndex=2' }, elements: { order: [] } } }
+          : { list: { meta: {}, elements: { order: [] } } }
+      },
+    }
+    await pollWalmartOrders(stub)
+    expect(queries[0]?.createdStartDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(queries[1]).toEqual({ createdStartDate: queries[0]?.createdStartDate, limit: '100', hasMoreElements: 'true', soIndex: '2' })
   })
 
   it('stops at MAX_ORDER_POLL_PAGES rather than paging forever', async () => {

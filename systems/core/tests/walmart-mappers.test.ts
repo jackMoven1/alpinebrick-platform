@@ -66,6 +66,22 @@ describe('walmart mappers', () => {
     expect(toCanonicalOrder(payload).lines).toEqual([])
   })
 
+  it('rejects a Cancelled status with no numeric quantity instead of treating it as 0', () => {
+    const payload = {
+      ...walmartOrderFixture,
+      orderLines: {
+        orderLine: [{ ...walmartOrderFixture.orderLines.orderLine[0], orderLineStatuses: { orderLineStatus: [{ status: 'Cancelled' }] } }],
+      },
+    }
+    expect(() => toCanonicalOrder(payload)).toThrow(/unmappable_order/)
+  })
+
+  it('rejects a line with no Walmart lineNumber rather than guessing one from position', () => {
+    const { lineNumber: _drop, ...noNumber } = walmartOrderFixture.orderLines.orderLine[0]
+    const payload = { ...walmartOrderFixture, orderLines: { orderLine: [noNumber] } }
+    expect(() => toCanonicalOrder(payload)).toThrow(/unmappable_order/)
+  })
+
   it('falls back to placeholder email and rejects unmappable payloads', () => {
     const noEmail = { ...walmartOrderFixture, customerEmailId: undefined }
     expect(toCanonicalOrder(noEmail).email).toBe('walmart-customer@channel.local')
